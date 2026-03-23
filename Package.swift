@@ -2,28 +2,28 @@
 import PackageDescription
 
 let package = Package(
-  name: "FileForge",
+  name: "Shift",
   platforms: [
     .macOS(.v12)  // Monterey
   ],
   products: [
     .executable(
-      name: "FileForge",
-      targets: ["FileForge"]
+      name: "Shift",
+      targets: ["Shift"]
     ),
     .library(
-      name: "FileForgeCore",
-      targets: ["FileForge"]
+      name: "ShiftCore",
+      targets: ["Shift"]
     )
   ],
   targets: [
     .executableTarget(
-      name: "FileForge",
+      name: "Shift",
       dependencies: []
     ),
     .testTarget(
-      name: "FileForgeTests",
-      dependencies: ["FileForge"]
+      name: "ShiftTests",
+      dependencies: ["Shift"]
     )
   ]
 )
