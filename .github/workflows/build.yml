@@ -1,0 +1,46 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Swift
+      uses: swift-actions/setup-swift@v2
+      with:
+        swift-version: '5.9'
+
+    - name: Build
+      run: swift build -c release
+
+    - name: Run Tests
+      run: swift test --enable-test-discovery
+
+    - name: Upload Build Artifact
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: actions/upload-artifact@v4
+      with:
+        name: FileForge-release
+        path: .build/release/FileForge
+
+    - name: Create DMG (if needed)
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: |
+        # Create a simple DMG (requires create-dmg tool)
+        # brew install create-dmg
+        # create-dmg \
+        #   --volname "FileForge" \
+        #   --window-size 600 400 \
+        #   --app-drop-link 460 180 \
+        #   "FileForge.dmg" \
+        #   ".build/release/FileForge.app"
+        echo "DMG creation requires create-dmg tool (optional)"
+      shell: bash

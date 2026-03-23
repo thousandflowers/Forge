@@ -1,0 +1,77 @@
+# Swift Package Manager
+.build/
+DerivedData/
+*.xcodeproj/*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/contents.xcworkspacedata
+Package.resolved
+
+# Xcode
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xcuserstate
+xcuserdata/
+profile*
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+docc/
+docset/
+
+# Fastly
+fastly/
+
+# AppCenter
+appcenter/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Logs
+*.log
+log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Test resources (optional - large files can be gitignored)
+Tests/FileForgeTests/Resources/*.mp4
+Tests/FileForgeTests/Resources/*.mov
+Tests/FileForgeTests/Resources/*.wav
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+
+# Backup files
+*.bak
+*.backup
