@@ -1,5 +1,5 @@
 import XCTest
-@testable import FileForge
+@testable import Shift
 
 class ProcessableFileTests: BaseTestCase {
   func test_init_withValidPNG_extractsProperties() throws {
