@@ -1,6 +1,6 @@
-# Contributing to FileForge
+# Contributing to Shift
 
-Thank you for your interest in contributing to FileForge! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing to Shift! This document provides guidelines and information for contributors.
 
 ## 🎯 Getting Started
 
@@ -38,7 +38,7 @@ bash Scripts/generate_samples.sh
 ### Xcode Project
 If you prefer Xcode:
 ```bash
-open FileForge.xcodeproj
+open Shift.xcodeproj
 ```
 
 ## 📖 Code Style
@@ -69,7 +69,7 @@ func processFile(_ file: ProcessableFile) async throws -> ProcessingResult {
 
 ## 🧪 Testing
 
-- **Unit Tests**: Place in `Tests/FileForgeTests/` mirroring source structure.
+- **Unit Tests**: Place in `Tests/ShiftTests/` mirroring source structure.
 - **Test Coverage**: Aim for >80% coverage on critical code (processors, models).
 - **Integration Tests**: Add to `IntegrationTests.swift` for end-to-end flows.
 - **Performance Tests**: Use `measure` for time-sensitive code.
@@ -104,7 +104,7 @@ External CLI tools (LibreOffice, ImageMagick, FFmpeg) are **optional** and invok
 
 To add a new processor for a file type:
 
-1. Create a new file in `Sources/FileForge/Processors/` (e.g., `PDFProcessor.swift`).
+1. Create a new file in `Sources/Shift/Processors/` (e.g., `PDFProcessor.swift`).
 2. Implement `FileProcessor` protocol:
    ```swift
    final class PDFProcessor: FileProcessor {
@@ -118,7 +118,7 @@ To add a new processor for a file type:
    }
    ```
 3. Register it in `ProcessorRegistry.init()` (Phase 1 only, Phase 3 will use discovery).
-4. Add unit tests in `Tests/FileForgeTests/Processors/`.
+4. Add unit tests in `Tests/ShiftTests/Processors/`.
 5. Update README format support table.
 
 ## 🔍 Pull Request Guidelines
@@ -160,7 +160,7 @@ Use GitHub Issues. Include:
 - **Steps to reproduce** (clear, numbered)
 - **Expected behavior**
 - **Actual behavior** (include logs, screenshots)
-- **Environment**: macOS version, FileForge version/branch
+- **Environment**: macOS version, Shift version/branch
 - **Sample file** (if applicable, attach or link)
 
 ## 💡 Feature Requests
@@ -190,4 +190,4 @@ Contributors will be listed in:
 
 ---
 
-Thank you for contributing to FileForge! 🚀
+Thank you for contributing to Shift! 🚀
