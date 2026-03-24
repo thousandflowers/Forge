@@ -1,4 +1,4 @@
-# FileForge v2
+# Shift v2
 
 > A powerful, memory-efficient native macOS app for batch file conversion with smart automation.
 
@@ -36,7 +36,7 @@
 
 ## 🏗️ Architecture
 
-FileForge v2 is built from scratch with a focus on reliability and performance:
+Shift v2 is built from scratch with a focus on reliability and performance:
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -73,19 +73,19 @@ FileForge v2 is built from scratch with a focus on reliability and performance:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/FileForge.git
-cd FileForge
+git clone https://github.com/yourusername/Shift.git
+cd Shift
 
 # Build the project
 swift build -c release
 
 # Or open in Xcode
-open FileForge.xcodeproj
+open Shift.xcodeproj
 ```
 
 The built app will be at:
 ```
-.build/release/FileForge.app
+.build/release/Shift.app
 ```
 
 ### Running Tests
@@ -95,7 +95,7 @@ The built app will be at:
 swift test
 
 # Run specific test target
-swift test --filter FileForgeTests
+swift test --filter ShiftTests
 ```
 
 ### Development Setup
@@ -105,23 +105,23 @@ swift test --filter FileForgeTests
 bash Scripts/generate_samples.sh
 ```
 
-2. Ensure sample resources exist in `Tests/FileForgeTests/Resources/`
+2. Ensure sample resources exist in `Tests/ShiftTests/Resources/`
 
 ## 📦 Installation
 
 ### From Releases
-Download the latest `.dmg` from the [Releases page](https://github.com/yourusername/FileForge/releases).
+Download the latest `.dmg` from the [Releases page](https://github.com/yourusername/Shift/releases).
 
 ### From Source
 ```bash
 swift build -c release
-cp -R .build/release/FileForge.app /Applications/
+cp -R .build/release/Shift.app /Applications/
 ```
 
 ## 🎮 Usage
 
 ### Basic Batch Processing
-1. Launch FileForge
+1. Launch Shift
 2. Drag & drop files into the window
 3. Select a preset (e.g., "Instagram Post")
 4. Choose destination (Overwrite, Copy To, Move To)
@@ -205,8 +205,8 @@ swift test --verbose
 ## 📁 Project Structure
 
 ```
-FileForge/
-├── Sources/FileForge/
+Shift/
+├── Sources/Shift/
 │   ├── Models/
 │   │   ├── ProcessableFile.swift
 │   │   ├── Operation.swift
@@ -237,9 +237,9 @@ FileForge/
 │   │   └── PresetEditorView.swift
 │   ├── ViewModels/
 │   │   └── BatchProcessingViewModel.swift
-│   ├── FileForgeApp.swift
-│   └── FileForge.entitlements
-├── Tests/FileForgeTests/
+│   ├── ShiftApp.swift
+│   └── Shift.entitlements
+├── Tests/ShiftTests/
 │   ├── Models/
 │   ├── Processors/
 │   ├── Services/
@@ -323,7 +323,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - Built with ❤️ for macOS
 - Uses Apple's Core Image, AVFoundation, SwiftUI
-- Inspired by the original FileForge (which needed a rebuild)
+- Inspired by the original Shift (which needed a rebuild)
 
 ## 📧 Contact
 
