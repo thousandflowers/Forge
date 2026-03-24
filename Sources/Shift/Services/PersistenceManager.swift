@@ -13,7 +13,7 @@ actor PersistenceManager {
 
   private init() {
     let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-      .first!.appendingPathComponent("FileForge")
+      .first!.appendingPathComponent("Shift")
 
     try? fileManager.createDirectory(at: appSupport, withIntermediateDirectories: true, attributes: nil)
 

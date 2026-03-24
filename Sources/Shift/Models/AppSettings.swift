@@ -14,13 +14,13 @@ struct AppSettings: Codable, Sendable {
 
   var preserveOriginalMetadata: Bool = true
   var createBackupBeforeOverwrite: Bool = true
-  var backupFolderPath: String?  // Default: ~/Library/Application Support/FileForge/Backups
+  var backupFolderPath: String?  // Default: ~/Library/Application Support/Shift/Backups
 
   var showNotifications: Bool = true
 
   var tempFolderPath: String = {
     FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
-      .first!.appendingPathComponent("FileForge").path
+      .first!.appendingPathComponent("Shift").path
   }()
 
   var tempFolderURL: URL {
@@ -29,7 +29,7 @@ struct AppSettings: Codable, Sendable {
 
   // MARK: - Persistence
 
-  private static let settingsKey = "FileForgeSettings"
+  private static let settingsKey = "ShiftSettings"
 
   static func load() -> AppSettings {
     if let data = UserDefaults.standard.data(forKey: settingsKey),
