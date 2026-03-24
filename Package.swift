@@ -10,10 +10,6 @@ let package = Package(
     .executable(
       name: "Shift",
       targets: ["Shift"]
-    ),
-    .library(
-      name: "ShiftCore",
-      targets: ["Shift"]
     )
   ],
   targets: [
