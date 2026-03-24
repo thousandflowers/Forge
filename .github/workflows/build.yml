@@ -28,8 +28,8 @@ jobs:
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       uses: actions/upload-artifact@v4
       with:
-        name: FileForge-release
-        path: .build/release/FileForge
+        name: Shift-release
+        path: .build/release/Shift
 
     - name: Create DMG (if needed)
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -37,10 +37,10 @@ jobs:
         # Create a simple DMG (requires create-dmg tool)
         # brew install create-dmg
         # create-dmg \
-        #   --volname "FileForge" \
+        #   --volname "Shift" \
         #   --window-size 600 400 \
         #   --app-drop-link 460 180 \
-        #   "FileForge.dmg" \
-        #   ".build/release/FileForge.app"
+        #   "Shift.dmg" \
+        #   ".build/release/Shift.app"
         echo "DMG creation requires create-dmg tool (optional)"
       shell: bash
