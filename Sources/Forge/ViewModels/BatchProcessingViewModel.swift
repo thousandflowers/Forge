@@ -66,8 +66,12 @@ final class BatchProcessingViewModel: ObservableObject {
       return
     }
 
+    let preset: RulePreset
     do {
-      preset = try await PersistenceManager.shared.loadPreset(id: presetID)
+      guard let loaded = try await PersistenceManager.shared.loadPreset(id: presetID) else {
+        return
+      }
+      preset = loaded
     } catch {
       // Should not happen if UI disables button
       return

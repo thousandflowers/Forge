@@ -30,7 +30,7 @@ struct MonitoredFoldersView: View {
               VStack(alignment: .leading) {
                 Text(folder.displayName)
                   .font(.headline)
-                Text("Preset: \(folder.ruleName)")
+                Text("Preset: \(folder.ruleId.uuidString)")
                   .font(.caption)
                   .foregroundColor(.secondary)
               }
@@ -63,5 +63,10 @@ final class MonitoredFoldersViewModel: ObservableObject {
 
   func toggleFolder(_ folder: MonitoredFolder, isActive: Bool) {
     // Update and save
+  }
+
+  func deleteFolder(at offsets: IndexSet) {
+    folders.remove(atOffsets: offsets)
+    // Persist change (WIP)
   }
 }

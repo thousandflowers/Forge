@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
   @StateObject private var viewModel = ContentViewModel()
-  @StateObject private var coordinator = ProcessingCoordinator(registry: ProcessorRegistry(), settings: AppSettings())
+  @State private var coordinator = ProcessingCoordinator(registry: ProcessorRegistry(), settings: AppSettings())
 
   var body: some View {
     TabView {

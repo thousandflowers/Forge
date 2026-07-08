@@ -88,7 +88,7 @@ extension ProcessableFile {
     )
   }
 
-  private init(url: URL, fileType: UTType, fileName: String, fileSize: Int64, dimensions: (Int, Int)?) {
+  private init(url: URL, fileType: UTType, fileName: String, fileSize: Int64, dimensions: Dimensions?) {
     self.url = url
     self.fileType = fileType
     self.fileName = fileName

@@ -26,28 +26,31 @@ final class MonitoredFolderWatcher {
       // Recursive implementation can be added later
     }
 
-    // Create event stream
+    // Create event stream. A @convention(c) callback cannot capture context,
+    // so we pass `self` through clientCallBackInfo and recover it inside.
     var streamRef: FSEventStreamRef?
 
-    let callback: FSEventStreamCallback = { (streamRef, clientCallBackInfo, numEvents, eventPaths, eventFlags, eventIds) in
-      guard let paths = eventPaths else { return }
-
+    let callback: FSEventStreamCallback = { (_, clientCallBackInfo, numEvents, eventPaths, _, _) in
+      guard let info = clientCallBackInfo else { return }
+      let watcher = Unmanaged<MonitoredFolderWatcher>.fromOpaque(info).takeUnretainedValue()
+      let paths = eventPaths.assumingMemoryBound(to: UnsafePointer<CChar>.self)
       for i in 0..<numEvents {
-        let path = String(cString: paths[i])
-        // Debounce - wait for file to be fully written
-        // We'll dispatch after a short delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-          Task {
-            await handler(URL(fileURLWithPath: path))
-          }
-        }
+        watcher.handleEvent(path: String(cString: paths[i]))
       }
     }
+
+    var context = FSEventStreamContext(
+      version: 0,
+      info: Unmanaged.passUnretained(self).toOpaque(),
+      retain: nil,
+      release: nil,
+      copyDescription: nil
+    )
 
     streamRef = FSEventStreamCreate(
       kCFAllocatorDefault,
       callback,
-      nil, // clientCallBackInfo
+      &context,
       pathsToWatch as CFArray,
       FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
       1.0, // latency in seconds
@@ -64,6 +67,17 @@ final class MonitoredFolderWatcher {
     self.stream = stream
     self.watchedPaths.insert(path)
     self.handlers[path] = handler
+  }
+
+  /// Dispatch a file-system event to the matching folder handler (debounced).
+  /// Called from the FSEvents callback thread.
+  private func handleEvent(path: String) {
+    for (root, handler) in handlers where path.hasPrefix(root) {
+      // Debounce - wait for the file to be fully written before handling.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+        Task { await handler(URL(fileURLWithPath: path)) }
+      }
+    }
   }
 
   /// Stop watching a specific folder

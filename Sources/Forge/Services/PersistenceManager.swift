@@ -70,7 +70,7 @@ actor PersistenceManager {
   // MARK: - History
 
   func appendHistory(_ entry: ProcessingHistory) async throws {
-    var history = (try? loadHistory()) ?? []
+    var history = (try? await loadHistory()) ?? []
     history.append(entry)
     // Keep last 1000 entries
     if history.count > 1000 {

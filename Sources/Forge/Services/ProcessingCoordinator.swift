@@ -110,7 +110,7 @@ actor ProcessingCoordinator {
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
     // Find suitable processor
-    guard let processor = registry.processor(for: file) else {
+    guard let processor = await registry.processor(for: file) else {
       throw ProcessingError.unsupportedFormat(file.fileType)
     }
 

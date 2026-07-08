@@ -82,7 +82,7 @@ fileprivate struct FileListView: View {
             .lineLimit(1)
         }
         TableColumn("Type") { file in
-          Text(file.fileType.localizedString ?? file.fileType.identifier)
+          Text(file.fileType.localizedDescription ?? file.fileType.identifier)
         }
         TableColumn("Size") { file in
           Text(viewModel.formatSize(file.fileSize))
