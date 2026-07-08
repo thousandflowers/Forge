@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-# Generate sample test files for Shift development
-RESOURCES="Tests/FileForgeTests/Resources"
+# Generate sample test files for Forge development
+RESOURCES="Tests/ForgeTests/Resources"
 mkdir -p "$RESOURCES"
 
 echo "Generating sample test files..."
@@ -49,7 +49,7 @@ if command -v ffmpeg &> /dev/null; then
 fi
 
 # Create a test text file
-echo "Shift test file content" > "$RESOURCES/test.txt"
+echo "Forge test file content" > "$RESOURCES/test.txt"
 echo "✓ Created test.txt"
 
 # Create a simple CSV test file

@@ -2,24 +2,24 @@
 import PackageDescription
 
 let package = Package(
-  name: "Shift",
+  name: "Forge",
   platforms: [
     .macOS(.v12)  // Monterey
   ],
   products: [
     .executable(
-      name: "Shift",
-      targets: ["Shift"]
+      name: "Forge",
+      targets: ["Forge"]
     )
   ],
   targets: [
     .executableTarget(
-      name: "Shift",
+      name: "Forge",
       dependencies: []
     ),
     .testTarget(
-      name: "ShiftTests",
-      dependencies: ["Shift"]
+      name: "ForgeTests",
+      dependencies: ["Forge"]
     )
   ]
 )

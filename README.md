@@ -1,4 +1,4 @@
-# Shift v2
+# Forge v2
 
 > A powerful, memory-efficient native macOS app for batch file conversion with smart automation.
 
@@ -36,7 +36,7 @@
 
 ## 🏗️ Architecture
 
-Shift v2 is built from scratch with a focus on reliability and performance:
+Forge v2 is built from scratch with a focus on reliability and performance:
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -73,19 +73,19 @@ Shift v2 is built from scratch with a focus on reliability and performance:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/Shift.git
-cd Shift
+git clone https://github.com/yourusername/Forge.git
+cd Forge
 
 # Build the project
 swift build -c release
 
 # Or open in Xcode
-open Shift.xcodeproj
+open Forge.xcodeproj
 ```
 
 The built app will be at:
 ```
-.build/release/Shift.app
+.build/release/Forge.app
 ```
 
 ### Running Tests
@@ -95,7 +95,7 @@ The built app will be at:
 swift test
 
 # Run specific test target
-swift test --filter ShiftTests
+swift test --filter ForgeTests
 ```
 
 ### Development Setup
@@ -105,23 +105,23 @@ swift test --filter ShiftTests
 bash Scripts/generate_samples.sh
 ```
 
-2. Ensure sample resources exist in `Tests/ShiftTests/Resources/`
+2. Ensure sample resources exist in `Tests/ForgeTests/Resources/`
 
 ## 📦 Installation
 
 ### From Releases
-Download the latest `.dmg` from the [Releases page](https://github.com/yourusername/Shift/releases).
+Download the latest `.dmg` from the [Releases page](https://github.com/yourusername/Forge/releases).
 
 ### From Source
 ```bash
 swift build -c release
-cp -R .build/release/Shift.app /Applications/
+cp -R .build/release/Forge.app /Applications/
 ```
 
 ## 🎮 Usage
 
 ### Basic Batch Processing
-1. Launch Shift
+1. Launch Forge
 2. Drag & drop files into the window
 3. Select a preset (e.g., "Instagram Post")
 4. Choose destination (Overwrite, Copy To, Move To)
@@ -205,8 +205,8 @@ swift test --verbose
 ## 📁 Project Structure
 
 ```
-Shift/
-├── Sources/Shift/
+Forge/
+├── Sources/Forge/
 │   ├── Models/
 │   │   ├── ProcessableFile.swift
 │   │   ├── Operation.swift
@@ -237,9 +237,9 @@ Shift/
 │   │   └── PresetEditorView.swift
 │   ├── ViewModels/
 │   │   └── BatchProcessingViewModel.swift
-│   ├── ShiftApp.swift
-│   └── Shift.entitlements
-├── Tests/ShiftTests/
+│   ├── ForgeApp.swift
+│   └── Forge.entitlements
+├── Tests/ForgeTests/
 │   ├── Models/
 │   ├── Processors/
 │   ├── Services/
