@@ -6,7 +6,6 @@ import UniformTypeIdentifiers
 /// Note: Full DOCX/XLSX/PPTX conversion requires external tools (LibreOffice) in Phase 3
 final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
   let name = "Document Processor"
-  let isNative = true
   let supportedTypes: [UTType] = {
     var types: [UTType] = []
     // Document types

@@ -16,19 +16,6 @@ actor AsyncQueue {
     process()
   }
 
-  /// Pause queue - prevents new tasks from starting, but running tasks continue
-  func pause() {
-    // For MVP, pause just stops processing pending items
-    // running tasks will complete
-  }
-
-  /// Resume after pause
-  func resume() {
-    Task {
-      await process()
-    }
-  }
-
   private func process() {
     while running < maxConcurrent && !pending.isEmpty {
       let operation = pending.removeFirst()

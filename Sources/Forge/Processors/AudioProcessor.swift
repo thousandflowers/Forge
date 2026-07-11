@@ -5,7 +5,6 @@ import UniformTypeIdentifiers
 /// Native audio processor using AVFoundation
 final class AudioProcessor: FileProcessor, @unchecked Sendable {
   let name = "Audio Processor"
-  let isNative = true
   let supportedTypes: [UTType] = {
     var types: [UTType] = []
     let audioUTIs = [

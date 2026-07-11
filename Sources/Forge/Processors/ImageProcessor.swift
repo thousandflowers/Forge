@@ -7,7 +7,6 @@ import UniformTypeIdentifiers
 /// Native image processor using Core Image / ImageIO
 final class ImageProcessor: FileProcessor, @unchecked Sendable {
   let name = "Image Processor"
-  let isNative = true
   let supportedTypes: [UTType] = {
     var types: [UTType] = []
     let extensions = ["png", "jpeg", "jpg", "tiff", "heic", "webp", "gif", "bmp", "tga", "ico"]
@@ -73,7 +72,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     var ciImage = CIImage(cgImage: cgImage)
 
     // Step 2: Apply operations (transformations)
-    let filteredOps = filterSupportedOperations(operations, for: try Self.determineInputType(input))
+    let filteredOps = operations
 
     for (index, op) in filteredOps.enumerated() {
       let opProgress = Double(index) / Double(max(1, filteredOps.count))

@@ -49,7 +49,7 @@ struct ProcessableFile: Identifiable, Hashable, Codable, Sendable {
     self.dimensions = try Self.extractDimensions(url: url, type: type)
   }
 
-  private init(url: URL, fileType: UTType, fileName: String, fileSize: Int64, dimensions: Dimensions?) {
+  init(url: URL, fileType: UTType, fileName: String, fileSize: Int64, dimensions: Dimensions?) {
     self.url = url
     self.fileType = fileType
     self.fileName = fileName

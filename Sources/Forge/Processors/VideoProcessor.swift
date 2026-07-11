@@ -5,7 +5,6 @@ import UniformTypeIdentifiers
 /// Native video processor using AVFoundation
 final class VideoProcessor: FileProcessor, @unchecked Sendable {
   let name = "Video Processor"
-  let isNative = true
   let supportedTypes: [UTType] = {
     var types: [UTType] = []
     // Common video formats with known UTIs

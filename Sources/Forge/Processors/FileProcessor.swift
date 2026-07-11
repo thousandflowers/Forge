@@ -12,7 +12,6 @@ struct ProcessingResult: Sendable {
 /// Protocol for file processors
 protocol FileProcessor: AnyObject, Sendable {
   var name: String { get }
-  var isNative: Bool { get }
   var supportedTypes: [UTType] { get }
 
   func canProcess(_ file: ProcessableFile) -> Bool
@@ -35,11 +34,6 @@ protocol FileProcessor: AnyObject, Sendable {
 
 // Helper extension for FileProcessor
 extension FileProcessor {
-  func filterSupportedOperations(_ operations: [Operation], for fileType: UTType) -> [Operation] {
-    // For MVP, return all operations. Later, filter based on capability.
-    operations
-  }
-
   func validateOperations(_ operations: [Operation], for inputType: UTType) throws {
     // Basic validation: can't convert to same format?
     if let convertOp = operations.first(where: {

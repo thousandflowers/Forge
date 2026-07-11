@@ -3,12 +3,8 @@ import Foundation
 /// User-configurable application settings
 struct AppSettings: Codable, Sendable {
   var nativeProcessorsEnabled: Bool = true
-  var externalProcessorsEnabled: Bool = false
-
-  var enabledExternalTools: Set<String> = []
 
   var maxConcurrentNative: Int = 2  // Range 1-8
-  var maxConcurrentExternal: Int = 1  // Range 1-2
 
   var memoryWarningThresholdMB: Int = 1024
 

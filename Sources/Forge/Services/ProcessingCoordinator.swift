@@ -6,7 +6,6 @@ import SwiftUI
 actor ProcessingCoordinator {
   private let registry: ProcessorRegistry
   private let nativeQueue: AsyncQueue
-  private let externalQueue: AsyncQueue
   private let persistence: PersistenceManager
   private let settings: AppSettings
 
@@ -20,7 +19,6 @@ actor ProcessingCoordinator {
     self.registry = registry
     self.settings = settings
     self.nativeQueue = AsyncQueue(maxConcurrent: settings.maxConcurrentNative)
-    self.externalQueue = AsyncQueue(maxConcurrent: settings.maxConcurrentExternal)
     self.persistence = .shared
   }
 
@@ -96,7 +94,6 @@ actor ProcessingCoordinator {
   /// Wait for all queued tasks to complete
   func waitForAll() async {
     await nativeQueue.waitForAll()
-    await externalQueue.waitForAll()
   }
 
 
@@ -131,43 +128,14 @@ actor ProcessingCoordinator {
     // Validate operations for this processor
     try processor.validateOperations(operations, for: file.fileType)
 
-    // Schedule on appropriate queue
-    if processor.isNative {
-      return try await withCheckedThrowingContinuation { cont in
-        Task {
-          do {
-            let result = try await processor.process(
-              file.url,
-              to: outputURL,
-              with: operations
-            ) { fraction in
-              // Global progress callback (0-1)
-              progress(fraction)
-            }
-            cont.resume(returning: result)
-          } catch {
-            cont.resume(throwing: error)
-          }
-        }
-      }
-    } else {
-      // External processor runs in its own queue
-      return try await withCheckedThrowingContinuation { cont in
-        Task {
-          do {
-            let result = try await processor.process(
-              file.url,
-              to: outputURL,
-              with: operations
-            ) { fraction in
-              progress(fraction)
-            }
-            cont.resume(returning: result)
-          } catch {
-            cont.resume(throwing: error)
-          }
-        }
-      }
+    // Run the processor (already async — no extra queue hop needed).
+    return try await processor.process(
+      file.url,
+      to: outputURL,
+      with: operations
+    ) { fraction in
+      // Global progress callback (0-1)
+      progress(fraction)
     }
   }
 
