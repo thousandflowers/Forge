@@ -5,7 +5,6 @@ import SwiftUI
 /// Coordinates file processing with concurrency control and memory monitoring
 actor ProcessingCoordinator {
   private let registry: ProcessorRegistry
-  private let nativeQueue: AsyncQueue
   private let persistence: PersistenceManager
   private let settings: AppSettings
 
@@ -18,7 +17,6 @@ actor ProcessingCoordinator {
   init(registry: ProcessorRegistry, settings: AppSettings) {
     self.registry = registry
     self.settings = settings
-    self.nativeQueue = AsyncQueue(maxConcurrent: settings.maxConcurrentNative)
     self.persistence = .shared
   }
 
@@ -91,10 +89,8 @@ actor ProcessingCoordinator {
     activeTasks.removeAll()
   }
 
-  /// Wait for all queued tasks to complete
-  func waitForAll() async {
-    await nativeQueue.waitForAll()
-  }
+  /// Max number of files to process concurrently (from settings).
+  var maxConcurrentNative: Int { settings.maxConcurrentNative }
 
 
   // MARK: - Private

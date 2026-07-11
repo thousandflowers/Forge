@@ -10,7 +10,6 @@ final class BatchProcessingViewModel: ObservableObject {
   @Published var availablePresets: [RulePreset] = []
 
   private let coordinator: ProcessingCoordinator
-  private var processingTasks: [UUID: Task<Void, Never>] = [:]
 
   init(coordinator: ProcessingCoordinator) {
     self.coordinator = coordinator
@@ -36,7 +35,7 @@ final class BatchProcessingViewModel: ObservableObject {
   }
 
   func clearFiles() {
-    cancelAll()
+    cancelProcessing()
     files.removeAll()
     statusMap.removeAll()
     progress = 0
@@ -83,50 +82,42 @@ final class BatchProcessingViewModel: ObservableObject {
 
     let total = files.count
     var processed = 0
+    let limit = max(1, await coordinator.maxConcurrentNative)
 
-    for file in files {
-      let fileId = file.id
-      statusMap[fileId] = "Processing..."
+    // Process in bounded waves so we never exceed `limit` concurrent conversions,
+    // and report progress only as files actually finish.
+    for start in stride(from: 0, to: files.count, by: limit) {
+      let wave = files[start..<min(start + limit, files.count)]
+      for file in wave { statusMap[file.id] = "Processing..." }
 
-      let task = Task {
-        do {
-          _ = try await coordinator.processFile(
-            file,
-            with: preset,
-            destinationMode: destinationMode,
-            destinationURL: destinationFolder
-          ) { fileProgress in
-            // Per-file progress
-          }
-          await MainActor.run {
-            statusMap[fileId] = "Completed"
-          }
-        } catch {
-          await MainActor.run {
-            statusMap[fileId] = "Failed"
+      await withTaskGroup(of: Void.self) { group in
+        for file in wave {
+          let fileId = file.id
+          group.addTask {
+            do {
+              _ = try await self.coordinator.processFile(
+                file,
+                with: preset,
+                destinationMode: destinationMode,
+                destinationURL: destinationFolder
+              ) { _ in }
+              await MainActor.run { self.statusMap[fileId] = "Completed" }
+            } catch {
+              await MainActor.run { self.statusMap[fileId] = "Failed" }
+            }
           }
         }
       }
 
-      await MainActor.run {
-        processed += 1
-        self.progress = Double(processed) / Double(total)
-      }
+      processed += wave.count
+      progress = Double(processed) / Double(total)
     }
 
-    await coordinator.waitForAll()
     isProcessing = false
   }
 
   func cancelProcessing() {
-    cancelAll()
+    Task { await coordinator.cancelAll() }
     isProcessing = false
-  }
-
-  private func cancelAll() {
-    for task in processingTasks.values {
-      task.cancel()
-    }
-    processingTasks.removeAll()
   }
 }
