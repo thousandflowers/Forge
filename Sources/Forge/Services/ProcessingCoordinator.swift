@@ -179,11 +179,4 @@ actor ProcessingCoordinator {
     let baseName = (originalName as NSString).deletingPathExtension
     return "\(baseName).\(outputExtension)"
   }
-
-  /// Get current queue statistics (for UI)
-  func queueStatus() -> (nativeActive: Int, nativePending: Int, externalActive: Int, externalPending: Int) {
-    // For MVP, we don't expose internal queue counts
-    // Could add introspection to AsyncQueue if needed
-    return (0, 0, 0, 0)
-  }
 }
