@@ -181,7 +181,7 @@ final class BatchViewModel: ObservableObject {
       let wave = Array(files[start..<min(start + limit, files.count)])
       for f in wave { statusMap[f.id] = .processing }
 
-      await withTaskGroup(of: (UUID, FileStatus).self) { group in
+      let results = await withTaskGroup(of: (UUID, FileStatus).self) { group -> [(UUID, FileStatus)] in
         for f in wave {
           group.addTask {
             do {
@@ -194,8 +194,11 @@ final class BatchViewModel: ObservableObject {
             }
           }
         }
-        for await (id, status) in group { statusMap[id] = status }
+        var out: [(UUID, FileStatus)] = []
+        for await result in group { out.append(result) }
+        return out
       }
+      for (id, status) in results { statusMap[id] = status }
 
       done += wave.count
       progress = Double(done) / Double(total)
