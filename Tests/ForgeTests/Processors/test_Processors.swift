@@ -1,4 +1,5 @@
 import XCTest
+import UniformTypeIdentifiers
 @testable import Forge
 
 class ImageProcessorTests: BaseTestCase {

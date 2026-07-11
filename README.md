@@ -287,7 +287,7 @@ Forge/
 - [ ] Audio normalization (LUFS)
 - [ ] Batch rename with patterns
 - [ ] iCloud sync of presets
-- [ ] CLI version (`fileforge` command)
+- [ ] CLI version (`forge` command)
 - [ ] Share extension (Quick Actions)
 - [ ] AppleScript/Shortcuts integration
 

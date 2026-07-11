@@ -1,5 +1,9 @@
 import XCTest
+import UniformTypeIdentifiers
 @testable import Forge
+
+// Disambiguate from Foundation.Operation (NSOperation).
+private typealias Operation = Forge.Operation
 
 class ProcessableFileTests: BaseTestCase {
   func test_init_withValidPNG_extractsProperties() throws {

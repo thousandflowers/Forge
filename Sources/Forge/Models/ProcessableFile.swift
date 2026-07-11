@@ -37,8 +37,9 @@ struct ProcessableFile: Identifiable, Hashable, Codable, Sendable {
     let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
     self.fileSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
 
-    // Get UTType from extension
-    guard let type = UTType(filenameExtension: url.pathExtension) else {
+    // Get UTType from extension. UTType(filenameExtension:) invents a dynamic
+    // type for unknown extensions instead of returning nil, so reject those too.
+    guard let type = UTType(filenameExtension: url.pathExtension), !type.isDynamic else {
       throw ProcessingError.unknownType
     }
     self.fileType = type
