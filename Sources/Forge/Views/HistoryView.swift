@@ -1,76 +1,63 @@
 import SwiftUI
 
 struct HistoryView: View {
-  @StateObject private var viewModel = HistoryViewModel()
+  @EnvironmentObject private var model: AppModel
 
   var body: some View {
-    VStack {
-      HStack {
-        Text("History")
-          .font(.title)
-        Spacer()
-        Button("Clear History") {
-          viewModel.clearHistory()
-        }
-        .disabled(viewModel.entries.isEmpty)
-      }
-      .padding()
-
-      if viewModel.entries.isEmpty {
-        Spacer()
-        Text("No processing history yet.")
-          .foregroundColor(.secondary)
-        Spacer()
+    Group {
+      if model.history.isEmpty {
+        EmptyStateView(icon: "clock", title: "No history yet",
+                       message: "Files you convert will show up here.")
       } else {
-        List(viewModel.entries) { entry in
-          HStack {
-            VStack(alignment: .leading) {
+        List(model.history) { entry in
+          HStack(spacing: 12) {
+            Image(systemName: icon(for: entry.status))
+              .foregroundStyle(color(for: entry.status))
+              .font(.title3)
+            VStack(alignment: .leading, spacing: 2) {
               Text(entry.fileURL.lastPathComponent)
-                .font(.body)
-                .lineLimit(1)
-              Text(entry.timestamp, style: .date)
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .lineLimit(1).truncationMode(.middle)
+              Text(entry.timestamp.formatted(date: .abbreviated, time: .shortened))
+                .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            statusBadge(for: entry.status)
+            if entry.duration > 0 {
+              Text(String(format: "%.1fs", entry.duration))
+                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            }
+            Text(entry.status.rawValue.capitalized)
+              .font(.caption)
+              .padding(.horizontal, 8).padding(.vertical, 3)
+              .background(Capsule().fill(color(for: entry.status).opacity(0.15)))
+              .foregroundStyle(color(for: entry.status))
           }
+          .padding(.vertical, 2)
         }
       }
     }
-    .padding()
-  }
-
-  func statusBadge(for status: ProcessingStatus) -> some View {
-    Text(status.rawValue.capitalized)
-      .font(.caption)
-      .padding(.horizontal, 8)
-      .padding(.vertical, 4)
-      .background(status == .completed ? Color.green.opacity(0.2) : Color.red.opacity(0.2))
-      .foregroundColor(status == .completed ? .green : .red)
-      .clipShape(Capsule())
-  }
-}
-
-final class HistoryViewModel: ObservableObject {
-  @Published var entries: [ProcessingHistory] = []
-
-  init() {
-    loadHistory()
-  }
-
-  func loadHistory() {
-    Task {
-      let history = try? await PersistenceManager.shared.loadHistory()
-      await MainActor.run {
-        self.entries = (history ?? []).sorted { $0.timestamp > $1.timestamp }
+    .navigationTitle("History")
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        Button(role: .destructive) { model.clearHistory() } label: { Label("Clear", systemImage: "trash") }
+          .disabled(model.history.isEmpty)
       }
+    }
+    .task { await model.refreshHistory() }
+  }
+
+  private func color(for status: ProcessingStatus) -> Color {
+    switch status {
+    case .completed: return .green
+    case .failed: return .red
+    case .cancelled: return .orange
     }
   }
 
-  func clearHistory() {
-    // Clear
-    entries.removeAll()
-    // TODO: PersistenceManager.clearHistory()
+  private func icon(for status: ProcessingStatus) -> String {
+    switch status {
+    case .completed: return "checkmark.circle.fill"
+    case .failed: return "xmark.circle.fill"
+    case .cancelled: return "minus.circle.fill"
+    }
   }
 }

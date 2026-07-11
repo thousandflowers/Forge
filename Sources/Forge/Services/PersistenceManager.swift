@@ -86,6 +86,12 @@ actor PersistenceManager {
     return try JSONDecoder().decode([ProcessingHistory].self, from: data)
   }
 
+  func clearHistory() async throws {
+    if fileManager.fileExists(atPath: historyFile.path) {
+      try fileManager.removeItem(at: historyFile)
+    }
+  }
+
   // MARK: - Settings
 
   func loadSettings() async throws -> AppSettings {

@@ -1,7 +1,7 @@
 import Foundation
 
 /// User-configurable application settings
-struct AppSettings: Codable, Sendable {
+struct AppSettings: Codable, Sendable, Equatable {
   var nativeProcessorsEnabled: Bool = true
 
   var maxConcurrentNative: Int = 2  // Range 1-8

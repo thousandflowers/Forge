@@ -8,7 +8,7 @@ Drag in hundreds of images, videos, audio files, or PDFs. Pick a preset. Convert
 
 [![Build and Test](https://github.com/thousandflowers/Forge/actions/workflows/build.yml/badge.svg)](https://github.com/thousandflowers/Forge/actions/workflows/build.yml)
 [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-orange.svg)](https://swift.org)
-[![macOS 12+](https://img.shields.io/badge/macOS-12%2B-blue.svg)](https://developer.apple.com/macos)
+[![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue.svg)](https://developer.apple.com/macos)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 <img src="docs/screenshot.png" alt="Forge — batch file conversion on macOS" width="720">
@@ -46,7 +46,7 @@ cd Forge
 swift build -c release
 .build/release/Forge
 ```
-Requires macOS 12+ and Swift 5.9+.
+Requires macOS 13+ (Ventura) and Swift 5.9+.
 
 ## Usage
 

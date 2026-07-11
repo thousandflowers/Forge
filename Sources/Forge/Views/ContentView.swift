@@ -1,57 +1,31 @@
 import SwiftUI
 
 struct ContentView: View {
-  @StateObject private var viewModel = ContentViewModel()
-  @State private var coordinator = ProcessingCoordinator(registry: ProcessorRegistry(), settings: AppSettings())
+  @EnvironmentObject private var model: AppModel
+  @State private var section: AppSection? = .process
 
   var body: some View {
-    TabView {
-      BatchProcessingView(coordinator: coordinator)
-        .tabItem {
-          Label("Process", systemImage: "square.and.arrow.down")
-        }
-
-      MonitoredFoldersView()
-        .tabItem {
-          Label("Folders", systemImage: "folder")
-        }
-
-      PresetsView()
-        .tabItem {
-          Label("Presets", systemImage: "slider.horizontal.3")
-        }
-
-      HistoryView()
-        .tabItem {
-          Label("History", systemImage: "clock")
-        }
-
-      SettingsView()
-        .tabItem {
-          Label("Settings", systemImage: "gear")
-        }
+    NavigationSplitView {
+      List(AppSection.allCases, selection: $section) { item in
+        Label(item.title, systemImage: item.icon)
+          .tag(item)
+      }
+      .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
+      .navigationTitle("Forge")
+    } detail: {
+      detail
     }
-    .frame(minWidth: 900, minHeight: 600)
-    .alert("Error", isPresented: $viewModel.showError) {
-      Button("OK", role: .cancel) { }
-    } message: {
-      Text(viewModel.errorMessage ?? "Unknown error")
-    }
-  }
-}
-
-// MARK: - ViewModel
-
-final class ContentViewModel: ObservableObject {
-  @Published var showError = false
-  @Published var errorMessage: String?
-
-  init() {
-    // Initialize app
+    .task { await model.bootstrap() }
   }
 
-  func showError(_ message: String) {
-    self.errorMessage = message
-    self.showError = true
+  @ViewBuilder
+  private var detail: some View {
+    switch section ?? .process {
+    case .process:  BatchProcessingView()
+    case .presets:  PresetsView()
+    case .folders:  MonitoredFoldersView()
+    case .history:  HistoryView()
+    case .settings: SettingsView()
+    }
   }
 }

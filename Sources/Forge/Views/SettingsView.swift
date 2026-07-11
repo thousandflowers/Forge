@@ -1,59 +1,34 @@
 import SwiftUI
 
 struct SettingsView: View {
-  @StateObject private var viewModel = SettingsViewModel()
+  @EnvironmentObject private var model: AppModel
 
   var body: some View {
     Form {
-      Section(header: Text("Processors")) {
-        Toggle("Native Processors", isOn: $viewModel.settings.nativeProcessorsEnabled)
-          .disabled(true) // always on
-      }
-
-      Section(header: Text("Performance")) {
-        HStack {
-          Text("Max Concurrent Native")
-          Spacer()
-          Stepper(value: $viewModel.settings.maxConcurrentNative, in: 1...8) {
-            Text("\(viewModel.settings.maxConcurrentNative)")
-          }
-          .frame(width: 80)
+      Section("Performance") {
+        Stepper(value: $model.settings.maxConcurrentNative, in: 1...8) {
+          LabeledContent("Max concurrent conversions", value: "\(model.settings.maxConcurrentNative)")
         }
-
         HStack {
-          Text("Memory Warning Threshold (MB)")
+          Text("Memory warning threshold")
           Spacer()
-          TextField("MB", value: $viewModel.settings.memoryWarningThresholdMB, format: .number)
-            .textFieldStyle(RoundedBorderTextFieldStyle())
-            .frame(width: 80)
+          TextField("MB", value: $model.settings.memoryWarningThresholdMB, format: .number)
+            .frame(width: 70).multilineTextAlignment(.trailing)
+          Text("MB").foregroundStyle(.secondary)
         }
       }
-
-      Section(header: Text("File Handling")) {
-        Toggle("Create Backup Before Overwrite", isOn: $viewModel.settings.createBackupBeforeOverwrite)
-        Toggle("Show Notifications", isOn: $viewModel.settings.showNotifications)
+      Section("File handling") {
+        Toggle("Create backup before overwrite", isOn: $model.settings.createBackupBeforeOverwrite)
+        Toggle("Preserve original metadata", isOn: $model.settings.preserveOriginalMetadata)
+        Toggle("Show notifications", isOn: $model.settings.showNotifications)
       }
-
-      Section(header: Text("About")) {
-        HStack {
-          Text("Version")
-          Spacer()
-          Text("0.1.0 (Alpha)")
-            .foregroundColor(.secondary)
-        }
-        HStack {
-          Text("Build")
-          Spacer()
-          Text("2025-03-24")
-            .foregroundColor(.secondary)
-        }
+      Section("About") {
+        LabeledContent("Version", value: "0.1.0 (Alpha)")
+        LabeledContent("Frameworks", value: "Core Image · AVFoundation · PDFKit")
       }
     }
-    .padding()
-    .frame(width: 600, height: 500)
+    .formStyle(.grouped)
+    .navigationTitle("Settings")
+    .onChange(of: model.settings) { _ in model.saveSettings() }
   }
-}
-
-final class SettingsViewModel: ObservableObject {
-  @Published var settings: AppSettings = .load()
 }

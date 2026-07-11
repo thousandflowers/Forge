@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
   name: "Forge",
   platforms: [
-    .macOS(.v12)  // Monterey
+    .macOS(.v13)  // Ventura
   ],
   products: [
     .executable(
