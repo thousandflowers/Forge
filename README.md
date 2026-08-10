@@ -2,6 +2,8 @@
 
 # 🔨 Forge
 
+> ⚠️ Alpha — in active development. Not ready for daily use yet.
+
 **A fast, native macOS app for batch file conversion — no dependencies, no bloat.**
 
 Drag in hundreds of images, videos, audio files, or PDFs. Pick a preset. Convert them all — in parallel, with RAM kept low by streaming. 100% Apple frameworks (Core Image, AVFoundation), zero external tools.
