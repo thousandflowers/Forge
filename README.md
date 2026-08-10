@@ -105,4 +105,4 @@ MIT — see [LICENSE](LICENSE).
 
 ## Acknowledgments
 
-Built with Core Image, AVFoundation, and SwiftUI. Inspired by the original [Shift](https://github.com/livshitz/shift) — this is a native, from-scratch rebuild.
+Built with Core Image, AVFoundation, and SwiftUI. Inspired by the original Shift — this is a native, from-scratch rebuild.
