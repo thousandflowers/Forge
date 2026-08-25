@@ -2,28 +2,28 @@
 
 # 🔨 Forge
 
-> ⚠️ Alpha — in active development. Not ready for daily use yet.
+> ⚠️ Alpha - in active development. Not ready for daily use yet.
 
-**A fast, native macOS app for batch file conversion — no dependencies, no bloat.**
+**A fast, native macOS app for batch file conversion - no dependencies, no bloat.**
 
-Drag in hundreds of images, videos, audio files, or PDFs. Pick a preset. Convert them all — in parallel, with RAM kept low by streaming. 100% Apple frameworks (Core Image, AVFoundation), zero external tools.
+Drag in hundreds of images, videos, audio files, or PDFs. Pick a preset. Convert them all - in parallel, with RAM kept low by streaming. 100% Apple frameworks (Core Image, AVFoundation), zero external tools.
 
 [![Build and Test](https://github.com/thousandflowers/Forge/actions/workflows/build.yml/badge.svg)](https://github.com/thousandflowers/Forge/actions/workflows/build.yml)
 [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-orange.svg)](https://swift.org)
 [![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue.svg)](https://developer.apple.com/macos)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-<img src="docs/screenshot.png" alt="Forge — batch file conversion on macOS" width="720">
+<img src="docs/screenshot.png" alt="Forge - batch file conversion on macOS" width="720">
 
 </div>
 
 ## Why Forge
 
-- **Native & dependency-free** — Core Image + AVFoundation do the work. No ImageMagick, FFmpeg, or LibreOffice to install. It just runs.
-- **Batch-first** — drop hundreds of files, convert them in bounded parallel waves that respect your concurrency setting.
-- **Memory-conscious** — streaming conversion keeps RAM flat even on large video.
-- **Watched folders** — assign a preset to a folder; anything dropped in is converted automatically (FSEvents).
-- **Presets & history** — reusable transformation pipelines, full processing history, JSON-backed (no Core Data).
+- **Native & dependency-free** - Core Image + AVFoundation do the work. No ImageMagick, FFmpeg, or LibreOffice to install. It just runs.
+- **Batch-first** - drop hundreds of files, convert them in bounded parallel waves that respect your concurrency setting.
+- **Memory-conscious** - streaming conversion keeps RAM flat even on large video.
+- **Watched folders** - assign a preset to a folder; anything dropped in is converted automatically (FSEvents).
+- **Presets & history** - reusable transformation pipelines, full processing history, JSON-backed (no Core Data).
 
 ## Supported formats
 
@@ -63,7 +63,7 @@ Requires macOS 13+ (Ventura) and Swift 5.9+.
 
 **Custom preset**
 1. **Presets** tab → **+**.
-2. Set target format, resize, quality (1–100), optional filter. Save — it's now usable in batch and watched-folder modes.
+2. Set target format, resize, quality (1–100), optional filter. Save - it's now usable in batch and watched-folder modes.
 
 ## Architecture
 
@@ -76,8 +76,8 @@ SwiftUI  ──▶  ProcessingCoordinator  ──▶  ProcessorRegistry  ──�
 
 - **ProcessorRegistry** picks the right processor for each file type.
 - **ProcessingCoordinator** runs conversions, tracks active tasks for cancellation.
-- **RulePreset** — serializable transformation pipelines.
-- **PersistenceManager** — JSON storage for presets, history, monitored folders.
+- **RulePreset** - serializable transformation pipelines.
+- **PersistenceManager** - JSON storage for presets, history, monitored folders.
 
 ## Development
 
@@ -101,8 +101,8 @@ PRs welcome. Fork → feature branch → tests green (`swift test`) → PR. Foll
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).
 
 ## Acknowledgments
 
-Built with Core Image, AVFoundation, and SwiftUI. Inspired by the original Shift — this is a native, from-scratch rebuild.
+Built with Core Image, AVFoundation, and SwiftUI. Inspired by the original Shift - this is a native, from-scratch rebuild.
