@@ -7,40 +7,36 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  test:
     runs-on: macos-14
-
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Setup Swift
-      uses: swift-actions/setup-swift@v2
-      with:
-        swift-version: '5.9'
+      - name: Show toolchain
+        run: swift --version
 
-    - name: Build
-      run: swift build -c release
+      - name: Build
+        run: swift build -c release
 
-    - name: Run Tests
-      run: swift test --enable-test-discovery
+      - name: Test
+        run: swift test
 
-    - name: Upload Build Artifact
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      uses: actions/upload-artifact@v4
-      with:
-        name: Forge-release
-        path: .build/release/Forge
+      # The app bundle is the only artifact anyone can actually run, so the
+      # script that assembles it is covered here too rather than only at
+      # release time, where a break is expensive.
+      - name: Build the app bundle
+        run: ./Scripts/build_app.sh
 
-    - name: Create DMG (if needed)
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      run: |
-        # Create a simple DMG (requires create-dmg tool)
-        # brew install create-dmg
-        # create-dmg \
-        #   --volname "Forge" \
-        #   --window-size 600 400 \
-        #   --app-drop-link 460 180 \
-        #   "Forge.dmg" \
-        #   ".build/release/Forge.app"
-        echo "DMG creation requires create-dmg tool (optional)"
-      shell: bash
+      - name: Check the bundle is universal and launchable
+        run: |
+          lipo -archs build/Forge.app/Contents/MacOS/Forge | tee /tmp/archs
+          grep -q arm64 /tmp/archs
+          grep -q x86_64 /tmp/archs
+          test -f build/Forge.app/Contents/Info.plist
+          codesign --verify --verbose=1 build/Forge.app
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: Forge-app
+          path: build/Forge.app

@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # Scripts/version.sh reads the tag
+
+      - name: Check the tag matches the version the scripts will stamp
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          BUILT="$(./Scripts/version.sh)"
+          echo "tag=$TAG built=$BUILT"
+          test "$TAG" = "$BUILT"
+
+      - name: Test
+        run: swift test
+
+      - name: Build the app
+        run: ./Scripts/build_app.sh
+
+      - name: Package the DMG
+        run: ./Scripts/make_dmg.sh
+
+      - name: Verify the DMG really contains a launchable app
+        run: |
+          VERSION="$(./Scripts/version.sh)"
+          hdiutil attach "build/Forge-$VERSION.dmg" -nobrowse -readonly -mountpoint /tmp/forge
+          test -f "/tmp/forge/Forge.app/Contents/MacOS/Forge"
+          lipo -archs /tmp/forge/Forge.app/Contents/MacOS/Forge
+          plutil -p /tmp/forge/Forge.app/Contents/Info.plist
+          hdiutil detach /tmp/forge
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(./Scripts/version.sh)"
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Forge $VERSION" \
+            --generate-notes \
+            "build/Forge-$VERSION.dmg"
