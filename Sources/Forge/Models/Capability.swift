@@ -104,6 +104,13 @@ enum Capabilities {
         status: .available(detail: "PDF, DOCX, RTF, HTML, TXT")
       ),
       Capability(
+        id: "data",
+        title: "Data files",
+        summary: "CSV, TSV, JSON and Property List, between each other.",
+        symbol: "tablecells",
+        status: .available(detail: "CSV, TSV, JSON, PLIST")
+      ),
+      Capability(
         id: "ocr",
         title: "Text recognition",
         summary: "Read text out of images and scanned PDFs, on device.",

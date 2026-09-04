@@ -10,6 +10,9 @@ actor ProcessingCoordinator {
   private let processors: [FileProcessor] = [
     ImageProcessor(),
     MediaProcessor(),
+    // Before the document reader: JSON and CSV are plain text as far as the
+    // system is concerned, and the document reader would take them.
+    DataProcessor(),
     SimpleDocProcessor(),
     ModelProcessor(),
   ]

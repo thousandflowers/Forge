@@ -50,7 +50,9 @@ Native, no new dependencies, in rough order of value.
       container alone could never say which was meant.
 - [ ] **Multi-size ICO** - encoding several resolutions into one file.
 - [ ] **M4B** - the audiobook variant of the M4A container.
-- [ ] **Config files** - CSV ↔ JSON and JSON ↔ Property List, both Foundation.
+- [x] **Data files** - CSV, TSV, JSON and Property List between each other,
+      with the awkward parts of separated values handled: quoted fields,
+      separators and newlines inside them.
 - [ ] **Audio → video** - wrapping an audio file in an MP4 container.
 - [ ] **Embedded subtitle extraction** - subtitle tracks inside a movie are
       reachable through AVFoundation.
@@ -142,6 +144,8 @@ installed.
   `.aar` only, and shelling out to `ditto` or `tar` is the external-tool
   problem wearing a hat.
 - **YAML, TOML** - no parser in the standard library or in any Apple framework.
+  CSV, JSON and Property List are supported precisely because Foundation has
+  readers for them.
 - **EML, EMLX, MSG** - no reader.
 - **SubRip, SubViewer, MicroDVD** - no system parser for standalone subtitle
   files. Hand-writing one is possible but it is a parser to maintain, not a
