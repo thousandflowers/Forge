@@ -85,8 +85,10 @@ Native, no new dependencies, in rough order of value.
 - [x] **Quality and format controls in the convert screen** - an Adjust button
       overrides the preset's format, width and quality for one batch, without
       editing the preset.
-- [ ] **Estimated output size and a summary before converting** - worth having
-      precisely because the destination modes can replace files.
+- [x] **A summary before converting, and the real number after** - Overwrite
+      and Move ask first, saying what changes and whether a copy is kept. There
+      is deliberately no size *estimate*: it would be a guess. What is reported
+      afterwards is measured - "1.4 MB written, 62% smaller".
 - [x] **Filename suffix when resizing** - `photo-1280.jpg`. Converting one
       picture to three sizes used to give `photo.jpg`, `photo 2.jpg` and
       `photo 3.jpg`. Not applied when converting in place, where the file keeps

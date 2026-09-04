@@ -129,7 +129,7 @@ struct PresetCard: View {
     preset.actions.map(Self.chip)
   }
 
-  private static func chip(_ action: Operation) -> String {
+  static func chip(_ action: Operation) -> String {
     switch action {
     case .convertFormat(let to):
       return (to.preferredFilenameExtension ?? "fmt").uppercased()

@@ -681,3 +681,42 @@ final class PresetOrderTests: BaseTestCase {
     XCTAssertEqual(preset.position, 0)
   }
 }
+
+/// What a batch cost, measured rather than guessed.
+final class SavingReportTests: BaseTestCase {
+
+  private func file(_ name: String, bytes: Int) throws -> ProcessableFile {
+    let url = path(name)
+    try Data(repeating: 0, count: bytes).write(to: url)
+    // A .png that is not a PNG is fine here: only the size is read.
+    return ProcessableFile(
+      url: url, fileType: .png, fileName: name, fileSize: Int64(bytes), dimensions: nil
+    )
+  }
+
+  func test_reportsHowMuchSmaller() throws {
+    let source = try file("in.png", bytes: 1000)
+    let output = path("out.jpeg")
+    try Data(repeating: 0, count: 250).write(to: output)
+
+    let saving = try XCTUnwrap(BatchViewModel.saving(from: [output], sources: [source]))
+    XCTAssertTrue(saving.contains("75%"), saving)
+    XCTAssertTrue(saving.contains("smaller"), saving)
+  }
+
+  /// A conversion can make a file bigger - PNG from JPEG, or lossless audio -
+  /// and saying "0% smaller" would be a lie of omission.
+  func test_reportsWhenItGotBigger() throws {
+    let source = try file("in.jpeg", bytes: 100)
+    let output = path("out.png")
+    try Data(repeating: 0, count: 300).write(to: output)
+
+    let saving = try XCTUnwrap(BatchViewModel.saving(from: [output], sources: [source]))
+    XCTAssertTrue(saving.contains("larger"), saving)
+  }
+
+  func test_nothingConvertedMeansNothingToReport() throws {
+    let source = try file("in.png", bytes: 100)
+    XCTAssertNil(BatchViewModel.saving(from: [], sources: [source]))
+  }
+}
