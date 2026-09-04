@@ -6,7 +6,14 @@ import UniformTypeIdentifiers
 /// Turning text into speech, with the voices already installed.
 final class SpeechSynthesisTests: BaseTestCase {
 
+  /// A machine with no speech voices cannot be asked to speak; that is a skip
+  /// rather than a failure, and CI runners are such machines.
+  private func requireVoices() throws {
+    try XCTSkipIf(SpeechSynthesis.voices.isEmpty, "no speech voices installed")
+  }
+
   func test_textBecomesAudio() async throws {
+    try requireVoices()
     let source = path("notes.txt")
     try "Forge converts files without any dependencies at all."
       .write(to: source, atomically: true, encoding: .utf8)
@@ -33,6 +40,7 @@ final class SpeechSynthesisTests: BaseTestCase {
   }
 
   func test_anEmptyDocumentSaysSoRatherThanWritingSilence() async throws {
+    try requireVoices()
     let source = path("empty.txt")
     try "   \n  ".write(to: source, atomically: true, encoding: .utf8)
     let destination = try folder("out")
@@ -50,13 +58,14 @@ final class SpeechSynthesisTests: BaseTestCase {
     }
   }
 
-  func test_theInstalledVoicesAreReported() {
-    XCTAssertFalse(SpeechSynthesis.voices.isEmpty)
+  func test_theInstalledVoicesAreReported() throws {
+    try requireVoices()
     XCTAssertFalse(SpeechSynthesis.languages.isEmpty)
   }
 
   /// A language without a region should still find a voice.
   func test_aLanguageWithoutARegionFindsAVoice() throws {
+    try requireVoices()
     let italian = try XCTUnwrap(SpeechSynthesis.voice(for: "it"))
     XCTAssertTrue(italian.language.hasPrefix("it"), italian.language)
   }

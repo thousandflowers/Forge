@@ -59,9 +59,7 @@ enum MovieWriter {
 
     for (index, frame) in frames.enumerated() {
       try Task.checkCancellation()
-      while !input.isReadyForMoreMediaData {
-        try await Task.sleep(nanoseconds: 5_000_000)
-      }
+      try await waitUntilReady(input, writer: writer)
       guard let pool = adaptor.pixelBufferPool else {
         throw ProcessingError.conversionFailed(reason: "Cannot allocate video frames")
       }
@@ -81,6 +79,25 @@ enum MovieWriter {
       throw ProcessingError.conversionFailed(
         reason: writer.error?.localizedDescription ?? "The movie did not finish writing"
       )
+    }
+  }
+
+  /// Wait for the writer to take more data, but not for ever.
+  ///
+  /// `isReadyForMoreMediaData` has no failure path: a writer that stalls simply
+  /// never becomes ready, and looping on it hangs whatever asked.
+  private static func waitUntilReady(_ input: AVAssetWriterInput, writer: AVAssetWriter) async throws {
+    let deadline = Date().addingTimeInterval(30)
+    while !input.isReadyForMoreMediaData {
+      if writer.status == .failed || writer.status == .cancelled {
+        throw ProcessingError.conversionFailed(
+          reason: writer.error?.localizedDescription ?? "The movie writer stopped"
+        )
+      }
+      guard Date() < deadline else {
+        throw ProcessingError.conversionFailed(reason: "The movie writer stopped accepting frames")
+      }
+      try await Task.sleep(nanoseconds: 5_000_000)
     }
   }
 

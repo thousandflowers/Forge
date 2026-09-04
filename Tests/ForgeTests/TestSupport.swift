@@ -368,7 +368,9 @@ enum Fixture {
     let fps: Int32 = 30
     let total = Int(seconds * Double(fps))
     for frame in 0..<total {
+      let deadline = Date().addingTimeInterval(30)
       while !input.isReadyForMoreMediaData {
+        guard Date() < deadline else { throw Failure("The fixture writer stopped accepting frames") }
         try await Task.sleep(nanoseconds: 5_000_000)
       }
       guard let pool = adaptor.pixelBufferPool else { throw Failure("No pixel buffer pool") }

@@ -50,14 +50,27 @@ enum SpeechSynthesis {
 
     let writer = BufferWriter(output: output, formatID: formatID, type: type)
     let synthesizer = AVSpeechSynthesizer()
+    let gate = ResumeOnce()
+
+    // Wait with a limit. The synthesiser is a callback with no failure path: on
+    // a machine with no audio stack it simply never calls back, and waiting on
+    // that forever hangs whatever asked - a batch, or a test runner.
+    let budget = timeout(for: trimmed)
 
     await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-      let done = OnceFlag()
+      gate.arm(continuation)
+
+      let deadline = Task {
+        try? await Task.sleep(nanoseconds: UInt64(budget * 1_000_000_000))
+        gate.resume()
+      }
+
       synthesizer.write(utterance) { buffer in
         guard let pcm = buffer as? AVAudioPCMBuffer else { return }
         // A zero-length buffer is how the synthesiser says it has finished.
         guard pcm.frameLength > 0 else {
-          if done.claim() { continuation.resume() }
+          deadline.cancel()
+          gate.resume()
           return
         }
         writer.append(pcm)
@@ -65,8 +78,21 @@ enum SpeechSynthesis {
       }
     }
 
+    guard writer.wroteAnything else {
+      throw ProcessingError.conversionFailed(
+        reason: "No speech was produced within \(Int(budget)) seconds. This Mac may have no speech voices available."
+      )
+    }
+
     try writer.finish()
     progress(1.0)
+  }
+
+  /// Long enough for the text, with a floor for short ones. Speech runs far
+  /// faster than real time when it is writing to a file rather than a speaker.
+  private static func timeout(for text: String) -> Double {
+    let seconds = Double(text.count) / 10
+    return min(max(seconds, 20), 300)
   }
 }
 
@@ -111,6 +137,12 @@ private final class BufferWriter: @unchecked Sendable {
     }
   }
 
+  var wroteAnything: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return file != nil
+  }
+
   func finish() throws {
     lock.lock()
     defer { lock.unlock() }
@@ -122,16 +154,25 @@ private final class BufferWriter: @unchecked Sendable {
   }
 }
 
-/// Resumes a continuation exactly once, from whichever thread gets there first.
-private final class OnceFlag: @unchecked Sendable {
+/// Resumes a continuation exactly once, from whichever of the synthesiser and
+/// the deadline gets there first.
+private final class ResumeOnce: @unchecked Sendable {
   private let lock = NSLock()
-  private var claimed = false
+  private var continuation: CheckedContinuation<Void, Never>?
+  private var resumed = false
 
-  func claim() -> Bool {
+  func arm(_ continuation: CheckedContinuation<Void, Never>) {
     lock.lock()
     defer { lock.unlock() }
-    guard !claimed else { return false }
-    claimed = true
-    return true
+    self.continuation = continuation
+  }
+
+  func resume() {
+    lock.lock()
+    let pending = resumed ? nil : continuation
+    resumed = true
+    continuation = nil
+    lock.unlock()
+    pending?.resume()
   }
 }
