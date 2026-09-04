@@ -1,5 +1,6 @@
 import XCTest
 import AVFoundation
+import PDFKit
 import UniformTypeIdentifiers
 @testable import Forge
 
@@ -553,5 +554,56 @@ final class ImagesToVideoTests: BaseTestCase {
     let tracks = try await AVURLAsset(url: try XCTUnwrap(entry.outputURL))
       .loadTracks(withMediaType: .video)
     XCTAssertEqual(tracks.count, 1)
+  }
+}
+
+/// Images and PDF, in both directions.
+final class ImagePDFTests: BaseTestCase {
+
+  func test_imageBecomesPDF() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 300, height: 200)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .pdf, category: .image),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    let pdf = try XCTUnwrap(PDFDocument(url: try XCTUnwrap(entry.outputURL)))
+    XCTAssertEqual(pdf.pageCount, 1)
+  }
+
+  /// PDF holds many images, so an animation becomes one document rather than a
+  /// pile of files.
+  func test_ananimationBecomesAMultiPagePDF() async throws {
+    let source = try Fixture.animatedGIF(at: path("loop.gif"), frames: 5)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .pdf, category: .image),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(contents(of: destination), ["loop.pdf"], "one document, not one file per frame")
+    let pdf = try XCTUnwrap(PDFDocument(url: try XCTUnwrap(entry.outputURL)))
+    XCTAssertEqual(pdf.pageCount, 5)
+  }
+
+  func test_pdfBecomesImages() async throws {
+    let source = try Fixture.pdf(at: path("report.pdf"), pages: 3)
+    let destination = try folder("out")
+
+    _ = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .png, category: .document),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(contents(of: destination).count, 3)
   }
 }

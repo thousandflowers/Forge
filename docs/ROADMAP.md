@@ -41,7 +41,8 @@ Native, no new dependencies, in rough order of value.
 - [x] **Documents** - HTML, RTF, DOCX, ODT, Markdown and plain text convert to
       each other and to PDF, paginated with CoreText. Markdown is an input only:
       Foundation parses it and nothing on the system writes it back.
-- [ ] **Image ↔ PDF** - both directions; the write half already exists.
+- [x] **Image ↔ PDF** - both directions, and an animation becomes a multi-page
+      document rather than a pile of files.
 - [ ] **Codec choice** - ProRes and HEVC for video, and the container/codec split
       described below for audio.
 - [ ] **Multi-size ICO** - encoding several resolutions into one file.
