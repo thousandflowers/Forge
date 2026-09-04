@@ -9,21 +9,37 @@ actor PersistenceManager {
   private let presetsDir: URL
   private let foldersFile: URL
   private let historyFile: URL
-  private let settingsFile: URL
 
-  private init() {
-    let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-      .first!.appendingPathComponent("Forge")
+  /// The log in memory. Appending used to re-read and re-decode the whole file
+  /// for every single converted file, which turned a large batch quadratic.
+  private var cachedHistory: [ProcessingHistory]?
 
-    try? fileManager.createDirectory(at: appSupport, withIntermediateDirectories: true, attributes: nil)
+  /// Root of everything Forge stores for the user.
+  static var supportDirectory: URL {
+    let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+      ?? FileManager.default.temporaryDirectory
+    return base.appendingPathComponent("Forge")
+  }
 
-    self.presetsDir = appSupport.appendingPathComponent("Presets")
-    self.foldersFile = appSupport.appendingPathComponent("MonitoredFolders.json")
-    self.historyFile = appSupport.appendingPathComponent("History.json")
-    self.settingsFile = appSupport.appendingPathComponent("Settings.json")
+  /// The root this instance stores under. Tests point it at a scratch
+  /// directory so a test run cannot touch the files the app is keeping for the
+  /// person using it.
+  nonisolated let root: URL
+
+  init(root: URL = PersistenceManager.supportDirectory) {
+    self.root = root
+
+    try? fileManager.createDirectory(at: root, withIntermediateDirectories: true, attributes: nil)
+
+    self.presetsDir = root.appendingPathComponent("Presets")
+    self.foldersFile = root.appendingPathComponent("MonitoredFolders.json")
+    self.historyFile = root.appendingPathComponent("History.json")
 
     try? fileManager.createDirectory(at: presetsDir, withIntermediateDirectories: true, attributes: nil)
   }
+
+  /// Copies of files taken before an in-place conversion replaces them.
+  nonisolated var backupsDirectory: URL { root.appendingPathComponent("Backups") }
 
   // MARK: - Presets
 
@@ -42,11 +58,13 @@ actor PersistenceManager {
 
   func loadAllPresets() async throws -> [RulePreset] {
     let files = try fileManager.contentsOfDirectory(at: presetsDir, includingPropertiesForKeys: nil)
-    let presets = try files.compactMap { file in
-      let data = try Data(contentsOf: file)
-      return try JSONDecoder().decode(RulePreset.self, from: data)
+    // Skip anything that will not decode. One stray file used to take every
+    // preset down with it and leave the app looking freshly installed.
+    return files.compactMap { file in
+      guard file.pathExtension == "json",
+            let data = try? Data(contentsOf: file) else { return nil }
+      return try? JSONDecoder().decode(RulePreset.self, from: data)
     }
-    return presets
   }
 
   func deletePreset(id: UUID) async throws {
@@ -70,7 +88,7 @@ actor PersistenceManager {
   // MARK: - History
 
   func appendHistory(_ entry: ProcessingHistory) async throws {
-    var history = (try? await loadHistory()) ?? []
+    var history = try cachedHistory ?? loadHistory()
     history.append(entry)
     // Keep last 1000 entries
     if history.count > 1000 {
@@ -78,33 +96,23 @@ actor PersistenceManager {
     }
     let data = try JSONEncoder().encode(history)
     try data.write(to: historyFile, options: .atomic)
+    cachedHistory = history
   }
 
-  func loadHistory() async throws -> [ProcessingHistory] {
+  func loadHistory() throws -> [ProcessingHistory] {
+    if let cachedHistory { return cachedHistory }
     guard fileManager.fileExists(atPath: historyFile.path) else { return [] }
     let data = try Data(contentsOf: historyFile)
-    return try JSONDecoder().decode([ProcessingHistory].self, from: data)
+    let history = try JSONDecoder().decode([ProcessingHistory].self, from: data)
+    cachedHistory = history
+    return history
   }
 
   func clearHistory() async throws {
     if fileManager.fileExists(atPath: historyFile.path) {
       try fileManager.removeItem(at: historyFile)
     }
-  }
-
-  // MARK: - Settings
-
-  func loadSettings() async throws -> AppSettings {
-    guard fileManager.fileExists(atPath: settingsFile.path) else {
-      return AppSettings()
-    }
-    let data = try Data(contentsOf: settingsFile)
-    return try JSONDecoder().decode(AppSettings.self, from: data)
-  }
-
-  func saveSettings(_ settings: AppSettings) async throws {
-    let data = try JSONEncoder().encode(settings)
-    try data.write(to: settingsFile, options: .atomic)
+    cachedHistory = []
   }
 }
 

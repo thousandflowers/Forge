@@ -4,23 +4,22 @@ import CoreGraphics
 import AVFoundation
 
 /// Represents dimensions of a media file
-struct Dimensions: Hashable, Sendable, Codable {
+struct Dimensions: Hashable, Sendable {
   let width: Int
   let height: Int
 }
 
 /// Represents a file ready for processing
-struct ProcessableFile: Identifiable, Hashable, Codable, Sendable {
+struct ProcessableFile: Identifiable, Hashable, Sendable {
   let id = UUID()
   let url: URL
   let fileType: UTType
   let fileName: String
   let fileSize: Int64
-  let dimensions: Dimensions?
-
-  enum CodingKeys: String, CodingKey {
-    case url, fileType, fileName, fileSize, dimensions
-  }
+  /// Filled in straight away for images, whose size is in the file header.
+  /// Video dimensions arrive later: reading them opens the asset, and doing
+  /// that for every file as it is added froze the window on a large batch.
+  var dimensions: Dimensions?
 
   init(url: URL) throws {
     self.url = url
@@ -44,9 +43,7 @@ struct ProcessableFile: Identifiable, Hashable, Codable, Sendable {
     }
     self.fileType = type
 
-    // Extract dimensions (async would be better but synchronous for init)
-    // For large files, you might want to make this async
-    self.dimensions = try Self.extractDimensions(url: url, type: type)
+    self.dimensions = Self.imageDimensions(url: url, type: type)
   }
 
   init(url: URL, fileType: UTType, fileName: String, fileSize: Int64, dimensions: Dimensions?) {
@@ -57,54 +54,32 @@ struct ProcessableFile: Identifiable, Hashable, Codable, Sendable {
     self.dimensions = dimensions
   }
 
-  // For deserialization
-  init(from decoder: Decoder) throws {
-    let container = try decoder.container(keyedBy: CodingKeys.self)
-    self.url = try container.decode(URL.self, forKey: .url)
-    self.fileType = try container.decode(UTType.self, forKey: .fileType)
-    self.fileName = try container.decode(String.self, forKey: .fileName)
-    self.fileSize = try container.decode(Int64.self, forKey: .fileSize)
-    self.dimensions = try container.decodeIfPresent(Dimensions.self, forKey: .dimensions)
+  /// Image size, read from the header without decoding the image.
+  private static func imageDimensions(url: URL, type: UTType) -> Dimensions? {
+    guard type.conforms(to: .image) else { return nil }
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+          let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+          let width = properties[kCGImagePropertyPixelWidth] as? Int,
+          let height = properties[kCGImagePropertyPixelHeight] as? Int else {
+      return nil
+    }
+    return Dimensions(width: width, height: height)
   }
 
-  func encode(to encoder: Encoder) throws {
-    var container = encoder.container(keyedBy: CodingKeys.self)
-    try container.encode(url, forKey: .url)
-    try container.encode(fileType, forKey: .fileType)
-    try container.encode(fileName, forKey: .fileName)
-    try container.encode(fileSize, forKey: .fileSize)
-    try container.encodeIfPresent(dimensions, forKey: .dimensions)
-  }
-
-  private static func extractDimensions(url: URL, type: UTType) throws -> Dimensions? {
-    // Images: use CGImageSource (no full decode)
-    if type.conforms(to: .image) {
-      guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-            let w = properties[kCGImagePropertyPixelWidth] as? Int,
-            let h = properties[kCGImagePropertyPixelHeight] as? Int else {
-        return nil
-      }
-      return Dimensions(width: w, height: h)
+  /// Video size, including the rotation the track carries, loaded off the
+  /// caller's thread.
+  static func videoDimensions(url: URL, type: UTType) async -> Dimensions? {
+    guard type.conforms(to: .movie) || type.conforms(to: .video) else { return nil }
+    let asset = AVURLAsset(url: url)
+    guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+          let size = try? await track.load(.naturalSize),
+          let transform = try? await track.load(.preferredTransform) else {
+      return nil
     }
-
-    // Videos: use AVAsset (fast, doesn't load frames)
-    if type.conforms(to: .movie) || type.conforms(to: .video) {
-      let asset = AVURLAsset(url: url)
-      guard let track = asset.tracks(withMediaType: .video).first else {
-        return nil
-      }
-      let size = track.naturalSize
-      let transform = track.preferredTransform
-      // Handle rotation: if portrait, swap width/height
-      let isPortrait = abs(transform.a) == 0 && (abs(transform.b) == 1)
-      if isPortrait {
-        return Dimensions(width: Int(size.height), height: Int(size.width))
-      }
-      return Dimensions(width: Int(size.width), height: Int(size.height))
-    }
-
-    // Audio: could extract duration, but not dimensions
-    return nil
+    // A portrait recording stores landscape pixels plus a rotation.
+    let isPortrait = abs(transform.a) == 0 && abs(transform.b) == 1
+    return isPortrait
+      ? Dimensions(width: Int(size.height), height: Int(size.width))
+      : Dimensions(width: Int(size.width), height: Int(size.height))
   }
 }

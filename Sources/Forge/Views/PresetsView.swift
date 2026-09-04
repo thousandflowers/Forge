@@ -51,7 +51,7 @@ struct PresetCard: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
-        Image(systemName: preset.icon ?? preset.category.icon)
+        Image(systemName: preset.category.icon)
           .foregroundStyle(.tint)
           .font(.title3)
         Spacer()
@@ -84,10 +84,21 @@ struct PresetCard: View {
     .contentShape(Rectangle())
   }
 
+  /// "1080×1080", or "1080 wide" when only one side is pinned. It used to
+  /// render the missing side as 0.
+  private static func sizeChip(_ resize: ResizeSpec) -> String? {
+    switch (resize.width, resize.height) {
+    case let (width?, height?): return "\(width)×\(height)"
+    case let (width?, nil): return "\(width) wide"
+    case let (nil, height?): return "\(height) tall"
+    case (nil, nil): return nil
+    }
+  }
+
   private var chips: [String] {
     var c: [String] = []
     if let f = preset.targetFormat { c.append((f.preferredFilenameExtension ?? "fmt").uppercased()) }
-    if let r = preset.resize { c.append("\(r.width ?? 0)×\(r.height ?? 0)") }
+    if let r = preset.resize, let chip = Self.sizeChip(r) { c.append(chip) }
     if let q = preset.quality { c.append("Q\(q)") }
     if !preset.filters.isEmpty { c.append("\(preset.filters.count) filter\(preset.filters.count == 1 ? "" : "s")") }
     return c

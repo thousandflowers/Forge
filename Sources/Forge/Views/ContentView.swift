@@ -16,6 +16,18 @@ struct ContentView: View {
       detail
     }
     .task { await model.bootstrap() }
+    .alert(
+      "Forge ran into a problem",
+      isPresented: Binding(
+        get: { model.lastError != nil },
+        set: { if !$0 { model.lastError = nil } }
+      ),
+      presenting: model.lastError
+    ) { _ in
+      Button("OK", role: .cancel) { model.lastError = nil }
+    } message: { message in
+      Text(message)
+    }
   }
 
   @ViewBuilder

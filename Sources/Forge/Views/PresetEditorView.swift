@@ -9,7 +9,7 @@ struct PresetEditorView: View {
   @State private var name: String
   @State private var description: String
   @State private var category: PresetCategory
-  @State private var formatChoice: FormatChoice
+  @State private var format: OutputFormat
   @State private var enableResize: Bool
   @State private var width: String
   @State private var height: String
@@ -24,7 +24,7 @@ struct PresetEditorView: View {
     _name = State(initialValue: preset?.name ?? "")
     _description = State(initialValue: preset?.description ?? "")
     _category = State(initialValue: preset?.category ?? .image)
-    _formatChoice = State(initialValue: FormatChoice(preset?.targetFormat))
+    _format = State(initialValue: OutputFormat(type: preset?.targetFormat))
     _enableResize = State(initialValue: preset?.resize != nil)
     _width = State(initialValue: preset?.resize?.width.map(String.init) ?? "")
     _height = State(initialValue: preset?.resize?.height.map(String.init) ?? "")
@@ -45,8 +45,17 @@ struct PresetEditorView: View {
           }
         }
         Section("Output") {
-          Picker("Format", selection: $formatChoice) {
-            ForEach(FormatChoice.allCases) { Text($0.label).tag($0) }
+          Picker("Format", selection: $format) {
+            Text(OutputFormat.keep.label).tag(OutputFormat.keep)
+            Section("Images") {
+              ForEach(OutputFormat.images) { Text($0.label).tag($0) }
+            }
+            Section("Audio") {
+              ForEach(OutputFormat.audio) { Text($0.label).tag($0) }
+            }
+            Section("Video") {
+              ForEach(OutputFormat.video) { Text($0.label).tag($0) }
+            }
           }
           Toggle("Resize", isOn: $enableResize)
           if enableResize {
@@ -93,61 +102,53 @@ struct PresetEditorView: View {
   }
 
   private func save() {
-    let resize: ResizeSpec? = enableResize
-      ? ResizeSpec(width: Int(width), height: Int(height), fitMode: fitMode)
-      : nil
+    // "Resize" with nothing typed into either box, or with text that is not a
+    // positive number, is not a resize at all.
+    let resize: ResizeSpec? = {
+      guard enableResize else { return nil }
+      let w = Int(width.trimmingCharacters(in: .whitespaces)).flatMap { $0 > 0 ? $0 : nil }
+      let h = Int(height.trimmingCharacters(in: .whitespaces)).flatMap { $0 > 0 ? $0 : nil }
+      guard w != nil || h != nil else { return nil }
+      return ResizeSpec(width: w, height: h, fitMode: fitMode)
+    }()
     let preset = RulePreset(
       id: existing?.id ?? UUID(),
       name: name.trimmingCharacters(in: .whitespaces),
       description: description,
-      targetFormat: formatChoice.utType,
+      targetFormat: format.type,
       resize: resize,
       quality: enableQuality ? Int(quality) : nil,
-      targetSize: existing?.targetSize,
       filters: Array(filters),
-      icon: existing?.icon,
-      category: category,
-      applicableFileTypes: existing?.applicableFileTypes
+      category: category
     )
     onSave(preset)
     dismiss()
   }
 }
 
-/// User-facing output-format choices, mapped to concrete UTTypes.
-enum FormatChoice: String, CaseIterable, Identifiable {
-  case keep, jpeg, png, heic, tiff, mp4, mov, mp3, m4a, wav
-  var id: String { rawValue }
+/// The output formats offered in the editor, taken from what this machine can
+/// really write rather than a list typed out by hand. The old list offered MP3,
+/// which AVFoundation cannot encode, and omitted most of what does work.
+struct OutputFormat: Identifiable, Hashable {
+  /// `nil` means "keep the source format".
+  let type: UTType?
 
-  init(_ type: UTType?) {
-    switch type {
-    case .some(.jpeg): self = .jpeg
-    case .some(.png): self = .png
-    case .some(.heic): self = .heic
-    case .some(.tiff): self = .tiff
-    case .some(.mpeg4Movie): self = .mp4
-    case .some(.quickTimeMovie): self = .mov
-    case .some(.mp3): self = .mp3
-    case .some(.wav): self = .wav
-    default:
-      if let t = type, t.identifier == "com.apple.m4a-audio" { self = .m4a } else { self = .keep }
-    }
+  var id: String { type?.identifier ?? "keep" }
+
+  var label: String {
+    guard let type else { return "Keep original" }
+    return type.preferredFilenameExtension?.uppercased() ?? type.identifier
   }
 
-  var label: String { self == .keep ? "Keep original" : rawValue.uppercased() }
+  static let keep = OutputFormat(type: nil)
 
-  var utType: UTType? {
-    switch self {
-    case .keep: return nil
-    case .jpeg: return .jpeg
-    case .png: return .png
-    case .heic: return .heic
-    case .tiff: return .tiff
-    case .mp4: return .mpeg4Movie
-    case .mov: return .quickTimeMovie
-    case .mp3: return .mp3
-    case .m4a: return UTType("com.apple.m4a-audio")
-    case .wav: return .wav
-    }
+  static var images: [OutputFormat] { Self.sorted(FormatCatalog.writableImageTypes) }
+  static var audio: [OutputFormat] { Self.sorted(Set(FormatCatalog.writableAudioTypes.keys)) }
+  static var video: [OutputFormat] { Self.sorted(FormatCatalog.writableVideoTypes) }
+
+  private static func sorted(_ types: Set<UTType>) -> [OutputFormat] {
+    types
+      .map { OutputFormat(type: $0) }
+      .sorted { $0.label < $1.label }
   }
 }

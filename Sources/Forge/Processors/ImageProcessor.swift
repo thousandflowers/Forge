@@ -4,24 +4,13 @@ import ImageIO
 import CoreImage
 import UniformTypeIdentifiers
 
-/// Native image processor using Core Image / ImageIO
+/// Image conversion through ImageIO and Core Image.
 final class ImageProcessor: FileProcessor, @unchecked Sendable {
   let name = "Image Processor"
-  let supportedTypes: [UTType] = {
-    var types: [UTType] = []
-    let extensions = ["png", "jpeg", "jpg", "tiff", "heic", "webp", "gif", "bmp", "tga", "ico"]
-    for ext in extensions {
-      if let type = UTType(filenameExtension: ext) {
-        types.append(type)
-      }
-    }
-    return types
-  }()
 
   private let ciContext: CIContext
 
   init() {
-    // Use GPU-backed CIContext for performance
     self.ciContext = CIContext(options: [
       .useSoftwareRenderer: false,
       .cacheIntermediates: false
@@ -29,18 +18,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
   }
 
   func canProcess(_ file: ProcessableFile) -> Bool {
-    supportedTypes.contains { file.fileType.conforms(to: $0) }
-  }
-
-  func supportedOutputTypes(for input: UTType) -> [UTType] {
-    // All common image formats are supported as output
-    var types: [UTType] = []
-    [ "jpeg", "png", "tiff", "heic", "webp", "bmp", "gif" ].forEach { ext in
-      if let type = UTType(filenameExtension: ext) {
-        types.append(type)
-      }
-    }
-    return types
+    FormatCatalog.isReadableImage(file.fileType)
   }
 
   func process(
@@ -51,201 +29,177 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
   ) async throws -> ProcessingResult {
     let start = Date()
 
-    // Validate operations early
-    try validateOperations(operations, for: try Self.determineInputType(input))
-
-    // Step 1: Load image source without full caching
     let inputOptions: [CFString: Any] = [
       kCGImageSourceShouldCache: false,
       kCGImageSourceShouldAllowFloat: true
     ]
 
     guard let source = CGImageSourceCreateWithURL(input as CFURL, inputOptions as CFDictionary) else {
-      throw ProcessingError.conversionFailed(reason: "Cannot create image source from \(input.lastPathComponent)")
+      throw ProcessingError.conversionFailed(reason: "Cannot read \(input.lastPathComponent)")
     }
-
-    // Get image properties (optional for some formats)
     guard let cgImage = CGImageSourceCreateImageAtIndex(source, 0, inputOptions as CFDictionary) else {
-      throw ProcessingError.conversionFailed(reason: "Cannot decode image")
+      throw ProcessingError.conversionFailed(reason: "Cannot decode \(input.lastPathComponent)")
     }
 
     var ciImage = CIImage(cgImage: cgImage)
 
-    // Step 2: Apply operations (transformations)
-    let filteredOps = operations
-
-    for (index, op) in filteredOps.enumerated() {
-      let opProgress = Double(index) / Double(max(1, filteredOps.count))
-      progress(opProgress * 0.7) // 70% of progress before final write
-
-      ciImage = try applyOperation(op, to: ciImage, originalSize: ciImage.extent.size)
+    for (index, operation) in operations.enumerated() {
+      try Task.checkCancellation()
+      progress(Double(index) / Double(max(1, operations.count)) * 0.7)
+      ciImage = try applyOperation(operation, to: ciImage)
     }
-
     progress(0.7)
 
-    // Step 3: Render and write output
     let outputUTI = determineOutputUTI(from: output, operations: operations)
-    let outputType = outputUTI.identifier as CFString
-
-    guard let destination = CGImageDestinationCreateWithURL(output as CFURL, outputType, 1, nil) else {
-      throw ProcessingError.conversionFailed(reason: "Cannot create destination for \(outputUTI)")
+    guard FormatCatalog.isWritableImage(outputUTI) else {
+      let inputType = UTType(filenameExtension: input.pathExtension) ?? .image
+      throw ProcessingError.unsupportedConversion(from: inputType, to: outputUTI)
     }
 
-    // Render CIImage to CGImage
+    guard let destination = CGImageDestinationCreateWithURL(
+      output as CFURL,
+      outputUTI.identifier as CFString,
+      1,
+      nil
+    ) else {
+      throw ProcessingError.conversionFailed(
+        reason: "Cannot write \(outputUTI.preferredFilenameExtension ?? outputUTI.identifier)"
+      )
+    }
+
     guard let rendered = ciContext.createCGImage(ciImage, from: ciImage.extent) else {
-      throw ProcessingError.conversionFailed(reason: "Failed to render image")
+      throw ProcessingError.conversionFailed(reason: "Failed to render \(input.lastPathComponent)")
     }
 
-    // Set format-specific options
-    let options = buildDestinationOptions(for: outputUTI, operations: operations)
+    try Task.checkCancellation()
+
+    let options = destinationOptions(for: outputUTI, operations: operations, source: source)
     CGImageDestinationAddImage(destination, rendered, options as CFDictionary)
 
     guard CGImageDestinationFinalize(destination) else {
-      throw ProcessingError.conversionFailed(reason: "Failed to write image to disk")
+      throw ProcessingError.conversionFailed(reason: "Failed to write \(output.lastPathComponent)")
     }
 
     progress(1.0)
 
-    // Step 4: Gather result metadata
-    let outputSize = try FileManager.default.attributesOfItem(atPath: output.path)[.size] as? Int64 ?? 0
-    let outputDims = (rendered.width, rendered.height)
-    let duration = Date().timeIntervalSince(start)
-
+    let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
     return ProcessingResult(
       outputURL: output,
-      outputSize: outputSize,
-      outputDimensions: outputDims,
-      duration: duration
+      outputSize: attributes[.size] as? Int64 ?? 0,
+      outputDimensions: (rendered.width, rendered.height),
+      duration: Date().timeIntervalSince(start)
     )
   }
 
-  // MARK: - Helpers
-
-  private static func determineInputType(_ url: URL) throws -> UTType {
-    guard let type = UTType(filenameExtension: url.pathExtension) else {
-      throw ProcessingError.unknownType
-    }
-    return type
-  }
+  // MARK: - Output
 
   private func determineOutputUTI(from outputURL: URL, operations: [Operation]) -> UTType {
-    // Priority 1: explicit convertFormat operation
-    if let convertOp = operations.first(where: {
-      if case .convertFormat = $0 { return true } else { return false }
-    }) {
-      if case .convertFormat(let to) = convertOp {
-        return to
-      }
-    }
-
-    // Priority 2: use URL extension
-    if let type = UTType(filenameExtension: outputURL.pathExtension) {
-      return type
-    }
-
-    // Default to JPEG using known identifier
-    return UTType(filenameExtension: "jpeg") ?? UTType("public.jpeg") ?? .png
+    let requested = operations.compactMap { operation -> UTType? in
+      guard case .convertFormat(let to) = operation else { return nil }
+      return to
+    }.first
+    return requested ?? UTType(filenameExtension: outputURL.pathExtension) ?? .jpeg
   }
 
-  private func buildDestinationOptions(for uti: UTType, operations: [Operation]) -> [CFString: Any] {
+  /// Carry the source's metadata across, and add the encoder settings the
+  /// requested operations imply. Conversions used to drop EXIF, GPS and
+  /// orientation on every single image.
+  private func destinationOptions(
+    for uti: UTType,
+    operations: [Operation],
+    source: CGImageSource
+  ) -> [CFString: Any] {
     var options: [CFString: Any] = [:]
 
-    // JPEG quality
-    if uti.conforms(to: .jpeg) {
-      let quality = extractQuality(from: operations)
-      options[kCGImageDestinationLossyCompressionQuality] = quality
+    if let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
+      // The pixel dimensions belong to the source; a resize makes them wrong,
+      // and ImageIO fills in the real ones anyway.
+      options = properties
+      options.removeValue(forKey: kCGImagePropertyPixelWidth)
+      options.removeValue(forKey: kCGImagePropertyPixelHeight)
     }
 
-    // WebP quality (if supported)
-    if let webpType = UTType(filenameExtension: "webp"), uti.conforms(to: webpType) {
-      let quality = extractQuality(from: operations)
-      options[kCGImageDestinationLossyCompressionQuality] = quality
+    if isLossy(uti) {
+      options[kCGImageDestinationLossyCompressionQuality] = quality(from: operations)
     }
-
-    // TIFF compression - note: constant may not be available on all platforms
-    // Uncomment if kCGImageDestinationTIFFCompression is available
-    // if uti.conforms(to: .tiff) {
-    //   options[kCGImageDestinationTIFFCompression] = 5 // LZW
-    // }
-
     return options
   }
 
-  private func extractQuality(from operations: [Operation]) -> Float {
-    var quality: Float = 0.85 // Default 85%
-    for op in operations {
-      if case .quality(let level) = op {
-        quality = Float(level) / 100.0
-        break
-      }
-    }
-    return quality
+  /// Quality only means something for formats that throw information away.
+  private func isLossy(_ uti: UTType) -> Bool {
+    [UTType.jpeg, .heic, UTType("public.avif"), UTType("public.jpeg-2000")]
+      .compactMap { $0 }
+      .contains { uti.conforms(to: $0) }
   }
 
-  private func applyOperation(_ op: Operation, to image: CIImage, originalSize: CGSize) throws -> CIImage {
-    switch op {
-    case .convertFormat:
-      return image // handled at output
+  private func quality(from operations: [Operation]) -> Float {
+    let level = operations.compactMap { operation -> Int? in
+      guard case .quality(let level) = operation else { return nil }
+      return level
+    }.first
+    return Float(level ?? 85) / 100.0
+  }
 
+  // MARK: - Operations
+
+  private func applyOperation(_ operation: Operation, to image: CIImage) throws -> CIImage {
+    switch operation {
+    case .convertFormat, .quality:
+      return image // both are settled when the file is encoded
     case .resize(let width, let height, let mode):
-      return try applyResize(image, to: width, targetHeight: height, mode: mode)
-
-    case .quality:
-      return image // handled at output
-
-    case .compress:
-      // For MVP, compress is just quality actually. Later we implement iterative size adjustment.
-      return image
-
+      return applyResize(image, targetWidth: width, targetHeight: height, mode: mode)
     case .filter(let type):
       return applyFilter(image, type: type)
-
-    case .rename:
-      return image // naming handled elsewhere
     }
   }
 
-  private func applyResize(_ image: CIImage, to targetWidth: Int?, targetHeight: Int?, mode: ResizeFitMode) throws -> CIImage {
-    let originalSize = image.extent.size
-    let targetW = targetWidth ?? Int(originalSize.width)
-    let targetH = targetHeight ?? Int(originalSize.height)
-
-    guard targetW > 0 && targetH > 0 else { return image }
-
-    let targetSize = CGSize(width: targetW, height: targetH)
+  private func applyResize(
+    _ image: CIImage,
+    targetWidth: Int?,
+    targetHeight: Int?,
+    mode: ResizeFitMode
+  ) -> CIImage {
+    let original = image.extent.size
+    let targetW = CGFloat(targetWidth ?? Int(original.width))
+    let targetH = CGFloat(targetHeight ?? Int(original.height))
+    guard targetW > 0, targetH > 0, original.width > 0, original.height > 0 else { return image }
 
     switch mode {
     case .proportional:
-      let scale = min(CGFloat(targetW) / originalSize.width, CGFloat(targetH) / originalSize.height)
-      let newSize = CGSize(width: originalSize.width * scale, height: originalSize.height * scale)
-      return image.transformed(by: CGAffineTransform(scaleX: newSize.width / originalSize.width, y: newSize.height / originalSize.height))
-
-    case .cropCenter:
-      let scale = max(CGFloat(targetW) / originalSize.width, CGFloat(targetH) / originalSize.height)
-      let scaled = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-      let cropRect = CGRect(
-        x: (scaled.extent.width - CGFloat(targetW)) / 2,
-        y: (scaled.extent.height - CGFloat(targetH)) / 2,
-        width: CGFloat(targetW),
-        height: CGFloat(targetH)
-      )
-      return scaled.cropped(to: cropRect)
+      let scale = min(targetW / original.width, targetH / original.height)
+      return image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
 
     case .stretch:
-      let scaleX = CGFloat(targetW) / originalSize.width
-      let scaleY = CGFloat(targetH) / originalSize.height
-      return image.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+      return image.transformed(by: CGAffineTransform(
+        scaleX: targetW / original.width,
+        y: targetH / original.height
+      ))
+
+    case .cropCenter:
+      let scale = max(targetW / original.width, targetH / original.height)
+      let scaled = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+      let crop = CGRect(
+        x: scaled.extent.origin.x + (scaled.extent.width - targetW) / 2,
+        y: scaled.extent.origin.y + (scaled.extent.height - targetH) / 2,
+        width: targetW,
+        height: targetH
+      )
+      return scaled.cropped(to: crop).transformed(
+        by: CGAffineTransform(translationX: -crop.origin.x, y: -crop.origin.y)
+      )
 
     case .pad:
-      let scale = min(CGFloat(targetW) / originalSize.width, CGFloat(targetH) / originalSize.height)
-      let newSize = CGSize(width: originalSize.width * scale, height: originalSize.height * scale)
-      let scaled = image.transformed(by: CGAffineTransform(scaleX: newSize.width / originalSize.width, y: newSize.height / originalSize.height))
-
-      // Create padded canvas
-      let padded = CIImage(color: .clear).cropped(to: CGRect(origin: .zero, size: targetSize))
-      let offsetX = (targetSize.width - scaled.extent.width) / 2
-      let offsetY = (targetSize.height - scaled.extent.height) / 2
-      return padded.composited(over: scaled.transformed(by: CGAffineTransform(translationX: offsetX, y: offsetY)))
+      let scale = min(targetW / original.width, targetH / original.height)
+      let scaled = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+      let canvas = CGRect(x: 0, y: 0, width: targetW, height: targetH)
+      let centred = scaled.transformed(by: CGAffineTransform(
+        translationX: (targetW - scaled.extent.width) / 2 - scaled.extent.origin.x,
+        y: (targetH - scaled.extent.height) / 2 - scaled.extent.origin.y
+      ))
+      // The image goes over the backdrop, not under it. Reversed, the padding
+      // covered the picture and the result was the wrong size as well.
+      let backdrop = CIImage(color: CIColor(red: 1, green: 1, blue: 1, alpha: 1)).cropped(to: canvas)
+      return centred.composited(over: backdrop).cropped(to: canvas)
     }
   }
 
@@ -257,6 +211,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       return image.applyingFilter("CISepiaTone", parameters: [:])
     case .blur:
       return image.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 10.0])
+        .cropped(to: image.extent)
     case .sharpen:
       return image.applyingFilter("CISharpenLuminance", parameters: [:])
     case .invert:

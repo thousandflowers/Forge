@@ -7,15 +7,30 @@ struct ProcessingResult: Sendable {
   let outputSize: Int64
   let outputDimensions: (width: Int, height: Int)?
   let duration: TimeInterval
+  /// Extra files the conversion produced, in order. One input can legitimately
+  /// yield many outputs: a twenty-page PDF becomes twenty images.
+  let additionalOutputs: [URL]
+
+  init(
+    outputURL: URL,
+    outputSize: Int64,
+    outputDimensions: (width: Int, height: Int)?,
+    duration: TimeInterval,
+    additionalOutputs: [URL] = []
+  ) {
+    self.outputURL = outputURL
+    self.outputSize = outputSize
+    self.outputDimensions = outputDimensions
+    self.duration = duration
+    self.additionalOutputs = additionalOutputs
+  }
 }
 
 /// Protocol for file processors
 protocol FileProcessor: AnyObject, Sendable {
   var name: String { get }
-  var supportedTypes: [UTType] { get }
 
   func canProcess(_ file: ProcessableFile) -> Bool
-  func supportedOutputTypes(for input: UTType) -> [UTType]
 
   /// Process the input file and write to output location.
   /// - Parameters:
@@ -32,16 +47,3 @@ protocol FileProcessor: AnyObject, Sendable {
   ) async throws -> ProcessingResult
 }
 
-// Helper extension for FileProcessor
-extension FileProcessor {
-  func validateOperations(_ operations: [Operation], for inputType: UTType) throws {
-    // Basic validation: can't convert to same format?
-    if let convertOp = operations.first(where: {
-      if case .convertFormat = $0 { return true } else { return false }
-    }) {
-      if case .convertFormat(let to) = convertOp, to == inputType {
-        throw ProcessingError.validationFailed(message: "Source and destination formats are the same.")
-      }
-    }
-  }
-}
