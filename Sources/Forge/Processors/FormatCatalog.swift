@@ -116,6 +116,10 @@ enum FormatCatalog {
       (UTType("com.apple.coreaudio-format"), kAudioFormatLinearPCM),
       (UTType("com.apple.m4a-audio"), kAudioFormatMPEG4AAC),
       (UTType("org.xiph.flac"), kAudioFormatFLAC),
+      // The audiobook container. macOS types the extension as the protected
+      // variant, which describes the type database rather than the file: what
+      // gets written is plain AAC in an MP4 container.
+      (UTType("com.apple.protected-mpeg-4-audio-b"), kAudioFormatMPEG4AAC),
     ]
     // Apple Lossless and Opus are both encodable on macOS but deliberately
     // absent: ALAC shares the .m4a container with AAC and Opus is written into

@@ -220,6 +220,7 @@ actor ProcessingCoordinator {
     let outputExtension = preset.targetFormat?.preferredFilenameExtension
       ?? file.fileType.preferredFilenameExtension
       ?? file.url.pathExtension
+    let suffix = Self.sizeSuffix(for: preset)
 
     switch destinationMode {
     case .overwrite:
@@ -227,7 +228,9 @@ actor ProcessingCoordinator {
       // in a file called `.png` are not a converted file, they are a broken one.
       let final = file.url
         .deletingLastPathComponent()
-        .appendingPathComponent(outputName(for: file, extension: outputExtension))
+        // No size in the name here: converting in place means the file stays
+        // where it is, under the name it has.
+        .appendingPathComponent(outputName(for: file, extension: outputExtension, suffix: ""))
       return OutputPlan(
         finalURL: final,
         workURL: scratchURL(besides: final),
@@ -242,7 +245,9 @@ actor ProcessingCoordinator {
           message: "\(destinationMode.displayName) needs a destination folder"
         )
       }
-      let desired = folder.appendingPathComponent(outputName(for: file, extension: outputExtension))
+      let desired = folder.appendingPathComponent(
+        outputName(for: file, extension: outputExtension, suffix: suffix)
+      )
       // Claim the name straight away: two files converging on one output name
       // used to leave a single file behind, with both reported as converted.
       let final = try reserveUniqueURL(desired)
@@ -308,9 +313,21 @@ actor ProcessingCoordinator {
     return final.deletingLastPathComponent().appendingPathComponent(name)
   }
 
-  private func outputName(for file: ProcessableFile, extension ext: String) -> String {
-    let base = (file.fileName as NSString).deletingPathExtension
+  private func outputName(for file: ProcessableFile, extension ext: String, suffix: String) -> String {
+    let base = (file.fileName as NSString).deletingPathExtension + suffix
     return ext.isEmpty ? base : "\(base).\(ext)"
+  }
+
+  /// A resize puts its size in the name. Converting one picture to three sizes
+  /// used to give `photo.jpg`, `photo 2.jpg` and `photo 3.jpg`, which says
+  /// nothing about which is which.
+  private static func sizeSuffix(for preset: RulePreset) -> String {
+    guard let resize = preset.resize else { return "" }
+    switch (resize.width, resize.height) {
+    case let (width?, _): return "-\(width)"
+    case let (nil, height?): return "-\(height)"
+    case (nil, nil): return ""
+    }
   }
 
   private static let backupStamp: DateFormatter = {

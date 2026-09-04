@@ -48,12 +48,16 @@ Native, no new dependencies, in rough order of value.
       FLAC, Opus and uncompressed for audio. This is what made Apple Lossless
       and Opus reachable: they share containers with other codecs, so the
       container alone could never say which was meant.
-- [ ] **Multi-size ICO** - encoding several resolutions into one file.
-- [ ] **M4B** - the audiobook variant of the M4A container.
+- [x] **Multi-size ICO** - an icon carries 16 through 256, and a small source
+      is not enlarged to fill the ladder.
+- [x] **M4B** - the audiobook container. macOS types the extension as
+      `com.apple.protected-mpeg-4-audio-b`, which is a quirk of the type
+      database rather than a statement about the file: what Forge writes is
+      plain AAC in an MP4 container, which is what a DRM-free audiobook is.
 - [x] **Data files** - CSV, TSV, JSON and Property List between each other,
       with the awkward parts of separated values handled: quoted fields,
       separators and newlines inside them.
-- [ ] **Audio → video** - wrapping an audio file in an MP4 container.
+- [x] **Audio → video** - a recording asked for a movie container gets one.
 - [ ] **Embedded subtitle extraction** - subtitle tracks inside a movie are
       reachable through AVFoundation.
 - [ ] **Signing and notarization** - needs a Developer ID. Until then the DMG is
@@ -74,8 +78,10 @@ Native, no new dependencies, in rough order of value.
       live only inside a preset.
 - [ ] **Estimated output size and a summary before converting** - worth having
       precisely because the destination modes can replace files.
-- [ ] **Filename suffix when resizing** - `photo-1280.jpg` rather than
-      overwriting the name.
+- [x] **Filename suffix when resizing** - `photo-1280.jpg`. Converting one
+      picture to three sizes used to give `photo.jpg`, `photo 2.jpg` and
+      `photo 3.jpg`. Not applied when converting in place, where the file keeps
+      the name it has.
 - [ ] **Reordering presets** - drag, or move up and down.
 - [ ] **A lower default image quality** - the default is 85; smaller files by
       default is a reasonable argument, and it is one constant.

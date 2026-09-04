@@ -19,6 +19,36 @@ enum ImageFrames {
   /// Loop for ever, the convention for an animated GIF with no explicit count.
   static let infiniteLoop = 0
 
+  /// The resolutions an icon file is expected to carry.
+  static let iconSizes = [16, 32, 48, 64, 128, 256]
+
+  /// Scale one image down to the icon sizes it can fill without being enlarged.
+  static func iconLadder(from image: CGImage) -> [ImageFrame] {
+    let longest = max(image.width, image.height)
+    let sizes = iconSizes.filter { $0 <= longest }
+    guard !sizes.isEmpty else { return [ImageFrame(image: image, duration: 0)] }
+
+    return sizes.reversed().compactMap { side in
+      let scale = Double(side) / Double(longest)
+      let width = max(1, Int((Double(image.width) * scale).rounded()))
+      let height = max(1, Int((Double(image.height) * scale).rounded()))
+
+      guard let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+      ) else { return nil }
+
+      context.interpolationQuality = .high
+      context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+      return context.makeImage().map { ImageFrame(image: $0, duration: 0) }
+    }
+  }
+
   /// Read every frame, with the delay each one carries.
   static func read(_ source: CGImageSource, options: CFDictionary?) -> [ImageFrame] {
     (0..<CGImageSourceGetCount(source)).compactMap { index in

@@ -41,6 +41,12 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     }
 
     if videoTracks.isEmpty {
+      // Audio asked for a movie container is wrapped rather than converted:
+      // the export writes the track into the container as it stands.
+      let requestedType = Self.outputType(for: output, operations: operations, fallback: .mpeg4Audio)
+      if FormatCatalog.isWritableVideo(requestedType) {
+        return try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress)
+      }
       return try await convertAudio(input, to: output, operations: operations, start: start, progress: progress)
     }
 

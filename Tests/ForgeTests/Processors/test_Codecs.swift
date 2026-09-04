@@ -110,3 +110,50 @@ final class CodecTests: BaseTestCase {
     XCTAssertNil(Codec.h264.exportPreset, "H.264 is chosen by dimensions, not by name")
   }
 }
+
+/// Containers that hold audio, including the ones that usually hold video.
+final class AudioContainerTests: BaseTestCase {
+
+  func test_audioIsWrappedInAMovieContainer() async throws {
+    let source = try Fixture.audio(at: path("tone.wav"), seconds: 2)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .mpeg4Movie, category: .audio),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+    let asset = AVURLAsset(url: try XCTUnwrap(entry.outputURL))
+    let audio = try await asset.loadTracks(withMediaType: .audio)
+    let video = try await asset.loadTracks(withMediaType: .video)
+    XCTAssertEqual(audio.count, 1, "the sound did not make it into the container")
+    XCTAssertEqual(video.count, 0)
+  }
+
+  /// The audiobook container. macOS types the extension as the protected
+  /// variant; what gets written is plain AAC in an MP4 container.
+  func test_m4bIsWritable() async throws {
+    let m4b = try XCTUnwrap(UTType(filenameExtension: "m4b"))
+    try XCTSkipUnless(FormatCatalog.audioFormatID(for: m4b) != nil, "no M4B encoder")
+
+    let source = try Fixture.audio(at: path("tone.wav"), seconds: 2)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: m4b, category: .audio),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+    let output = try XCTUnwrap(entry.outputURL)
+    XCTAssertEqual(output.pathExtension, "m4b")
+
+    let duration = try await AVURLAsset(url: output).load(.duration).seconds
+    XCTAssertEqual(duration, 2, accuracy: 0.3)
+  }
+}

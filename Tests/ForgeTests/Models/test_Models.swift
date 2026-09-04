@@ -418,3 +418,99 @@ final class ActionChainTests: BaseTestCase {
     XCTAssertEqual(loaded.first?.ocrLanguages, ["it-IT"])
   }
 }
+
+/// Naming, where it says something the user needs.
+final class OutputNamingTests: BaseTestCase {
+
+  /// Converting one picture to three sizes used to give photo.jpg, photo 2.jpg
+  /// and photo 3.jpg, which says nothing about which is which.
+  func test_aResizePutsItsSizeInTheName() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 800, height: 600)
+    let destination = try folder("out")
+    let coordinator = coordinator()
+
+    for width in [1280, 640, 320] {
+      _ = try await coordinator.processFile(
+        try ProcessableFile(url: source),
+        with: .make(
+          format: .jpeg,
+          resize: ResizeSpec(width: width, height: width, fitMode: .proportional),
+          quality: 80,
+          category: .image
+        ),
+        destinationMode: .copyTo,
+        destinationURL: destination
+      ) { _ in }
+    }
+
+    XCTAssertEqual(contents(of: destination), ["photo-1280.jpeg", "photo-320.jpeg", "photo-640.jpeg"])
+  }
+
+  func test_noResizeMeansNoSuffix() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 100, height: 100)
+    let destination = try folder("out")
+
+    _ = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .jpeg, quality: 80, category: .image),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(contents(of: destination), ["photo.jpeg"])
+  }
+
+  /// Converting in place means the file stays where it is, under the name it
+  /// has, resize or not.
+  func test_convertingInPlaceKeepsTheName() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 400, height: 400)
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .png, resize: ResizeSpec(width: 200, height: 200, fitMode: .proportional), category: .image),
+      destinationMode: .overwrite
+    ) { _ in }
+
+    XCTAssertEqual(try XCTUnwrap(entry.outputURL).lastPathComponent, "photo.png")
+  }
+}
+
+/// Icon files carry several resolutions.
+final class IconTests: BaseTestCase {
+
+  func test_anIconGetsTheWholeLadder() async throws {
+    let source = try Fixture.image(at: path("mark.png"), width: 512, height: 512)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: try XCTUnwrap(UTType(filenameExtension: "ico")), category: .image),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+    let icon = try XCTUnwrap(CGImageSourceCreateWithURL(try XCTUnwrap(entry.outputURL) as CFURL, nil))
+    XCTAssertGreaterThan(CGImageSourceGetCount(icon), 1, "one picture in an .ico is not an icon")
+  }
+
+  /// A small source must not be enlarged to fill the ladder.
+  func test_aSmallSourceIsNotBlownUp() async throws {
+    let source = try Fixture.image(at: path("tiny.png"), width: 24, height: 24)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: try XCTUnwrap(UTType(filenameExtension: "ico")), category: .image),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    let icon = try XCTUnwrap(CGImageSourceCreateWithURL(try XCTUnwrap(entry.outputURL) as CFURL, nil))
+    for index in 0..<CGImageSourceGetCount(icon) {
+      let properties = CGImageSourceCopyPropertiesAtIndex(icon, index, nil) as? [CFString: Any]
+      let width = properties?[kCGImagePropertyPixelWidth] as? Int ?? 0
+      XCTAssertLessThanOrEqual(width, 24, "the source was enlarged")
+    }
+  }
+}

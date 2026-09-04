@@ -100,6 +100,16 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     as type: UTType,
     options: [CFString: Any]
   ) throws -> [URL] {
+    // An icon file is expected to carry several resolutions; one picture in an
+    // .ico is a picture with an .ico extension.
+    if type.conforms(to: .ico), let first = frames.first {
+      try ImageFrames.write(
+        ImageFrames.iconLadder(from: first.image),
+        to: output, as: type, frameOptions: options
+      )
+      return []
+    }
+
     if frames.count == 1 || FormatCatalog.holdsMultipleFrames(type) {
       try ImageFrames.write(frames, to: output, as: type, frameOptions: options)
       return []
