@@ -261,6 +261,22 @@ final class StoredDataCompatibilityTests: BaseTestCase {
     XCTAssertEqual(preset.category, .audio)
     XCTAssertEqual(preset.targetFormat?.identifier, "public.mp3")
     XCTAssertTrue(preset.filters.isEmpty)
+    XCTAssertTrue(preset.ocrLanguages.isEmpty, "a field added later must default, not fail")
+  }
+
+  /// Adding a field to a preset must never strand the ones already saved. The
+  /// synthesized decoder does not fall back to property defaults, so this is
+  /// the guard that catches the next one.
+  func test_aPresetMissingEveryOptionalFieldStillDecodes() throws {
+    let json = """
+    { "name": "Bare", "category": "image" }
+    """
+    let preset = try JSONDecoder().decode(RulePreset.self, from: Data(json.utf8))
+    XCTAssertEqual(preset.name, "Bare")
+    XCTAssertEqual(preset.category, .image)
+    XCTAssertTrue(preset.filters.isEmpty)
+    XCTAssertTrue(preset.ocrLanguages.isEmpty)
+    XCTAssertNil(preset.targetFormat)
   }
 
   func test_decodesHistoryWrittenByAnOlderVersion() throws {

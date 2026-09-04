@@ -44,6 +44,26 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   }
 }
 
+extension RulePreset {
+  /// Decode tolerantly: a preset saved by an older version has none of the
+  /// fields added since, and the synthesized decoder does not fall back to a
+  /// property's default - it fails. That would strand every preset already in
+  /// Application Support each time a field is added, so absence is handled
+  /// here once instead of being rediscovered later.
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+    name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Untitled"
+    description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
+    targetFormat = try container.decodeIfPresent(UTType.self, forKey: .targetFormat)
+    resize = try container.decodeIfPresent(ResizeSpec.self, forKey: .resize)
+    quality = try container.decodeIfPresent(Int.self, forKey: .quality)
+    filters = try container.decodeIfPresent([FilterType].self, forKey: .filters) ?? []
+    category = try container.decodeIfPresent(PresetCategory.self, forKey: .category) ?? .custom
+    ocrLanguages = try container.decodeIfPresent([String].self, forKey: .ocrLanguages) ?? []
+  }
+}
+
 struct ResizeSpec: Codable, Hashable, Sendable {
   var width: Int?
   var height: Int?
