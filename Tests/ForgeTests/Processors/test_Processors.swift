@@ -29,6 +29,87 @@ final class ConversionTests: BaseTestCase {
     XCTAssertGreaterThan(size(of: output), 0)
   }
 
+  /// Audio is written with `AVAudioFile`, which knows nothing about metadata,
+  /// so a converted song came out with no title, no artist and no cover. The
+  /// tags are now put back by a passthrough copy - measured before the fix on
+  /// a real file: `ffprobe` reported title and artist on the source and
+  /// nothing at all on the output.
+  func test_audio_keepsItsTags() async throws {
+    let source = try await Fixture.taggedAudio(
+      at: path("song.m4a"), title: "Il Seme", artist: "Eugenio"
+    )
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      // `.mpeg4Audio` is public.mpeg-4-audio, which nothing writes; the
+      // container an .m4a actually is is com.apple.m4a-audio.
+      with: .make(format: try XCTUnwrap(UTType(filenameExtension: "m4a")), category: .audio),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    let output = try XCTUnwrap(entry.outputURL)
+    let carried = try await AVURLAsset(url: output).load(.commonMetadata)
+    var values: [String] = []
+    for item in carried {
+      if let value = try await item.load(.stringValue) { values.append(value) }
+    }
+
+    XCTAssertTrue(values.contains("Il Seme"), "the title did not survive: \(values)")
+    XCTAssertTrue(values.contains("Eugenio"), "the artist did not survive: \(values)")
+  }
+
+  /// A container that cannot hold tags is not a failed conversion: the audio
+  /// still has to come out, untagged and correct.
+  func test_audio_stillConvertsToAContainerThatHoldsNoTags() async throws {
+    let source = try await Fixture.taggedAudio(
+      at: path("song.m4a"), title: "Il Seme", artist: "Eugenio"
+    )
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: UTType.wav, category: .audio),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(entry.status, .completed)
+    XCTAssertGreaterThan(size(of: try XCTUnwrap(entry.outputURL)), 0)
+  }
+
+  /// Title, artist and artwork survive a conversion. Nothing in the code says
+  /// so - an export session with no metadata of its own carries the source's
+  /// across - which is exactly why this is pinned down: "improving" it by
+  /// setting `session.metadata` to the common key space would silently narrow
+  /// what crosses to the tags every container shares.
+  func test_video_keepsItsTags() async throws {
+    let source = try await Fixture.taggedVideo(
+      at: path("tagged.mov"), title: "Tiger Grandmother", artist: "Eugenio"
+    )
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .mpeg4Movie, category: .video),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    let output = try XCTUnwrap(entry.outputURL)
+    let carried = try await AVURLAsset(url: output).load(.commonMetadata)
+    let values = try await withThrowingTaskGroup(of: String?.self) { group -> [String] in
+      for item in carried {
+        group.addTask { try await item.load(.stringValue) }
+      }
+      return try await group.compactMap { $0 }.reduce(into: []) { $0.append($1) }
+    }
+
+    XCTAssertTrue(values.contains("Tiger Grandmother"), "the title did not survive: \(values)")
+    XCTAssertTrue(values.contains("Eugenio"), "the artist did not survive: \(values)")
+  }
+
   /// The old pipeline read only the video track, so every converted file came
   /// out silent.
   func test_video_keepsTheAudioTrack() async throws {

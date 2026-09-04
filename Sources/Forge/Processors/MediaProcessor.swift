@@ -260,6 +260,9 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     session.outputURL = output
     session.outputFileType = fileType
     session.shouldOptimizeForNetworkUse = true
+    // Metadata is deliberately not set: an export session with none of its own
+    // carries the source's across, and setting it to the common key space
+    // would *narrow* that to the handful of tags every container shares.
 
     // The export publishes progress as a polled property, so a sibling task
     // samples it while the export runs. It has to keep polling through the
@@ -439,6 +442,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       progress(totalFrames > 0 ? Double(position) / Double(totalFrames) : 0)
     }
 
+    try await Self.carryTags(from: input, to: output, type: outputType)
     progress(1.0)
 
     return ProcessingResult(
@@ -447,6 +451,44 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       outputDimensions: nil,
       duration: Date().timeIntervalSince(start)
     )
+  }
+
+  /// Put the recording's tags back on the finished file.
+  ///
+  /// Audio is written with `AVAudioFile`, which has no notion of metadata, so
+  /// a converted song used to come out with no title, no artist and no cover.
+  /// They are added afterwards, by copying the track - not re-encoding it -
+  /// into a tagged file and swapping that in.
+  ///
+  /// Which containers can hold tags is asked rather than listed: an export
+  /// session says what it can write, and a FLAC or a WAV is simply left
+  /// untagged instead of being promised something AVFoundation cannot do.
+  private static func carryTags(from input: URL, to output: URL, type: UTType) async throws {
+    let tags = try await AVURLAsset(url: input).load(.metadata)
+    guard !tags.isEmpty else { return }
+
+    guard let session = AVAssetExportSession(
+      asset: AVURLAsset(url: output),
+      presetName: AVAssetExportPresetPassthrough
+    ) else { return }
+
+    let fileType = AVFileType(type.identifier)
+    guard session.supportedFileTypes.contains(fileType) else { return }
+
+    let tagged = output.deletingLastPathComponent()
+      .appendingPathComponent(".forge-tags-\(UUID().uuidString).\(output.pathExtension)")
+    session.outputURL = tagged
+    session.outputFileType = fileType
+    session.metadata = tags
+
+    await session.export()
+    guard session.status == .completed else {
+      // Tags are worth having and not worth failing a conversion over: the
+      // audio is already written and correct.
+      try? FileManager.default.removeItem(at: tagged)
+      return
+    }
+    _ = try FileManager.default.replaceItemAt(output, withItemAt: tagged)
   }
 
   /// Stream the samples across in bounded chunks, keeping memory flat on long
