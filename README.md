@@ -89,15 +89,14 @@ Requires macOS 13+ (Ventura) and Swift 5.9+.
 ## Architecture
 
 ```
-SwiftUI  ──▶  ProcessingCoordinator  ──▶  ProcessorRegistry  ──▶  Image / Media / Document processors
-                     │                                              (Core Image · AVFoundation · PDFKit)
-              output planning                         MonitoredFolderWatcher (FSEvents)
-              scratch file + atomic move              PersistenceManager (JSON in App Support)
+SwiftUI  ──▶  ProcessingCoordinator  ──▶  Image / Media / Document processors
+                     │                        (Core Image · AVFoundation · PDFKit)
+              output planning            MonitoredFolderWatcher (FSEvents)
+              scratch file + atomic move  PersistenceManager (JSON in App Support)
 ```
 
 - **FormatCatalog** - asks ImageIO and AVFoundation what this machine can read and write. Nothing is offered that cannot be delivered.
-- **ProcessorRegistry** - picks the processor for each file.
-- **ProcessingCoordinator** - runs conversions, decides where output lands, keeps every write off files you already have, tracks tasks for cancellation.
+- **ProcessingCoordinator** - picks the processor for each file, runs conversions, decides where output lands, keeps every write off files you already have, tracks tasks for cancellation.
 - **MediaProcessor** - audio and video, split by the tracks a file actually contains rather than its extension.
 - **PersistenceManager** - JSON storage for presets, history and monitored folders.
 

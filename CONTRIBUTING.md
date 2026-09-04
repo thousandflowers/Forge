@@ -35,10 +35,10 @@ swift test
 ./Scripts/build_app.sh
 ```
 
-### Xcode Project
-If you prefer Xcode:
+### Xcode
+There is no `.xcodeproj`: Forge is a SwiftPM package, so open the folder itself.
 ```bash
-open Forge.xcodeproj
+xed .
 ```
 
 ## 📖 Code Style
@@ -48,7 +48,7 @@ open Forge.xcodeproj
 - **Concurrency**: Use `async/await` and actors. Avoid `@MainActor` unless needed.
 - **Error Handling**: Throw descriptive errors. Use `ProcessingError` for processor errors.
 - **Protocols**: Prefer protocols over concrete types for dependencies.
-- **Memory**: Use streaming (avoid loading entire files). Use `AutomationQueue` for concurrency control.
+- **Memory**: Stream rather than loading whole files. `ProcessingCoordinator` bounds how many conversions run at once.
 
 ### Example
 
@@ -69,16 +69,21 @@ func processFile(_ file: ProcessableFile) async throws -> ProcessingResult {
 
 ## 🧪 Testing
 
-- **Unit Tests**: Place in `Tests/ForgeTests/` mirroring source structure.
-- **Test Coverage**: Aim for >80% coverage on critical code (processors, models).
-- **Integration Tests**: Add to `IntegrationTests.swift` for end-to-end flows.
-- **Performance Tests**: Use `measure` for time-sensitive code.
+- **Where**: `Tests/ForgeTests/`, mirroring the source structure.
+- **Fixtures**: build them at runtime with `Fixture.image/pdf/audio/video`. No
+  binary files in the repository, and nothing that depends on tools a CI
+  machine may not have.
+- **Storage**: take the store from `BaseTestCase`, which is rooted in a scratch
+  directory. Tests must never touch the real Application Support folder.
+- **One test per defect**: a fix without a test that fails before it is not
+  finished. Most of this suite exists because the old one only asserted that
+  processors *claimed* to support a format.
 
 ### Running Specific Tests
 
 ```bash
-swift test --filter ImageProcessorTests
-swift test --filter VideoProcessorTests/processMP4Conversion
+swift test --filter ConversionTests
+swift test --filter OutputHandlingTests/test_moveTo_removesTheOriginal
 ```
 
 ## 🎨 UI Guidelines
@@ -96,30 +101,41 @@ We aim for **zero external dependencies** for the core. All code uses Apple fram
 - SwiftUI
 - Core Image / ImageIO
 - AVFoundation
-- PDFKit (optional, may phase out for simpler approach)
+- PDFKit
+- AppKit (document readers, panels)
 
-External CLI tools (LibreOffice, ImageMagick, FFmpeg) are **optional** and invoked as separate processes.
+There are no external tools. If a conversion cannot be done with an Apple
+framework, Forge says so rather than shelling out.
 
 ## 🔧 Adding New Processors
 
 To add a new processor for a file type:
 
 1. Create a new file in `Sources/Forge/Processors/` (e.g., `PDFProcessor.swift`).
-2. Implement `FileProcessor` protocol:
+2. Implement `FileProcessor`:
    ```swift
-   final class PDFProcessor: FileProcessor {
-     let name = "PDF Processor"
-     let isNative = true
-     let supportedTypes: [UTType] = [.pdf]
+   final class SomethingProcessor: FileProcessor, @unchecked Sendable {
+     let name = "Something Processor"
 
      func canProcess(_ file: ProcessableFile) -> Bool { ... }
-     func supportedOutputTypes(for input: UTType) -> [UTType] { ... }
-     func process(...) async throws -> ProcessingResult { ... }
+
+     func process(
+       _ input: URL,
+       to output: URL,
+       with operations: [Operation],
+       progress: @escaping @Sendable (Double) -> Void
+     ) async throws -> ProcessingResult { ... }
    }
    ```
-3. Register it in `ProcessorRegistry.init()` (Phase 1 only, Phase 3 will use discovery).
-4. Add unit tests in `Tests/ForgeTests/Processors/`.
-5. Update README format support table.
+3. Add it to `processors` in `ProcessingCoordinator`. Order matters: the first
+   processor that claims a file gets it.
+4. Ask `FormatCatalog` what the machine can read and write. Never write a list
+   of UTI strings by hand - that is how WAV, FLAC and ALAC ended up silently
+   unsupported.
+5. Write to the `output` URL you are given and nowhere else. The coordinator
+   hands you a scratch file and moves it into place.
+6. Add tests in `Tests/ForgeTests/Processors/`.
+7. Update the README format section.
 
 ## 🔍 Pull Request Guidelines
 

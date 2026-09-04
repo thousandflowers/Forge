@@ -233,3 +233,87 @@ final class RulePresetTests: BaseTestCase {
     XCTAssertEqual(operations.map(\.id), ["convert", "resize", "quality", "filter"])
   }
 }
+
+/// Files written by an older version have to keep loading.
+///
+/// The cleanup removed `icon`, `applicableFileTypes` and `targetSize` from
+/// presets and turned several `let`s into `var`s with defaults; none of that is
+/// allowed to strand data already sitting in Application Support.
+final class StoredDataCompatibilityTests: BaseTestCase {
+
+  func test_decodesAPresetWrittenByAnOlderVersion() throws {
+    let json = """
+    {
+      "id": "9119C08A-FDC7-439F-A07A-FBAEF1DA5698",
+      "name": "Audio to MP3",
+      "description": "Convert audio tracks to MP3.",
+      "filters": [],
+      "category": "audio",
+      "icon": "waveform",
+      "targetSize": 5242880,
+      "applicableFileTypes": [{ "identifier": "public.mp3" }],
+      "targetFormat": { "identifier": "public.mp3", "constantIndex": 88 }
+    }
+    """
+    let preset = try JSONDecoder().decode(RulePreset.self, from: Data(json.utf8))
+    XCTAssertEqual(preset.id.uuidString, "9119C08A-FDC7-439F-A07A-FBAEF1DA5698")
+    XCTAssertEqual(preset.name, "Audio to MP3")
+    XCTAssertEqual(preset.category, .audio)
+    XCTAssertEqual(preset.targetFormat?.identifier, "public.mp3")
+    XCTAssertTrue(preset.filters.isEmpty)
+  }
+
+  func test_decodesHistoryWrittenByAnOlderVersion() throws {
+    let json = """
+    [{
+      "id": "1B4E28BA-2FA1-11D2-883F-0016D3CCA427",
+      "fileURL": "file:///tmp/photo.png",
+      "timestamp": 750000000,
+      "status": "completed",
+      "duration": 0.25,
+      "outputURL": "file:///tmp/photo.jpeg"
+    }]
+    """
+    let history = try JSONDecoder().decode([ProcessingHistory].self, from: Data(json.utf8))
+    XCTAssertEqual(history.count, 1)
+    XCTAssertEqual(history[0].status, .completed)
+    XCTAssertNil(history[0].ruleId)
+    XCTAssertEqual(history[0].outputURL?.lastPathComponent, "photo.jpeg")
+  }
+
+  func test_decodesAMonitoredFolderWrittenByAnOlderVersion() throws {
+    let json = """
+    [{
+      "id": "5874EC42-68BA-4690-BC59-EE992819D8B3",
+      "url": "file:///tmp/watch/",
+      "ruleId": "76164EB3-A7E5-4110-9F6D-FD8708259E6B",
+      "destinationMode": "copy_to",
+      "destinationURL": "file:///tmp/out/",
+      "isActive": true,
+      "includeSubfolders": false
+    }]
+    """
+    let folders = try JSONDecoder().decode([MonitoredFolder].self, from: Data(json.utf8))
+    XCTAssertEqual(folders.count, 1)
+    XCTAssertEqual(folders[0].destinationMode, .copyTo)
+    XCTAssertTrue(folders[0].isActive)
+  }
+
+  /// A round trip through the store has to survive, since that is what the app
+  /// does on every launch.
+  func test_presetSurvivesASaveAndLoad() async throws {
+    let preset = RulePreset.make(
+      format: .jpeg,
+      resize: ResizeSpec(width: 800, height: nil, fitMode: .pad),
+      quality: 64,
+      filters: [.sepia, .invert],
+      category: .image
+    )
+    try await store.savePreset(preset)
+
+    let reopened = PersistenceManager(root: store.root)
+    let loaded = try await reopened.loadAllPresets()
+    XCTAssertEqual(loaded.count, 1)
+    XCTAssertEqual(loaded[0], preset)
+  }
+}
