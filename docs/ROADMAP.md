@@ -66,6 +66,10 @@ Native, no new dependencies, in rough order of value.
       at the size asked for rather than at a default and scaled, and everything
       after it - format, quality, filters - is the ordinary image path, so an
       SVG can become a PDF as easily as a PNG.
+- [x] **Metadata preservation** - images already carried EXIF and GPS across;
+      audio did not carry anything, because the audio path writes with
+      `AVAudioFile`, which has no notion of metadata. The tags are now put back
+      on the finished file by a passthrough copy, so nothing is re-encoded.
 - [ ] **Embedded subtitle extraction** - the tracks are reachable, but the text
       is not: AVFoundation exposes no high-level reader for subtitle samples, so
       this means parsing sample buffers per format. Possible, and more work than
@@ -291,6 +295,12 @@ Recorded so they are not reopened by accident. Each was a real fork in the road.
 True of the code as it stands. None of these is hidden by the app; they are
 here so nobody has to rediscover them.
 
+- **Tags cross only where the container holds them.** A converted recording
+  keeps its title, artist and cover art in the MP4 family, which is where they
+  were asked for; FLAC, WAV, AIFF and CAF come out untagged, because
+  AVFoundation writes no metadata into them and Forge does not hand-roll a
+  metadata chunk. Which containers can is asked of an export session rather
+  than listed, so this follows the system rather than a table here.
 - **No retry.** A conversion that fails because a file was still being written,
   or a device was briefly busy, is reported as failed. Everything else about
   transient failure is handled - nothing is half-written, nothing is destroyed -

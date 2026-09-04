@@ -341,8 +341,75 @@ enum Fixture {
     try file.write(from: buffer)
   }
 
-  private static func writePictureTrack(to url: URL, seconds: Double, size: CGSize) async throws {
+  /// A silent movie carrying tags, for checking that a conversion does not
+  /// throw them away.
+  static func taggedVideo(
+    at url: URL,
+    seconds: Double = 1,
+    title: String,
+    artist: String
+  ) async throws -> URL {
+    try await writePictureTrack(
+      to: url,
+      seconds: seconds,
+      size: CGSize(width: 320, height: 240),
+      metadata: [
+        tag(.commonIdentifierTitle, title),
+        tag(.commonIdentifierArtist, artist),
+      ]
+    )
+    return url
+  }
+
+  /// An AAC recording carrying a title and an artist. Written through an
+  /// export session, which is not the path being checked: the tags are put
+  /// back onto a converted file afterwards, by a passthrough copy.
+  static func taggedAudio(
+    at url: URL,
+    seconds: Double = 1,
+    title: String,
+    artist: String
+  ) async throws -> URL {
+    let plain = url.deletingLastPathComponent()
+      .appendingPathComponent("plain-\(UUID().uuidString).wav")
+    _ = try audio(at: plain, seconds: seconds)
+    defer { try? FileManager.default.removeItem(at: plain) }
+
+    guard let session = AVAssetExportSession(
+      asset: AVURLAsset(url: plain),
+      presetName: AVAssetExportPresetAppleM4A
+    ) else {
+      throw Failure("Cannot make a tagged recording")
+    }
+    session.outputURL = url
+    session.outputFileType = .m4a
+    session.metadata = [
+      tag(.commonIdentifierTitle, title),
+      tag(.commonIdentifierArtist, artist),
+    ]
+    await session.export()
+    guard session.status == .completed else {
+      throw Failure("Cannot write a tagged recording: \(session.error?.localizedDescription ?? "-")")
+    }
+    return url
+  }
+
+  private static func tag(_ identifier: AVMetadataIdentifier, _ value: String) -> AVMetadataItem {
+    let item = AVMutableMetadataItem()
+    item.identifier = identifier
+    item.keySpace = .common
+    item.value = value as NSString
+    return item
+  }
+
+  private static func writePictureTrack(
+    to url: URL,
+    seconds: Double,
+    size: CGSize,
+    metadata: [AVMetadataItem] = []
+  ) async throws {
     let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+    writer.metadata = metadata
     let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
       AVVideoCodecKey: AVVideoCodecType.h264,
       AVVideoWidthKey: Int(size.width),
