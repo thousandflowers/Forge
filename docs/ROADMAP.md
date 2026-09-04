@@ -21,6 +21,7 @@ supports, so they are live now and simply were not advertised.
 | **PSD** | read and write |
 | **ICO / ICNS** | read and write |
 | **WebP** | read |
+| **SVG / SVGZ** | read, drawn by QuickLook rather than ImageIO |
 | **PDF** | write, as an image destination |
 | **ProRes, HEVC** | export presets exist; not yet reachable from the UI |
 | **AC3, VOB** | read |
@@ -58,6 +59,13 @@ Native, no new dependencies, in rough order of value.
       with the awkward parts of separated values handled: quoted fields,
       separators and newlines inside them.
 - [x] **Audio → video** - a recording asked for a movie container gets one.
+- [x] **SVG and SVGZ** - QuickLook has a generator for SVG, so drawing one is a
+      framework call after all, not the web view this was written off as
+      needing. An `.svgz` is unpacked first, through the Compression framework,
+      and checked against the size its own trailer claims. The drawing is made
+      at the size asked for rather than at a default and scaled, and everything
+      after it - format, quality, filters - is the ordinary image path, so an
+      SVG can become a PDF as easily as a PNG.
 - [ ] **Embedded subtitle extraction** - the tracks are reachable, but the text
       is not: AVFoundation exposes no high-level reader for subtitle samples, so
       this means parsing sample buffers per format. Possible, and more work than
@@ -166,7 +174,10 @@ ImageIO and AVFoundation ship no encoder. Adding one means shipping a library.
 - **WMV**, **MXF** (XDCAM, DNxHD), **FLV**, **MPEG-TS / M2TS** - not among the
   types AVFoundation opens. MPEG-TS and VOB partly are; the container family as
   a whole is not.
-- **EPS** - neither read nor write.
+- **EPS** - neither read nor write. Measured rather than assumed: `CGPSConverter`
+  is still in the SDK, reports success, and writes a zero-byte file - PostScript
+  conversion is gone on Apple silicon - and the QuickLook generator refuses an
+  EPS with `QLThumbnailErrorDomain error 0`.
 - **WMA**, **Sun Audio (AU)**, **True Audio (TTA)**, **WavPack**.
 - **Fonts, in any direction** - CoreText reads a font's tables but has no
   public API to write one, so TTF to OTF is not a framework call. WOFF and
@@ -225,10 +236,7 @@ installed.
 
 ### Possible, but not with a framework call
 
-- **SVG rasterization** - WebKit can render SVG offscreen, so this is doable,
-  but it means running a web view to convert a file.
 - **SVG vectorization** (image → SVG) - needs a tracer. macOS has none.
-- **SVGZ** - only useful once SVG itself is supported.
 
 ### Nothing on this system translates
 

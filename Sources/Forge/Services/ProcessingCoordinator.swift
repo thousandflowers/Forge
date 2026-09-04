@@ -8,6 +8,9 @@ actor ProcessingCoordinator {
   /// reads the widest set of types; documents last because their readers are
   /// the most permissive about what counts as text.
   private let processors: [FileProcessor] = [
+    // Before the image processor, which would claim an SVG through
+    // `readableImageTypes` and then hand ImageIO a file it cannot decode.
+    VectorProcessor(),
     ImageProcessor(),
     MediaProcessor(),
     // Before the document reader: JSON and CSV are plain text as far as the
