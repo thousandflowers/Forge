@@ -22,13 +22,11 @@ enum FormatCatalog {
   static let readableImageTypes: Set<UTType> = Self.types(CGImageSourceCopyTypeIdentifiers())
     .union(rasterizableVectorTypes)
 
-  /// Vectors ImageIO cannot read and QuickLook can draw.
-  ///
-  /// Declared rather than asked, unlike everything else here: there is no API
-  /// that answers "can QuickLook render this type". The generator is part of
-  /// the system, and `VectorProcessor` reports a clear failure if it ever is
-  /// not - which is the same thing a missing decoder would do.
-  static let rasterizableVectorTypes: Set<UTType> = [.svg]
+  /// Vectors ImageIO cannot read and QuickLook can draw - on the machine this
+  /// is running on, which is not every machine: the SVG generator answers on
+  /// macOS 26 and hands back a square that is not the artwork on macOS 14.
+  /// `VectorProcessor` settles it by drawing one and looking at it.
+  static let rasterizableVectorTypes: Set<UTType> = VectorProcessor.canDraw ? [.svg] : []
 
   static func isRasterizableVector(_ type: UTType) -> Bool {
     rasterizableVectorTypes.contains { type == $0 || type.conforms(to: $0) }
