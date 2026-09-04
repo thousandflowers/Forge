@@ -58,6 +58,14 @@ Grab the latest `.dmg` from the [**Releases page**](https://github.com/thousandf
 
 > Unsigned build: on first launch, right-click the app → **Open** to bypass Gatekeeper.
 
+### Homebrew
+
+```bash
+brew install --cask thousandflowers/tap/forge
+```
+
+The cask lives in [`Casks/forge.rb`](Casks/forge.rb), ready to copy into a tap.
+
 ### Build from source
 ```bash
 git clone https://github.com/thousandflowers/Forge.git

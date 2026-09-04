@@ -64,7 +64,9 @@ Native, no new dependencies, in rough order of value.
       it looks.
 - [ ] **Signing and notarization** - needs a Developer ID. Until then the DMG is
       ad-hoc signed and Gatekeeper warns on first launch.
-- [ ] **Homebrew cask** - a cask, not a formula: Forge ships an app bundle.
+- [x] **Homebrew cask** - `Casks/forge.rb`, ready to copy into a tap. A cask
+      rather than a formula because Forge ships an app bundle, and the tool is
+      linked from inside it rather than installed twice.
 - [x] **Text to speech** - any document becomes spoken audio, with the voices
       already installed.
 - [x] **Audio transcription** - a recording, or a video's soundtrack, becomes
@@ -73,7 +75,8 @@ Native, no new dependencies, in rough order of value.
       finishes rather than at launch.
 - [x] **Preset import/export** - one file or a set, with new identities on the
       way in so an import adds rather than replaces.
-- [ ] **Shortcuts integration**.
+- [x] **Shortcuts integration** - a Convert Files action taking files, a preset
+      name and a destination, running the same engine and the same presets.
 
 ### Interface
 
