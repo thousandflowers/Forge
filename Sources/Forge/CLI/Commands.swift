@@ -119,6 +119,8 @@ struct Presets: AsyncParsableCommand {
         return type.rawValue
       case .recognizeText(let languages):
         return languages.isEmpty ? "read text" : "read text (\(languages.joined(separator: ", ")))"
+      case .encode(let codec):
+        return codec.title
       }
     }
   }

@@ -116,6 +116,8 @@ struct PresetCard: View {
       return type.rawValue
     case .recognizeText(let languages):
       return languages.isEmpty ? "OCR" : "OCR \(languages.joined(separator: "/"))"
+    case .encode(let codec):
+      return codec.title
     }
   }
 }

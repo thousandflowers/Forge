@@ -135,7 +135,7 @@ struct Action: Identifiable, Hashable {
 
 /// The kinds of action that can be added, and a blank of each.
 enum ActionKind: String, CaseIterable, Identifiable {
-  case convertFormat, resize, quality, filter, recognizeText
+  case convertFormat, resize, quality, filter, recognizeText, encode
   var id: String { rawValue }
 
   var blank: Operation {
@@ -145,6 +145,7 @@ enum ActionKind: String, CaseIterable, Identifiable {
     case .quality: return .quality(level: 85)
     case .filter: return .filter(type: .grayscale)
     case .recognizeText: return .recognizeText(languages: [])
+    case .encode: return .encode(codec: Codec.available.first ?? .h264)
     }
   }
 }
@@ -216,6 +217,17 @@ private struct ActionRow: View {
         set: { action.operation = .filter(type: $0) }
       )) {
         ForEach(FilterType.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
+      }
+      .labelsHidden()
+      .frame(maxWidth: 200, alignment: .leading)
+
+    case .encode(let codec):
+      Picker("", selection: Binding(
+        get: { codec },
+        set: { action.operation = .encode(codec: $0) }
+      )) {
+        Section("Video") { ForEach(Codec.videoCodecs, id: \.self) { Text($0.title).tag($0) } }
+        Section("Audio") { ForEach(Codec.audioCodecs, id: \.self) { Text($0.title).tag($0) } }
       }
       .labelsHidden()
       .frame(maxWidth: 200, alignment: .leading)

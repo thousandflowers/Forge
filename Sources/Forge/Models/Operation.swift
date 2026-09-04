@@ -11,6 +11,8 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
   case filter(type: FilterType)
   /// Read the text out of an image. Empty languages lets Vision decide.
   case recognizeText(languages: [String])
+  /// Encode with a specific codec, where the container allows more than one.
+  case encode(codec: Codec)
 
   /// A short name for the action, as the editor lists it.
   var title: String {
@@ -20,6 +22,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .quality: return "Set quality"
     case .filter: return "Apply filter"
     case .recognizeText: return "Read text"
+    case .encode: return "Choose codec"
     }
   }
 
@@ -30,6 +33,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .quality: return "dial.medium"
     case .filter: return "camera.filters"
     case .recognizeText: return "text.viewfinder"
+    case .encode: return "cpu"
     }
   }
 
@@ -40,6 +44,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .quality: return "quality"
     case .filter: return "filter"
     case .recognizeText: return "ocr"
+    case .encode: return "codec"
     }
   }
 }
@@ -48,11 +53,11 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
 
 extension Operation {
   private enum CodingKeys: String, CodingKey {
-    case kind, format, width, height, fitMode, level, filter, languages
+    case kind, format, width, height, fitMode, level, filter, languages, codec
   }
 
   private enum Kind: String, Codable {
-    case convertFormat, resize, quality, filter, recognizeText
+    case convertFormat, resize, quality, filter, recognizeText, encode
   }
 
   init(from decoder: Decoder) throws {
@@ -72,6 +77,8 @@ extension Operation {
       self = .filter(type: try container.decode(FilterType.self, forKey: .filter))
     case .recognizeText:
       self = .recognizeText(languages: try container.decodeIfPresent([String].self, forKey: .languages) ?? [])
+    case .encode:
+      self = .encode(codec: try container.decode(Codec.self, forKey: .codec))
     }
   }
 
@@ -95,6 +102,9 @@ extension Operation {
     case .recognizeText(let languages):
       try container.encode(Kind.recognizeText, forKey: .kind)
       try container.encode(languages, forKey: .languages)
+    case .encode(let codec):
+      try container.encode(Kind.encode, forKey: .kind)
+      try container.encode(codec, forKey: .codec)
     }
   }
 }

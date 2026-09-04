@@ -174,7 +174,11 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     }
 
     let fileType = AVFileType(outputType.identifier)
-    let preferred = Self.videoPreset(for: operations, available: AVAssetExportSession.allExportPresets())
+    let available = AVAssetExportSession.allExportPresets()
+    // A named codec wins over a size: asking for ProRes and getting H.264
+    // because the preset list is sorted by pixels would be the wrong answer.
+    let preferred = Self.chosenCodec(in: operations)?.exportPreset
+      ?? Self.videoPreset(for: operations, available: available)
 
     // Not every preset works with every asset, and the ones that do cannot
     // always write every container. Try the best match, then fall back rather
@@ -297,6 +301,10 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     return nil
   }
 
+  static func chosenCodec(in operations: [Operation]) -> Codec? {
+    operations.compactMap { if case .encode(let codec) = $0 { return codec } else { return nil } }.first
+  }
+
   /// Read `1280x720` out of `AVAssetExportPreset1280x720`.
   static func dimensions(inPresetNamed name: String) -> (width: Int, height: Int)? {
     let allowed: Set<Character> = Set("0123456789x")
@@ -327,7 +335,18 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
     let outputType = Self.outputType(for: output, operations: operations, fallback: .mpeg4Audio)
-    guard let formatID = FormatCatalog.audioFormatID(for: outputType) else {
+
+    // A chosen codec decides what goes in the container, which is what makes
+    // Apple Lossless in an .m4a and Opus in a .caf reachable at all.
+    let chosen = Self.chosenCodec(in: operations)?.audioFormatID
+    if let chosen, !FormatCatalog.canEncodeAudio(type: outputType, formatID: chosen) {
+      throw ProcessingError.conversionFailed(
+        reason: "\(Self.chosenCodec(in: operations)?.title ?? "That codec") does not fit in "
+          + "\(outputType.preferredFilenameExtension?.uppercased() ?? outputType.identifier)."
+      )
+    }
+
+    guard let formatID = chosen ?? FormatCatalog.audioFormatID(for: outputType) else {
       let inputType = UTType(filenameExtension: input.pathExtension) ?? .audio
       throw ProcessingError.unsupportedConversion(from: inputType, to: outputType)
     }

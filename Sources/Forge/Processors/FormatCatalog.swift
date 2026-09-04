@@ -129,9 +129,19 @@ enum FormatCatalog {
     }
   }
 
+  /// Whether this host can encode with a given Core Audio format, in any
+  /// container it fits.
+  static func canEncode(_ formatID: AudioFormatID) -> Bool {
+    let containers = ["m4a", "caf", "wav", "flac", "aiff"]
+    return containers.contains { ext in
+      guard let type = UTType(filenameExtension: ext) else { return false }
+      return canEncodeAudio(type: type, formatID: formatID)
+    }
+  }
+
   /// Try to open a throwaway file for writing: the cheapest honest answer to
   /// "can this host encode that".
-  private static func canEncodeAudio(type: UTType, formatID: AudioFormatID) -> Bool {
+  static func canEncodeAudio(type: UTType, formatID: AudioFormatID) -> Bool {
     guard let ext = type.preferredFilenameExtension else { return false }
     let probe = FileManager.default.temporaryDirectory
       .appendingPathComponent("forge-probe-\(UUID().uuidString).\(ext)")

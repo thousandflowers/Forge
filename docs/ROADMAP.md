@@ -44,8 +44,10 @@ Native, no new dependencies, in rough order of value.
       Foundation parses it and nothing on the system writes it back.
 - [x] **Image ↔ PDF** - both directions, and an animation becomes a multi-page
       document rather than a pile of files.
-- [ ] **Codec choice** - ProRes and HEVC for video, and the container/codec split
-      described below for audio.
+- [x] **Codec choice** - ProRes, HEVC and H.264 for video; AAC, Apple Lossless,
+      FLAC, Opus and uncompressed for audio. This is what made Apple Lossless
+      and Opus reachable: they share containers with other codecs, so the
+      container alone could never say which was meant.
 - [ ] **Multi-size ICO** - encoding several resolutions into one file.
 - [ ] **M4B** - the audiobook variant of the M4A container.
 - [ ] **Config files** - CSV ↔ JSON and JSON ↔ Property List, both Foundation.
