@@ -149,7 +149,8 @@ directory, so running them never touches the data the app keeps for you.
 ## Roadmap
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for what is planned, what already works
-without anyone noticing, and - with a reason for each - what Forge will not do.
+without anyone noticing, what Forge will not do and why, the decisions already
+taken, and the limitations it has today.
 
 - [x] Native image / video / audio / PDF conversion
 - [x] Bounded-concurrency batch processing with live per-file progress

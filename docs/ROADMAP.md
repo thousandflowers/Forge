@@ -164,6 +164,54 @@ installed.
   converter, it is that tool's bug. Forge writes to a scratch file and moves it
   into place, so a partial write is never presented as a finished file.
 
+## Decisions already taken
+
+Recorded so they are not reopened by accident. Each was a real fork in the road.
+
+- **libvips: no.** It would bring WebP encoding, which is the one real hole in
+  ImageIO, and faster resizing on very large JPEGs. It would also mean shipping
+  a C library inside the bundle, rewriting the claim that Forge needs nothing
+  installed, and making sandboxing and notarization considerably harder. ImageIO
+  already reads 55 image formats and writes 20.
+- **A fixed 6×6 format matrix: no.** Deriving the list from the system is both
+  less code and strictly more capable. A hand-written matrix would be a
+  downgrade that also goes stale with every OS release.
+- **YAML for configuration: no.** Presets, folders and history are JSON written
+  by the app, never edited by hand, and Foundation has no YAML parser.
+- **A separate engine library for the CLI: no.** Both front ends ship in the
+  same binary, so a module split would mean marking about a hundred
+  declarations public and gaining nothing.
+- **A Homebrew formula: no, a cask.** Forge is an app bundle, not a bare
+  executable, whatever the other repositories here do.
+- **App Store: not for now.** Sandboxing is the blocker, not the paperwork:
+  watched folders are stored as plain file URLs, and under the sandbox they
+  would stop working after a relaunch unless every folder is kept as a
+  security-scoped bookmark. That is a real piece of work whose only payoff is
+  the store listing. Direct download with a notarized DMG comes first.
+
+## Known limitations
+
+True of the code as it stands. None of these is hidden by the app; they are
+here so nobody has to rediscover them.
+
+- **Only the first frame of a multi-frame image is read.** An animated GIF, a
+  HEICS sequence or a multi-page TIFF converts to a single still. This is the
+  same code path the video ↔ GIF work will replace.
+- **No retry.** A conversion that fails because a file was still being written,
+  or a device was briefly busy, is reported as failed. Everything else about
+  transient failure is handled - nothing is half-written, nothing is destroyed -
+  but the attempt is not repeated.
+- **Cancel and per-file progress have no automated test.** Both are wired and
+  work in the window, but they live in the SwiftUI view model, and testing them
+  would need scaffolding out of proportion to the risk. The engine underneath
+  them is tested.
+- **Preset categories are decoration.** They pick an icon and a label, and
+  filter nothing. Removing them would delete data already saved in everyone's
+  presets, so they stay until there is a reason to touch them.
+- **Not measured:** memory on a batch of thousands of files, and behaviour on
+  Intel hardware. The binary is universal and the tests pass on Apple silicon;
+  no one has run it on an Intel Mac.
+
 ## Where the line is
 
 If a conversion needs a binary the user has to install, Forge says it cannot do
