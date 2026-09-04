@@ -14,9 +14,12 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
   let name = "Document Processor"
 
   /// PDF plus whatever the system's document readers accept.
-  private let readableTypes: [UTType] = [.pdf]
-    + DocumentText.readable.keys
-    + [DocumentText.markdown].compactMap { $0 }
+  private let readableTypes: [UTType] = {
+    var types: [UTType] = [.pdf]
+    types.append(contentsOf: Array(DocumentText.readable.keys))
+    if let markdown = DocumentText.markdown { types.append(markdown) }
+    return types
+  }()
 
   private let ciContext = CIContext(options: [.cacheIntermediates: false])
 
