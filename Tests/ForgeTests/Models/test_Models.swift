@@ -261,6 +261,22 @@ final class StoredDataCompatibilityTests: BaseTestCase {
     XCTAssertEqual(preset.category, .audio)
     XCTAssertEqual(preset.targetFormat?.identifier, "public.mp3")
     XCTAssertTrue(preset.filters.isEmpty)
+    XCTAssertTrue(preset.ocrLanguages.isEmpty, "a field added later must default, not fail")
+  }
+
+  /// Adding a field to a preset must never strand the ones already saved. The
+  /// synthesized decoder does not fall back to property defaults, so this is
+  /// the guard that catches the next one.
+  func test_aPresetMissingEveryOptionalFieldStillDecodes() throws {
+    let json = """
+    { "name": "Bare", "category": "image" }
+    """
+    let preset = try JSONDecoder().decode(RulePreset.self, from: Data(json.utf8))
+    XCTAssertEqual(preset.name, "Bare")
+    XCTAssertEqual(preset.category, .image)
+    XCTAssertTrue(preset.filters.isEmpty)
+    XCTAssertTrue(preset.ocrLanguages.isEmpty)
+    XCTAssertNil(preset.targetFormat)
   }
 
   func test_decodesHistoryWrittenByAnOlderVersion() throws {
@@ -315,5 +331,462 @@ final class StoredDataCompatibilityTests: BaseTestCase {
     let loaded = try await reopened.loadAllPresets()
     XCTAssertEqual(loaded.count, 1)
     XCTAssertEqual(loaded[0], preset)
+  }
+}
+
+/// A preset is a chain of actions now, and the ones already saved have to
+/// become one without anybody noticing.
+final class ActionChainTests: BaseTestCase {
+
+  func test_theChainRunsInTheOrderItIsWritten() {
+    let preset = RulePreset(
+      name: "Chain",
+      description: "",
+      category: .image,
+      actions: [
+        .filter(type: .sepia),
+        .resize(width: 100, height: 100, fitMode: .pad),
+        .convertFormat(to: .png),
+      ]
+    )
+    XCTAssertEqual(preset.toOperations().map(\.id), ["filter", "resize", "convert"])
+  }
+
+  /// Two filters were impossible when a preset was a form with one slot each.
+  func test_aChainCanRepeatAnAction() {
+    let preset = RulePreset(
+      name: "Twice",
+      description: "",
+      category: .image,
+      actions: [.filter(type: .grayscale), .filter(type: .blur)]
+    )
+    XCTAssertEqual(preset.filters, [.grayscale, .blur])
+  }
+
+  func test_theFormConvenienceBuildsASensibleOrder() {
+    let preset = RulePreset.make(
+      format: .jpeg,
+      resize: ResizeSpec(width: 800, height: 600, fitMode: .proportional),
+      quality: 70,
+      filters: [.sepia]
+    )
+    XCTAssertEqual(preset.toOperations().map(\.id), ["convert", "resize", "quality", "filter"])
+  }
+
+  /// A preset written before actions existed carries separate fields; it has
+  /// to arrive as the equivalent chain.
+  func test_aPresetSavedBeforeActionsBecomesAChain() throws {
+    let json = """
+    {
+      "id": "3E47AB3D-74A6-4B5D-9AE1-1A47C25CFDC2",
+      "name": "Instagram Square",
+      "description": "1080x1080 JPEG, center-cropped.",
+      "category": "image",
+      "quality": 85,
+      "filters": ["sepia"],
+      "resize": { "width": 1080, "height": 1080, "fitMode": "cropCenter" },
+      "targetFormat": { "identifier": "public.jpeg", "constantIndex": 57 }
+    }
+    """
+    let preset = try JSONDecoder().decode(RulePreset.self, from: Data(json.utf8))
+
+    XCTAssertEqual(preset.name, "Instagram Square")
+    XCTAssertEqual(preset.toOperations().map(\.id), ["convert", "resize", "quality", "filter"])
+    XCTAssertEqual(preset.targetFormat, .jpeg)
+    XCTAssertEqual(preset.resize?.width, 1080)
+    XCTAssertEqual(preset.resize?.fitMode, .cropCenter)
+    XCTAssertEqual(preset.quality, 85)
+    XCTAssertEqual(preset.filters, [.sepia])
+  }
+
+  func test_aChainSurvivesASaveAndLoad() async throws {
+    let preset = RulePreset(
+      name: "Round trip",
+      description: "",
+      category: .custom,
+      actions: [
+        .convertFormat(to: .plainText),
+        .recognizeText(languages: ["it-IT"]),
+        .quality(level: 42),
+      ]
+    )
+    try await store.savePreset(preset)
+
+    let reopened = PersistenceManager(root: store.root)
+    let loaded = try await reopened.loadAllPresets()
+    XCTAssertEqual(loaded, [preset])
+    XCTAssertEqual(loaded.first?.ocrLanguages, ["it-IT"])
+  }
+}
+
+/// Naming, where it says something the user needs.
+final class OutputNamingTests: BaseTestCase {
+
+  /// Converting one picture to three sizes used to give photo.jpg, photo 2.jpg
+  /// and photo 3.jpg, which says nothing about which is which.
+  func test_aResizePutsItsSizeInTheName() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 800, height: 600)
+    let destination = try folder("out")
+    let coordinator = coordinator()
+
+    for width in [1280, 640, 320] {
+      _ = try await coordinator.processFile(
+        try ProcessableFile(url: source),
+        with: .make(
+          format: .jpeg,
+          resize: ResizeSpec(width: width, height: width, fitMode: .proportional),
+          quality: 80,
+          category: .image
+        ),
+        destinationMode: .copyTo,
+        destinationURL: destination
+      ) { _ in }
+    }
+
+    XCTAssertEqual(contents(of: destination), ["photo-1280.jpeg", "photo-320.jpeg", "photo-640.jpeg"])
+  }
+
+  func test_noResizeMeansNoSuffix() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 100, height: 100)
+    let destination = try folder("out")
+
+    _ = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .jpeg, quality: 80, category: .image),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(contents(of: destination), ["photo.jpeg"])
+  }
+
+  /// Converting in place means the file stays where it is, under the name it
+  /// has, resize or not.
+  func test_convertingInPlaceKeepsTheName() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 400, height: 400)
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .png, resize: ResizeSpec(width: 200, height: 200, fitMode: .proportional), category: .image),
+      destinationMode: .overwrite
+    ) { _ in }
+
+    XCTAssertEqual(try XCTUnwrap(entry.outputURL).lastPathComponent, "photo.png")
+  }
+}
+
+/// Icon files carry several resolutions.
+final class IconTests: BaseTestCase {
+
+  func test_anIconGetsTheWholeLadder() async throws {
+    let source = try Fixture.image(at: path("mark.png"), width: 512, height: 512)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: try XCTUnwrap(UTType(filenameExtension: "ico")), category: .image),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+    let icon = try XCTUnwrap(CGImageSourceCreateWithURL(try XCTUnwrap(entry.outputURL) as CFURL, nil))
+    XCTAssertGreaterThan(CGImageSourceGetCount(icon), 1, "one picture in an .ico is not an icon")
+  }
+
+  /// The encoder refuses anything that is not square, and most pictures are
+  /// not. A wide source used to fail outright.
+  func test_aWideSourceStillMakesAnIcon() async throws {
+    let source = try Fixture.image(at: path("wide.png"), width: 800, height: 600)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: try XCTUnwrap(UTType(filenameExtension: "ico")), category: .image),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+    let icon = try XCTUnwrap(CGImageSourceCreateWithURL(try XCTUnwrap(entry.outputURL) as CFURL, nil))
+    XCTAssertGreaterThan(CGImageSourceGetCount(icon), 1)
+
+    for index in 0..<CGImageSourceGetCount(icon) {
+      let properties = CGImageSourceCopyPropertiesAtIndex(icon, index, nil) as? [CFString: Any]
+      let width = properties?[kCGImagePropertyPixelWidth] as? Int ?? 0
+      let height = properties?[kCGImagePropertyPixelHeight] as? Int ?? 0
+      XCTAssertEqual(width, height, "an icon image has to be square")
+      XCTAssertLessThanOrEqual(width, 256, "the encoder refuses anything larger")
+    }
+  }
+
+  /// A small source must not be enlarged to fill the ladder.
+  func test_aSmallSourceIsNotBlownUp() async throws {
+    let source = try Fixture.image(at: path("tiny.png"), width: 24, height: 24)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: try XCTUnwrap(UTType(filenameExtension: "ico")), category: .image),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    let icon = try XCTUnwrap(CGImageSourceCreateWithURL(try XCTUnwrap(entry.outputURL) as CFURL, nil))
+    for index in 0..<CGImageSourceGetCount(icon) {
+      let properties = CGImageSourceCopyPropertiesAtIndex(icon, index, nil) as? [CFString: Any]
+      let width = properties?[kCGImagePropertyPixelWidth] as? Int ?? 0
+      XCTAssertLessThanOrEqual(width, 24, "the source was enlarged")
+    }
+  }
+}
+
+/// Presets travel between machines.
+final class PresetSharingTests: BaseTestCase {
+
+  func test_presetsSurviveARoundTripThroughAFile() async throws {
+    let presets = [
+      RulePreset(name: "One", description: "", category: .image,
+                 actions: [.convertFormat(to: .jpeg), .quality(level: 64)]),
+      RulePreset(name: "Two", description: "", category: .audio,
+                 actions: [.encode(codec: .aac)]),
+    ]
+    let file = path("presets.json")
+
+    try await store.export(presets, to: file)
+    let read = try await store.importPresets(from: file)
+
+    XCTAssertEqual(read, presets)
+  }
+
+  /// People share one preset as often as a set, so both shapes are accepted.
+  func test_asinglePresetInAFileIsAccepted() async throws {
+    let file = path("one.json")
+    let json = """
+    { "name": "Solo", "description": "", "category": "image",
+      "actions": [ { "kind": "quality", "level": 50 } ] }
+    """
+    try json.write(to: file, atomically: true, encoding: .utf8)
+
+    let read = try await store.importPresets(from: file)
+    XCTAssertEqual(read.count, 1)
+    XCTAssertEqual(read.first?.name, "Solo")
+    XCTAssertEqual(read.first?.quality, 50)
+  }
+
+  func test_theFinishedMessageCountsBoth() {
+    XCTAssertEqual(Notifier.summary(converted: 1, failed: 0), "1 file converted.")
+    XCTAssertEqual(Notifier.summary(converted: 4, failed: 0), "4 files converted.")
+    XCTAssertEqual(Notifier.summary(converted: 3, failed: 1), "3 files converted, 1 failed.")
+  }
+}
+
+/// Adjusting a preset for one batch, without editing the saved one.
+final class PresetAdjustmentTests: BaseTestCase {
+
+  func test_replacingSwapsTheActionOfThatKind() {
+    let preset = RulePreset(
+      name: "Base", description: "", category: .image,
+      actions: [.convertFormat(to: .jpeg), .quality(level: 80)]
+    )
+    let adjusted = preset.replacing(.quality(level: 40))
+
+    XCTAssertEqual(adjusted.quality, 40)
+    XCTAssertEqual(adjusted.actions.count, 2, "it replaced rather than piling one on")
+    XCTAssertEqual(preset.quality, 80, "the original is untouched")
+  }
+
+  func test_replacingAddsWhenThereIsNoneOfThatKind() {
+    let preset = RulePreset(name: "Base", description: "", category: .image,
+                            actions: [.convertFormat(to: .jpeg)])
+    let adjusted = preset.replacing(.resize(width: 640, height: nil, fitMode: .proportional))
+
+    XCTAssertEqual(adjusted.resize?.width, 640)
+    XCTAssertEqual(adjusted.actions.count, 2)
+  }
+
+  /// The order the chain runs in must survive an adjustment.
+  func test_replacingKeepsThePosition() {
+    let preset = RulePreset(
+      name: "Base", description: "", category: .image,
+      actions: [.quality(level: 80), .convertFormat(to: .jpeg), .filter(type: .sepia)]
+    )
+    let adjusted = preset.replacing(.quality(level: 30))
+    XCTAssertEqual(adjusted.actions.map(\.id), ["quality", "convert", "filter"])
+  }
+
+  func test_removingTakesTheActionOut() {
+    let preset = RulePreset(name: "Base", description: "", category: .image,
+                            actions: [.convertFormat(to: .jpeg), .quality(level: 80)])
+    XCTAssertNil(preset.removing("quality").quality)
+  }
+}
+
+/// The order presets appear in, which is the order somebody put them in.
+final class PresetOrderTests: BaseTestCase {
+
+  private func presets(_ names: [String]) -> [RulePreset] {
+    names.enumerated().map { index, name in
+      RulePreset(name: name, description: "", category: .image, position: index)
+    }
+  }
+
+  func test_positionDecidesTheOrder() {
+    let out = AppModel.ordered([
+      RulePreset(name: "Zebra", description: "", category: .image, position: 0),
+      RulePreset(name: "Apple", description: "", category: .image, position: 1),
+    ])
+    XCTAssertEqual(out.map(\.name), ["Zebra", "Apple"], "position beats the alphabet")
+  }
+
+  /// Until somebody moves something, every preset shares position zero, and
+  /// the alphabet is the sensible tie-break.
+  func test_namesBreakTheTie() {
+    let out = AppModel.ordered([
+      RulePreset(name: "Zebra", description: "", category: .image),
+      RulePreset(name: "Apple", description: "", category: .image),
+    ])
+    XCTAssertEqual(out.map(\.name), ["Apple", "Zebra"])
+  }
+
+  @MainActor
+  func test_movingRewritesEveryPosition() {
+    let model = AppModel(persistence: store)
+    model.presets = presets(["One", "Two", "Three"])
+
+    model.movePreset(model.presets[2], by: -1)
+
+    XCTAssertEqual(model.presets.map(\.name), ["One", "Three", "Two"])
+    XCTAssertEqual(model.presets.map(\.position), [0, 1, 2], "positions must stay dense")
+  }
+
+  @MainActor
+  func test_movingPastTheEndDoesNothing() {
+    let model = AppModel(persistence: store)
+    model.presets = presets(["One", "Two"])
+
+    model.movePreset(model.presets[0], by: -1)
+    model.movePreset(model.presets[1], by: 1)
+
+    XCTAssertEqual(model.presets.map(\.name), ["One", "Two"])
+  }
+
+  /// A preset saved before order existed has no position, and must not be
+  /// stranded by one appearing.
+  func test_aPresetWithoutAPositionStillDecodes() throws {
+    let json = """
+    { "name": "Old", "category": "image", "actions": [] }
+    """
+    let preset = try JSONDecoder().decode(RulePreset.self, from: Data(json.utf8))
+    XCTAssertEqual(preset.position, 0)
+  }
+}
+
+/// What a batch cost, measured rather than guessed.
+final class SavingReportTests: BaseTestCase {
+
+  private func file(_ name: String, bytes: Int) throws -> ProcessableFile {
+    let url = path(name)
+    try Data(repeating: 0, count: bytes).write(to: url)
+    // A .png that is not a PNG is fine here: only the size is read.
+    return ProcessableFile(
+      url: url, fileType: .png, fileName: name, fileSize: Int64(bytes), dimensions: nil
+    )
+  }
+
+  func test_reportsHowMuchSmaller() throws {
+    let source = try file("in.png", bytes: 1000)
+    let output = path("out.jpeg")
+    try Data(repeating: 0, count: 250).write(to: output)
+
+    let saving = try XCTUnwrap(BatchViewModel.saving(from: [output], sources: [source]))
+    XCTAssertTrue(saving.contains("75%"), saving)
+    XCTAssertTrue(saving.contains("smaller"), saving)
+  }
+
+  /// A conversion can make a file bigger - PNG from JPEG, or lossless audio -
+  /// and saying "0% smaller" would be a lie of omission.
+  func test_reportsWhenItGotBigger() throws {
+    let source = try file("in.jpeg", bytes: 100)
+    let output = path("out.png")
+    try Data(repeating: 0, count: 300).write(to: output)
+
+    let saving = try XCTUnwrap(BatchViewModel.saving(from: [output], sources: [source]))
+    XCTAssertTrue(saving.contains("larger"), saving)
+  }
+
+  func test_nothingConvertedMeansNothingToReport() throws {
+    let source = try file("in.png", bytes: 100)
+    XCTAssertNil(BatchViewModel.saving(from: [], sources: [source]))
+  }
+}
+
+/// Nothing in the suite may write into the folder the app keeps for the person
+/// using it. A test once left nine presets called One, Two and Three in it.
+final class TestIsolationTests: BaseTestCase {
+
+  @MainActor
+  func test_theModelWritesWhereItIsTold() async throws {
+    let model = AppModel(persistence: store)
+    model.savePreset(RulePreset(name: "Scratch only", description: "", category: .image))
+
+    // Give the write a moment to land, then look in both places.
+    try await Task.sleep(nanoseconds: 300_000_000)
+
+    let inScratch = try await store.loadAllPresets()
+    XCTAssertTrue(inScratch.contains { $0.name == "Scratch only" })
+
+    let real = try await PersistenceManager.shared.loadAllPresets()
+    XCTAssertFalse(
+      real.contains { $0.name == "Scratch only" },
+      "a test wrote into the real Application Support folder"
+    )
+  }
+}
+
+/// Turning a preset off, which used to mean deleting it.
+final class PresetEnablingTests: BaseTestCase {
+
+  @MainActor
+  func test_anOffPresetIsNotOffered() {
+    let model = AppModel(persistence: store)
+    model.presets = [
+      RulePreset(name: "On", description: "", category: .image),
+      RulePreset(name: "Off", description: "", category: .image, isEnabled: false),
+    ]
+    XCTAssertEqual(model.usablePresets.map(\.name), ["On"])
+  }
+
+  @MainActor
+  func test_turningOneOffKeepsItInTheList() {
+    let model = AppModel(persistence: store)
+    model.presets = [RulePreset(name: "Kept", description: "", category: .image)]
+
+    model.setPreset(model.presets[0], enabled: false)
+
+    XCTAssertEqual(model.presets.count, 1, "it is off, not gone")
+    XCTAssertFalse(model.presets[0].isEnabled)
+    XCTAssertTrue(model.usablePresets.isEmpty)
+
+    model.setPreset(model.presets[0], enabled: true)
+    XCTAssertEqual(model.usablePresets.count, 1)
+  }
+
+  /// A preset written before the switch existed is on, not off.
+  func test_aPresetWithoutTheFlagIsOn() throws {
+    let json = """
+    { "name": "Old", "category": "image", "actions": [] }
+    """
+    let preset = try JSONDecoder().decode(RulePreset.self, from: Data(json.utf8))
+    XCTAssertTrue(preset.isEnabled)
+  }
+
+  func test_theFlagSurvivesASaveAndLoad() async throws {
+    let preset = RulePreset(name: "Off", description: "", category: .image, isEnabled: false)
+    try await store.savePreset(preset)
+
+    let reopened = PersistenceManager(root: store.root)
+    let loaded = try await reopened.loadAllPresets()
+    XCTAssertEqual(loaded.first?.isEnabled, false)
   }
 }

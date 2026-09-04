@@ -47,3 +47,15 @@ protocol FileProcessor: AnyObject, Sendable {
   ) async throws -> ProcessingResult
 }
 
+
+extension URL {
+  /// `photo.jpg` becomes `photo-002.jpg`. Used wherever one input yields many
+  /// outputs - PDF pages, and the frames of an animation.
+  func numbered(_ index: Int) -> URL {
+    let base = deletingPathExtension().lastPathComponent
+    let ext = pathExtension
+    let name = String(format: "%@-%03d", base, index)
+    return deletingLastPathComponent()
+      .appendingPathComponent(ext.isEmpty ? name : "\(name).\(ext)")
+  }
+}

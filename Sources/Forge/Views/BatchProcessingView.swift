@@ -10,8 +10,35 @@ struct BatchProcessingView: View {
   @State private var destinationMode: DestinationMode = .copyTo
   @State private var destinationURL: URL?
   @State private var isTargeted = false
+  @State private var showingAdjustments = false
+  @State private var overrideFormat: OutputFormat = .keep
+  @State private var overrideQuality: Double = 0
+  @State private var overrideWidth = ""
+  @State private var confirming = false
 
   private var preset: RulePreset? { model.presets.first { $0.id == selectedPresetID } }
+
+  /// The preset with this batch's adjustments applied, without touching the
+  /// saved one. Converting one folder differently should not mean editing a
+  /// preset and putting it back.
+  private var effectivePreset: RulePreset? {
+    guard var preset else { return nil }
+    if let format = overrideFormat.type {
+      preset = preset.replacing(.convertFormat(to: format))
+    }
+    if overrideQuality > 0 {
+      preset = preset.replacing(.quality(level: Int(overrideQuality)))
+    }
+    if let width = Int(overrideWidth.trimmingCharacters(in: .whitespaces)), width > 0 {
+      let mode = preset.resize?.fitMode ?? .proportional
+      preset = preset.replacing(.resize(width: width, height: nil, fitMode: mode))
+    }
+    return preset
+  }
+
+  private var hasAdjustments: Bool {
+    overrideFormat.type != nil || overrideQuality > 0 || !overrideWidth.isEmpty
+  }
   private var needsDestination: Bool { destinationMode != .overwrite }
   private var canConvert: Bool {
     !vm.files.isEmpty && preset != nil && !vm.isProcessing && (!needsDestination || destinationURL != nil)
@@ -37,7 +64,15 @@ struct BatchProcessingView: View {
           .disabled(vm.files.isEmpty || vm.isProcessing)
       }
     }
-    .onAppear { if selectedPresetID == nil { selectedPresetID = model.presets.first?.id } }
+    .onAppear { if selectedPresetID == nil { selectedPresetID = model.usablePresets.first?.id } }
+    .confirmationDialog(summaryTitle, isPresented: $confirming) {
+      Button(destinationMode == .overwrite ? "Replace Files" : "Move Files", role: .destructive) {
+        start()
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(summary)
+    }
   }
 
   private var dropZone: some View {
@@ -46,7 +81,6 @@ struct BatchProcessingView: View {
         .font(.system(size: 52, weight: .light))
         .foregroundStyle(isTargeted ? Color.accentColor : Color.secondary)
       Text("Drop files to convert").font(.title2.weight(.medium))
-      Text("Images, video, audio, and PDFs").font(.callout).foregroundStyle(.secondary)
       Button { addFiles() } label: { Label("Choose Files…", systemImage: "folder") }
         .controlSize(.large).padding(.top, 4)
     }
@@ -94,10 +128,13 @@ struct BatchProcessingView: View {
       if vm.isProcessing {
         ProgressView(value: vm.progress).progressViewStyle(.linear)
       }
+      if showingAdjustments {
+        adjustments
+      }
       HStack(spacing: 14) {
         Picker("Preset", selection: $selectedPresetID) {
           Text("Choose preset…").tag(UUID?.none)
-          ForEach(model.presets) { p in Text(p.name).tag(Optional(p.id)) }
+          ForEach(model.usablePresets) { p in Text(p.name).tag(Optional(p.id)) }
         }
         .labelsHidden().frame(maxWidth: 220)
 
@@ -113,17 +150,27 @@ struct BatchProcessingView: View {
           }
         }
 
+        Toggle(isOn: $showingAdjustments) {
+          Label("Adjust", systemImage: hasAdjustments ? "slider.horizontal.3" : "slider.horizontal.below.rectangle")
+        }
+        .toggleStyle(.button)
+        .help("Change the format, size or quality for this batch only")
+
         Spacer()
 
-        Text(vm.files.count == 1 ? "1 file" : "\(vm.files.count) files")
+        Text(vm.lastSaving ?? (vm.files.count == 1 ? "1 file" : "\(vm.files.count) files"))
           .font(.callout).foregroundStyle(.secondary)
 
         if vm.isProcessing {
           Button("Cancel") { vm.cancel(model: model) }
         } else {
           Button {
-            if let preset {
-              Task { await vm.convert(model: model, preset: preset, mode: destinationMode, destination: destinationURL) }
+            // Overwrite and Move both change what is already on disk, so they
+            // are worth a sentence before rather than an apology after.
+            if destinationMode == .copyTo {
+              start()
+            } else {
+              confirming = true
             }
           } label: { Text("Convert").frame(minWidth: 84) }
             .buttonStyle(.borderedProminent)
@@ -133,6 +180,84 @@ struct BatchProcessingView: View {
       }
     }
     .padding()
+  }
+
+  private func start() {
+    guard let preset = effectivePreset else { return }
+    Task { await vm.convert(model: model, preset: preset, mode: destinationMode, destination: destinationURL) }
+  }
+
+  private var summaryTitle: String {
+    destinationMode == .overwrite
+      ? (vm.files.count == 1 ? "Replace this file?" : "Replace these \(vm.files.count) files?")
+      : (vm.files.count == 1 ? "Move this file?" : "Move these \(vm.files.count) files?")
+  }
+
+  /// What is about to happen, in the order it matters: what changes, where it
+  /// goes, and whether anything can be got back.
+  private var summary: String {
+    var lines: [String] = []
+
+    let total = vm.files.reduce(Int64(0)) { $0 + $1.fileSize }
+    lines.append("\(vm.files.count) file\(vm.files.count == 1 ? "" : "s"), \(total.formatted(.byteCount(style: .file)))")
+
+    if let preset = effectivePreset {
+      let chain = preset.actions.map(PresetCard.chip).joined(separator: " · ")
+      if !chain.isEmpty { lines.append(chain) }
+    }
+
+    switch destinationMode {
+    case .overwrite:
+      lines.append(
+        model.settings.createBackupBeforeOverwrite
+          ? "The originals are replaced. A copy of each is kept in Backups."
+          : "The originals are replaced and not kept."
+      )
+    case .moveTo:
+      lines.append("The originals are removed once each conversion succeeds.")
+    case .copyTo:
+      break
+    }
+
+    return lines.joined(separator: "\n")
+  }
+
+  /// Overrides for this batch only. Empty means "whatever the preset says".
+  private var adjustments: some View {
+    HStack(spacing: 14) {
+      Picker("Format", selection: $overrideFormat) {
+        Text("From preset").tag(OutputFormat.keep)
+        Section("Images") { ForEach(OutputFormat.images) { Text($0.label).tag($0) } }
+        Section("Audio") { ForEach(OutputFormat.audio) { Text($0.label).tag($0) } }
+        Section("Video") { ForEach(OutputFormat.video) { Text($0.label).tag($0) } }
+        Section("Documents") { ForEach(OutputFormat.documents) { Text($0.label).tag($0) } }
+      }
+      .frame(maxWidth: 200)
+
+      HStack(spacing: 4) {
+        Text("Width").foregroundStyle(.secondary)
+        TextField("auto", text: $overrideWidth).frame(width: 60)
+      }
+
+      HStack(spacing: 6) {
+        Text("Quality").foregroundStyle(.secondary)
+        Slider(value: $overrideQuality, in: 0...100, step: 1).frame(width: 130)
+        Text(overrideQuality > 0 ? "\(Int(overrideQuality))" : "preset")
+          .monospacedDigit()
+          .foregroundStyle(.secondary)
+          .frame(width: 46, alignment: .leading)
+      }
+
+      Spacer()
+
+      Button("Reset") {
+        overrideFormat = .keep
+        overrideQuality = 0
+        overrideWidth = ""
+      }
+      .disabled(!hasAdjustments)
+    }
+    .padding(.bottom, 4)
   }
 
   private func addFiles() {
@@ -160,6 +285,9 @@ final class BatchViewModel: ObservableObject {
   @Published var fileProgress: [UUID: Double] = [:]
   @Published var isProcessing = false
   @Published var progress: Double = 0
+  /// What the last batch actually cost, once it is known. Guessing beforehand
+  /// would be a guess; this is measured.
+  @Published var lastSaving: String?
 
   private let cancellation = CancellationFlag()
 
@@ -216,6 +344,7 @@ final class BatchViewModel: ObservableObject {
     // Progress arrives far more often than the screen can use, so it is
     // coalesced before hopping to the main actor rather than after.
     let gates = ProgressGates()
+    let outputs = OutputSizes()
 
     await Batch.run(
       files,
@@ -229,10 +358,40 @@ final class BatchViewModel: ObservableObject {
       if case .progress(let id, let fraction) = event {
         guard gates.advance(id: id, to: (fraction * 100).rounded() / 100) else { return }
       }
+      if case .finished(_, _, let output, _) = event, let output {
+        outputs.add(output)
+      }
       Task { @MainActor [weak self] in self?.apply(event, of: total, in: model) }
     }
 
+    lastSaving = Self.saving(from: outputs.paths(), sources: files)
     await model.refreshHistory()
+
+    if model.settings.notifyWhenFinished, !cancellation.isSet {
+      let finished = statusMap.values
+      await Notifier.batchFinished(
+        converted: finished.filter { $0 == .completed }.count,
+        failed: finished.filter { $0 == .failed }.count
+      )
+    }
+  }
+
+  /// What the batch cost, compared with what went in. A pure reading of file
+  /// sizes, so it belongs to nobody's actor.
+  nonisolated static func saving(from outputs: [URL], sources: [ProcessableFile]) -> String? {
+    guard !outputs.isEmpty else { return nil }
+    let before = sources.reduce(Int64(0)) { $0 + $1.fileSize }
+    let after = outputs.reduce(Int64(0)) { total, url in
+      let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int64
+      return total + (size ?? 0)
+    }
+    guard before > 0, after > 0 else { return nil }
+
+    let written = after.formatted(.byteCount(style: .file))
+    let change = Int(((Double(before) - Double(after)) / Double(before) * 100).rounded())
+    if change > 0 { return "\(written) written, \(change)% smaller" }
+    if change < 0 { return "\(written) written, \(-change)% larger" }
+    return "\(written) written"
   }
 
   private func apply(_ event: Batch.Event, of total: Int, in model: AppModel) {
@@ -252,6 +411,24 @@ final class BatchViewModel: ObservableObject {
     }
   }
 
+}
+
+/// Collects the outputs a batch produced, from whichever thread reports them.
+private final class OutputSizes: @unchecked Sendable {
+  private let lock = NSLock()
+  private var urls: [URL] = []
+
+  func add(_ url: URL) {
+    lock.lock()
+    urls.append(url)
+    lock.unlock()
+  }
+
+  func paths() -> [URL] {
+    lock.lock()
+    defer { lock.unlock() }
+    return urls
+  }
 }
 
 /// Lets a progress value through only when it has actually moved, per file.

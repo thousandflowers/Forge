@@ -71,6 +71,16 @@ struct RecipeOptions: ParsableArguments {
   @Option(help: "Filter to apply: grayscale, sepia, blur, sharpen, invert.")
   var filter: FilterType?
 
+  @Option(
+    name: .customLong("ocr-language"),
+    parsing: .upToNextOption,
+    help: "Languages to look for when reading text, e.g. it-IT. Omit to detect automatically."
+  )
+  var ocrLanguages: [String] = []
+
+  @Option(help: "Encoder to use where the container allows more than one: h264, hevc, proRes422, aac, appleLossless, flac, opus.")
+  var codec: Codec?
+
   /// Build the preset this run should use, from a saved one or from the flags.
   func resolve(saved: [RulePreset]) throws -> RulePreset {
     if let preset {
@@ -81,19 +91,27 @@ struct RecipeOptions: ParsableArguments {
       return match
     }
 
-    guard format != nil || resize != nil || quality != nil || filter != nil else {
+    guard format != nil || resize != nil || quality != nil || filter != nil || !ocrLanguages.isEmpty || codec != nil else {
       throw ValidationError("Nothing to do: pass --preset, or one of --to, --resize, --quality, --filter.")
     }
 
-    return RulePreset(
+    var preset = RulePreset(
       name: "command line",
       description: "Built from command-line options.",
       targetFormat: try targetType(),
       resize: try resizeSpec(),
       quality: try validatedQuality(),
       filters: filter.map { [$0] } ?? [],
-      category: .custom
+      category: .custom,
+      ocrLanguages: ocrLanguages
     )
+    if let codec {
+      guard Codec.available.contains(codec) else {
+        throw ValidationError("This Mac cannot encode \(codec.title). Try `forge formats`.")
+      }
+      preset.actions.append(.encode(codec: codec))
+    }
+    return preset
   }
 
   private func targetType() throws -> UTType? {
@@ -152,3 +170,5 @@ enum CLI {
     }
   }
 }
+
+extension Codec: ExpressibleByArgument {}

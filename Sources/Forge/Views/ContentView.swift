@@ -35,7 +35,9 @@ struct ContentView: View {
     switch section ?? .process {
     case .process:  BatchProcessingView()
     case .presets:  PresetsView()
+    case .gallery:  GalleryView()
     case .folders:  MonitoredFoldersView()
+    case .capabilities: CapabilitiesView()
     case .history:  HistoryView()
     case .settings: SettingsView()
     }

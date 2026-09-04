@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: macos-14
+    # A hung test used to take the job to forty minutes before the runner gave
+    # up. Fifteen is generous for a suite that runs in eleven seconds locally.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 

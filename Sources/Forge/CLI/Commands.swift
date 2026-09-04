@@ -14,6 +14,8 @@ struct Convert: AsyncParsableCommand {
           forge convert *.png --to jpeg --quality 80 --out ./web
           forge convert photo.heic --preset "Web JPEG" --out ~/Desktop
           forge convert clip.mov --to mp4 --resize 1280x720 --out ./out
+          forge convert clip.mov --to gif --out ./out
+          forge convert scan.pdf --to txt --ocr-language it-IT --out ./text
           forge convert *.png --to jpeg --overwrite
         """
     )
@@ -115,6 +117,10 @@ struct Presets: AsyncParsableCommand {
         return "q\(level)"
       case .filter(let type):
         return type.rawValue
+      case .recognizeText(let languages):
+        return languages.isEmpty ? "read text" : "read text (\(languages.joined(separator: ", ")))"
+      case .encode(let codec):
+        return codec.title
       }
     }
   }
@@ -137,6 +143,11 @@ extension ForgeCommand {
         print("Read")
         print("  images: " + Self.list(FormatCatalog.readableImageTypes))
         print("  media:  " + Self.list(FormatCatalog.readableMediaTypes))
+        print("")
+      }
+      if !writableOnly {
+        print("Text recognition (\(TextRecognizer.supportedLanguages.count) languages)")
+        print("  " + TextRecognizer.supportedLanguages.joined(separator: " "))
         print("")
       }
       print("Write")

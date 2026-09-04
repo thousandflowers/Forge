@@ -27,57 +27,83 @@ supports, so they are live now and simply were not advertised.
 | **DOCX, RTF, ODT** | read, through AppKit's document readers |
 | **FLAC, CAF, AIFF, WAV, M4A** | read and write |
 | **Command line** | `forge`, sharing the engine and the presets with the app |
+| **3D models** | OBJ, STL, PLY, ABC and USD read and written, USDZ read, through ModelIO |
 | **Hot folders** | watched folders, with a guard against converting their own output |
 
 ## Planned
 
 Native, no new dependencies, in rough order of value.
 
-- [ ] **OCR** - Vision reads text from images and scanned PDFs on device, in 30
-      languages, with the language selectable. Nothing else here comes close on
-      value per line of code.
-- [ ] **Video ↔ GIF** - frames out with `AVAssetImageGenerator`, animated GIF in
-      with a multi-frame `CGImageDestination`. Animated GIF decoding comes with it.
-- [ ] **Documents** - DOCX/RTF/ODT/HTML → PDF, and Markdown in both directions,
-      through `NSAttributedString` and PDFKit.
-- [ ] **Image ↔ PDF** - both directions; the write half already exists.
-- [ ] **Codec choice** - ProRes and HEVC for video, and the container/codec split
-      described below for audio.
-- [ ] **Multi-size ICO** - encoding several resolutions into one file.
-- [ ] **M4B** - the audiobook variant of the M4A container.
-- [ ] **Config files** - CSV ↔ JSON and JSON ↔ Property List, both Foundation.
-- [ ] **Fonts** - TTF and OTF through CoreText.
-- [ ] **Audio → video** - wrapping an audio file in an MP4 container.
-- [ ] **Embedded subtitle extraction** - subtitle tracks inside a movie are
-      reachable through AVFoundation.
+- [x] **OCR** - Vision reads text from images and scanned PDFs on device, in 30
+      languages, selectable with `--ocr-language`. A PDF hands back its embedded
+      text and reads only the pages that carry none.
+- [x] **Video ↔ GIF** - both directions, plus multi-frame reading throughout, so
+      an animation stays an animation and a still format gets one file per frame.
+- [x] **Documents** - HTML, RTF, DOCX, ODT, Markdown and plain text convert to
+      each other and to PDF, paginated with CoreText. Markdown is an input only:
+      Foundation parses it and nothing on the system writes it back.
+- [x] **Image ↔ PDF** - both directions, and an animation becomes a multi-page
+      document rather than a pile of files.
+- [x] **Codec choice** - ProRes, HEVC and H.264 for video; AAC, Apple Lossless,
+      FLAC, Opus and uncompressed for audio. This is what made Apple Lossless
+      and Opus reachable: they share containers with other codecs, so the
+      container alone could never say which was meant.
+- [x] **Multi-size ICO** - an icon carries 16 through 256, and a small source
+      is not enlarged to fill the ladder.
+- [x] **M4B** - the audiobook container. macOS types the extension as
+      `com.apple.protected-mpeg-4-audio-b`, which is a quirk of the type
+      database rather than a statement about the file: what Forge writes is
+      plain AAC in an MP4 container, which is what a DRM-free audiobook is.
+- [x] **Data files** - CSV, TSV, JSON and Property List between each other,
+      with the awkward parts of separated values handled: quoted fields,
+      separators and newlines inside them.
+- [x] **Audio → video** - a recording asked for a movie container gets one.
+- [ ] **Embedded subtitle extraction** - the tracks are reachable, but the text
+      is not: AVFoundation exposes no high-level reader for subtitle samples, so
+      this means parsing sample buffers per format. Possible, and more work than
+      it looks.
 - [ ] **Signing and notarization** - needs a Developer ID. Until then the DMG is
       ad-hoc signed and Gatekeeper warns on first launch.
-- [ ] **Homebrew cask** - a cask, not a formula: Forge ships an app bundle.
-- [ ] **Text to speech** - `AVSpeechSynthesizer` writes to a file, with 180
-      voices across 49 languages already installed.
-- [ ] **Audio transcription** - the Speech framework covers 63 locales and runs
-      on device for the common ones, so a recording becomes text or subtitles
-      without anything leaving the Mac.
-- [ ] **Shortcuts integration**, **completion notifications**, **preset import/export**.
+- [x] **Homebrew cask** - `Casks/forge.rb`, ready to copy into a tap. A cask
+      rather than a formula because Forge ships an app bundle, and the tool is
+      linked from inside it rather than installed twice.
+- [x] **Text to speech** - any document becomes spoken audio, with the voices
+      already installed.
+- [x] **Audio transcription** - a recording, or a video's soundtrack, becomes
+      text on device. Permission is asked once; nothing is uploaded.
+- [x] **Completion notifications** - permission asked when the first batch
+      finishes rather than at launch.
+- [x] **Preset import/export** - one file or a set, with new identities on the
+      way in so an import adds rather than replaces.
+- [x] **Shortcuts integration** - a Convert Files action taking files, a preset
+      name and a destination, running the same engine and the same presets.
 
 ### Interface
 
-- [ ] **In-app format overview** - the app knows exactly what it can read and
-      write, and only the command line says so today (`forge formats`).
-- [ ] **Quality and format controls in the convert screen** - currently they
-      live only inside a preset.
-- [ ] **Estimated output size and a summary before converting** - worth having
-      precisely because the destination modes can replace files.
-- [ ] **Filename suffix when resizing** - `photo-1280.jpg` rather than
-      overwriting the name.
-- [ ] **Reordering presets** - drag, or move up and down.
-- [ ] **A lower default image quality** - the default is 85; smaller files by
-      default is a reasonable argument, and it is one constant.
+- [x] **In-app format overview** - the Capabilities screen, computed from the
+      frameworks at run time, so it describes the machine it runs on.
+- [x] **Quality and format controls in the convert screen** - an Adjust button
+      overrides the preset's format, width and quality for one batch, without
+      editing the preset.
+- [x] **A summary before converting, and the real number after** - Overwrite
+      and Move ask first, saying what changes and whether a copy is kept. There
+      is deliberately no size *estimate*: it would be a guess. What is reported
+      afterwards is measured - "1.4 MB written, 62% smaller".
+- [x] **Filename suffix when resizing** - `photo-1280.jpg`. Converting one
+      picture to three sizes used to give `photo.jpg`, `photo 2.jpg` and
+      `photo 3.jpg`. Not applied when converting in place, where the file keeps
+      the name it has.
+- [x] **Reordering presets** - Move Up and Move Down. Presets were sorted by
+      name, which is tidy and not the order anyone works in.
+- [x] **A lower default image quality** - 80 rather than 85, measured: the step
+      from 85 to 80 takes about a third off the file, and below 80 the curve
+      flattens out.
 - [ ] **Localization** - the app is English-only.
 - [ ] **Finder action** - convert from the context menu, through a Finder
       extension. Needs a signed app extension, so it waits on notarization.
-- [ ] **Menu bar item** - Forge is a window app today. A menu bar presence is
-      additive, not a replacement.
+- [x] **Menu bar item** - pick a preset, pick files, pick a folder. A
+      conversion is usually a small errand and going to the window for it is
+      more ceremony than the errand deserves.
 
 ## Not planned, and why
 
@@ -100,7 +126,9 @@ ImageIO and AVFoundation ship no encoder. Adding one means shipping a library.
   a whole is not.
 - **EPS** - neither read nor write.
 - **WMA**, **Sun Audio (AU)**, **True Audio (TTA)**, **WavPack**.
-- **WOFF, WOFF2** - no system type; CoreText handles TTF and OTF only.
+- **Fonts, in any direction** - CoreText reads a font's tables but has no
+  public API to write one, so TTF to OTF is not a framework call. WOFF and
+  WOFF2 do not even have a system type.
 
 ### No encoder for the codec
 
@@ -136,12 +164,14 @@ installed.
   `.aar` only, and shelling out to `ditto` or `tar` is the external-tool
   problem wearing a hat.
 - **YAML, TOML** - no parser in the standard library or in any Apple framework.
+  CSV, JSON and Property List are supported precisely because Foundation has
+  readers for them.
 - **EML, EMLX, MSG** - no reader.
 - **SubRip, SubViewer, MicroDVD** - no system parser for standalone subtitle
   files. Hand-writing one is possible but it is a parser to maintain, not a
   framework call.
-- **glTF, GLB, FBX** - ModelIO imports OBJ, STL, PLY, ABC and USDZ, and exports
-  the first four. These are not among them.
+- **glTF, GLB, FBX** - ModelIO reads and writes OBJ, STL, PLY, ABC and USD, and
+  reads USDZ. These are not among them, and the Capabilities screen says so.
 
 ### Vision does not have the language
 

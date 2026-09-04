@@ -16,7 +16,7 @@ final class AppModel: ObservableObject {
   @Published var lastError: String?
 
   let coordinator: ProcessingCoordinator
-  private let persistence = PersistenceManager.shared
+  private let persistence: PersistenceManager
   private var watchers: [UUID: MonitoredFolderWatcher] = [:]
 
   /// Files Forge has just written. A watched folder that also receives the
@@ -24,10 +24,14 @@ final class AppModel: ObservableObject {
   private var produced: Set<String> = []
   private static let producedLimit = 512
 
-  init() {
+  /// - Parameter persistence: where presets, folders and history live. Tests
+  ///   pass a scratch store; anything else writing to the real one is a bug
+  ///   that shows up as junk presets in somebody's app.
+  init(persistence: PersistenceManager = .shared) {
     let loaded = AppSettings.load()
     self.settings = loaded
-    self.coordinator = ProcessingCoordinator(settings: loaded)
+    self.persistence = persistence
+    self.coordinator = ProcessingCoordinator(settings: loaded, persistence: persistence)
   }
 
   /// Load persisted state on launch; seed default presets on first run.
@@ -35,17 +39,19 @@ final class AppModel: ObservableObject {
     do {
       let loadedPresets = try await persistence.loadAllPresets()
       if loadedPresets.isEmpty {
-        presets = Self.defaultPresets
+        presets = Self.defaultPresets.enumerated().map { index, preset in
+          var seeded = preset
+          seeded.position = index
+          return seeded
+        }
         for preset in presets { try await persistence.savePreset(preset) }
       } else {
-        presets = loadedPresets.sorted { $0.name < $1.name }
+        presets = Self.ordered(loadedPresets)
       }
       folders = try await persistence.loadMonitoredFolders()
     } catch {
       report(error, doing: "loading your presets and folders")
     }
-
-    warnAboutUnwritablePresets()
 
     await refreshHistory()
     for folder in folders where folder.isActive { startWatcher(folder) }
@@ -59,8 +65,52 @@ final class AppModel: ObservableObject {
     } else {
       presets.append(preset)
     }
-    presets.sort { $0.name < $1.name }
+    presets = Self.ordered(presets)
     persist({ try await $0.savePreset(preset) }, doing: "saving “\(preset.name)”")
+  }
+
+  /// Add a preset from the gallery, under a new identity so installing the
+  /// same one twice gives two, not a silent replacement of yours.
+  func install(_ preset: RulePreset) {
+    var copy = preset
+    copy.id = UUID()
+    copy.position = (presets.map(\.position).max() ?? 0) + 1
+    savePreset(copy)
+  }
+
+  /// Turn a preset off without losing it.
+  func setPreset(_ preset: RulePreset, enabled: Bool) {
+    guard let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
+    presets[index].isEnabled = enabled
+    let updated = presets[index]
+    persist({ try await $0.savePreset(updated) }, doing: "saving “\(preset.name)”")
+  }
+
+  /// The presets on offer anywhere a conversion is started.
+  var usablePresets: [RulePreset] {
+    presets.filter(\.isEnabled)
+  }
+
+  /// Move a preset one place, and write the new order down.
+  func movePreset(_ preset: RulePreset, by offset: Int) {
+    guard let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
+    let target = index + offset
+    guard presets.indices.contains(target) else { return }
+
+    presets.swapAt(index, target)
+    for (position, var preset) in presets.enumerated() {
+      preset.position = position
+      presets[position] = preset
+      persist({ [preset] in try await $0.savePreset(preset) }, doing: "reordering your presets")
+    }
+  }
+
+  /// By position, then by name for the ones that share one - which is every
+  /// preset until somebody moves something.
+  nonisolated static func ordered(_ presets: [RulePreset]) -> [RulePreset] {
+    presets.sorted {
+      $0.position == $1.position ? $0.name < $1.name : $0.position < $1.position
+    }
   }
 
   func deletePreset(_ preset: RulePreset) {
@@ -80,6 +130,30 @@ final class AppModel: ObservableObject {
         category: preset.category
       )
     )
+  }
+
+  /// Write every preset to a file, so a set can be kept or handed on.
+  func exportPresets(to url: URL) {
+    let snapshot = presets
+    persist({ try await $0.export(snapshot, to: url) }, doing: "exporting your presets")
+  }
+
+  /// Read presets from a file, giving each a new identity so an import adds
+  /// rather than silently replacing what is already there.
+  func importPresets(from url: URL) {
+    Task { [weak self] in
+      do {
+        let imported = try await self?.persistence.importPresets(from: url) ?? []
+        guard let self else { return }
+        for preset in imported {
+          var copy = preset
+          copy.id = UUID()
+          self.savePreset(copy)
+        }
+      } catch {
+        self?.report(error, doing: "importing presets")
+      }
+    }
   }
 
   // MARK: - Folders
@@ -111,6 +185,18 @@ final class AppModel: ObservableObject {
     persistFolders()
   }
 
+  /// Whether a preset targets something this machine cannot write - an
+  /// "Audio to MP3" preset saved by an older version, for one, since
+  /// AVFoundation has no MP3 encoder.
+  func canDeliver(_ preset: RulePreset) -> Bool {
+    guard let format = preset.targetFormat else { return true }
+    return FormatCatalog.isWritableImage(format)
+      || FormatCatalog.audioFormatID(for: format) != nil
+      || FormatCatalog.isWritableVideo(format)
+      || FormatCatalog.isWritableModel(format)
+      || DocumentText.canWrite(format)
+  }
+
   func presetName(for id: UUID) -> String {
     presets.first { $0.id == id }?.name ?? "Unknown preset"
   }
@@ -118,6 +204,37 @@ final class AppModel: ObservableObject {
   private func persistFolders() {
     let snapshot = folders
     persist({ try await $0.saveMonitoredFolders(snapshot) }, doing: "saving your monitored folders")
+  }
+
+  /// Run a conversion started from the menu bar, where there is no progress to
+  /// show, so the notification is the whole report.
+  func convertFromMenuBar(_ urls: [URL], with preset: RulePreset, into folder: URL) {
+    let files = urls.compactMap { try? ProcessableFile(url: $0) }
+    guard !files.isEmpty else {
+      lastError = "None of those files is one Forge can open."
+      return
+    }
+
+    Task { [weak self] in
+      guard let self else { return }
+      let limit = await self.coordinator.maxConcurrentNative
+      let report = await Batch.run(
+        files,
+        preset: preset,
+        mode: .copyTo,
+        destination: folder,
+        limit: limit,
+        coordinator: self.coordinator
+      ) { event in
+        guard case .finished(_, _, let output, _) = event, let output else { return }
+        Task { @MainActor in self.remember(output) }
+      }
+
+      await self.refreshHistory()
+      if self.settings.notifyWhenFinished {
+        await Notifier.batchFinished(converted: report.converted, failed: report.failed)
+      }
+    }
   }
 
   // MARK: - History
@@ -211,24 +328,6 @@ final class AppModel: ObservableObject {
     produced.insert(url.standardizedFileURL.path)
   }
 
-  /// Presets saved by an older version can target a format this machine cannot
-  /// write - an "Audio to MP3" preset, for one, since AVFoundation has no MP3
-  /// encoder. Saying so once beats letting every conversion fail.
-  private func warnAboutUnwritablePresets() {
-    let broken = presets.filter { preset in
-      guard let format = preset.targetFormat else { return false }
-      return !FormatCatalog.isWritableImage(format)
-        && FormatCatalog.audioFormatID(for: format) == nil
-        && !FormatCatalog.isWritableVideo(format)
-    }
-    // Never speak over a real failure: this is advice, not an error.
-    guard !broken.isEmpty, lastError == nil else { return }
-
-    let names = broken.map { "“\($0.name)”" }.joined(separator: ", ")
-    lastError = broken.count == 1
-      ? "The preset \(names) targets a format macOS cannot write. Edit or delete it in Presets."
-      : "These presets target formats macOS cannot write: \(names). Edit or delete them in Presets."
-  }
 
   // MARK: - Errors
 
@@ -246,7 +345,7 @@ final class AppModel: ObservableObject {
     }
   }
 
-  private func report(_ error: Error, doing action: String) {
+  func report(_ error: Error, doing action: String) {
     lastError = "Something went wrong \(action): \(error.localizedDescription)"
   }
 

@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 struct PresetsView: View {
   @EnvironmentObject private var model: AppModel
@@ -14,11 +16,24 @@ struct PresetsView: View {
         ScrollView {
           LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 16)], spacing: 16) {
             ForEach(model.presets) { preset in
-              PresetCard(preset: preset)
+              PresetCard(
+                preset: preset,
+                deliverable: model.canDeliver(preset),
+                isEnabled: Binding(
+                  get: { preset.isEnabled },
+                  set: { model.setPreset(preset, enabled: $0) }
+                ),
+                onDelete: { model.deletePreset(preset) }
+              )
                 .onTapGesture { editorItem = EditorItem(preset: preset) }
                 .contextMenu {
                   Button("Edit") { editorItem = EditorItem(preset: preset) }
                   Button("Duplicate") { model.duplicatePreset(preset) }
+                  Divider()
+                  Button("Move Up") { model.movePreset(preset, by: -1) }
+                    .disabled(model.presets.first?.id == preset.id)
+                  Button("Move Down") { model.movePreset(preset, by: 1) }
+                    .disabled(model.presets.last?.id == preset.id)
                   Divider()
                   Button("Delete", role: .destructive) { model.deletePreset(preset) }
                 }
@@ -30,13 +45,36 @@ struct PresetsView: View {
     }
     .navigationTitle("Presets")
     .toolbar {
-      ToolbarItem(placement: .primaryAction) {
+      ToolbarItemGroup(placement: .primaryAction) {
+        Menu {
+          Button("Import Presets…") { importPresets() }
+          Button("Export Presets…") { exportPresets() }
+            .disabled(model.presets.isEmpty)
+        } label: {
+          Label("Share", systemImage: "square.and.arrow.up.on.square")
+        }
         Button { editorItem = EditorItem(preset: nil) } label: { Label("New Preset", systemImage: "plus") }
       }
     }
     .sheet(item: $editorItem) { item in
       PresetEditorView(preset: item.preset) { model.savePreset($0) }
     }
+  }
+
+  private func exportPresets() {
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "Forge Presets.json"
+    panel.allowedContentTypes = [.json]
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    model.exportPresets(to: url)
+  }
+
+  private func importPresets() {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [.json]
+    panel.allowsMultipleSelection = false
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    model.importPresets(from: url)
   }
 
   struct EditorItem: Identifiable {
@@ -47,21 +85,40 @@ struct PresetsView: View {
 
 struct PresetCard: View {
   let preset: RulePreset
+  /// False when the target format cannot be written on this Mac.
+  var deliverable = true
+  /// Off presets stay in the list and are offered nowhere.
+  @Binding var isEnabled: Bool
+  let onDelete: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      HStack {
+      HStack(spacing: 8) {
         Image(systemName: preset.category.icon)
-          .foregroundStyle(.tint)
+          .foregroundStyle(isEnabled ? Color.accentColor : .secondary)
           .font(.title3)
         Spacer()
-        Text(preset.category.rawValue.capitalized)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .padding(.horizontal, 8).padding(.vertical, 2)
-          .background(Capsule().fill(Color.secondary.opacity(0.12)))
+        Toggle("", isOn: $isEnabled)
+          .toggleStyle(.switch)
+          .controlSize(.mini)
+          .labelsHidden()
+          .help(isEnabled ? "Turn this preset off" : "Turn this preset on")
+        Button(role: .destructive, action: onDelete) {
+          Image(systemName: "xmark")
+            .font(.caption.weight(.semibold))
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        .help("Delete this preset")
       }
-      Text(preset.name).font(.headline).lineLimit(1)
+      HStack(spacing: 6) {
+        Text(preset.name).font(.headline).lineLimit(1)
+        if !deliverable {
+          Image(systemName: "exclamationmark.triangle.fill")
+            .foregroundStyle(.orange)
+            .help("This Mac cannot write \(preset.targetFormat?.preferredFilenameExtension?.uppercased() ?? "that format"). Edit or delete this preset.")
+        }
+      }
       Text(preset.description)
         .font(.callout).foregroundStyle(.secondary).lineLimit(2)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -82,25 +139,34 @@ struct PresetCard: View {
     .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
     .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
     .contentShape(Rectangle())
+    .opacity(isEnabled ? 1 : 0.5)
   }
 
-  /// "1080×1080", or "1080 wide" when only one side is pinned. It used to
-  /// render the missing side as 0.
-  private static func sizeChip(_ resize: ResizeSpec) -> String? {
-    switch (resize.width, resize.height) {
-    case let (width?, height?): return "\(width)×\(height)"
-    case let (width?, nil): return "\(width) wide"
-    case let (nil, height?): return "\(height) tall"
-    case (nil, nil): return nil
-    }
-  }
-
+  /// One chip per action, in the order they run, so the card shows the chain
+  /// rather than a summary of fields that no longer exist.
   private var chips: [String] {
-    var c: [String] = []
-    if let f = preset.targetFormat { c.append((f.preferredFilenameExtension ?? "fmt").uppercased()) }
-    if let r = preset.resize, let chip = Self.sizeChip(r) { c.append(chip) }
-    if let q = preset.quality { c.append("Q\(q)") }
-    if !preset.filters.isEmpty { c.append("\(preset.filters.count) filter\(preset.filters.count == 1 ? "" : "s")") }
-    return c
+    preset.actions.map(Self.chip)
+  }
+
+  static func chip(_ action: Operation) -> String {
+    switch action {
+    case .convertFormat(let to):
+      return (to.preferredFilenameExtension ?? "fmt").uppercased()
+    case .resize(let width, let height, _):
+      switch (width, height) {
+      case let (width?, height?): return "\(width)×\(height)"
+      case let (width?, nil): return "\(width) wide"
+      case let (nil, height?): return "\(height) tall"
+      case (nil, nil): return "resize"
+      }
+    case .quality(let level):
+      return "Q\(level)"
+    case .filter(let type):
+      return type.rawValue
+    case .recognizeText(let languages):
+      return languages.isEmpty ? "OCR" : "OCR \(languages.joined(separator: "/"))"
+    case .encode(let codec):
+      return codec.title
+    }
   }
 }

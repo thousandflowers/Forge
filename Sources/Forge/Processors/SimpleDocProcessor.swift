@@ -13,9 +13,13 @@ import UniformTypeIdentifiers
 final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
   let name = "Document Processor"
 
-  /// PDF plus whatever AppKit's document readers accept, so the list follows
-  /// the readers that exist rather than one written out by hand.
-  private let readableTypes: [UTType] = [.pdf] + NSAttributedString.textDocumentTypes.keys
+  /// PDF plus whatever the system's document readers accept.
+  private let readableTypes: [UTType] = {
+    var types: [UTType] = [.pdf]
+    types.append(contentsOf: Array(DocumentText.readable.keys))
+    if let markdown = DocumentText.markdown { types.append(markdown) }
+    return types
+  }()
 
   private let ciContext = CIContext(options: [.cacheIntermediates: false])
 
@@ -33,10 +37,22 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       throw ProcessingError.unknownType
     }
 
+    let outputType = Self.outputUTI(for: output, operations: operations, fallback: .jpeg)
+
     if inputType.conforms(to: .pdf) {
+      // A PDF asked for text hands back the text it carries, and reads the
+      // pages that carry none. A scan has no text layer at all.
+      if outputType.conforms(to: .plainText) {
+        return try readText(from: input, operations: operations, to: output, progress: progress)
+      }
       return try renderPDF(input, to: output, operations: operations, progress: progress)
     }
-    return try await convertText(input, from: inputType, to: output, progress: progress)
+    // Text asked for audio is spoken, not converted.
+    if FormatCatalog.audioFormatID(for: outputType) != nil {
+      return try await speak(input, from: inputType, to: outputType, at: output, operations: operations, progress: progress)
+    }
+
+    return try await convertText(input, from: inputType, to: outputType, at: output, progress: progress)
   }
 
   // MARK: - PDF
@@ -71,7 +87,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       try Task.checkCancellation()
       guard let page = pdf.page(at: index) else { continue }
 
-      let destination = index == 0 ? output : Self.pageURL(output, page: index + 1)
+      let destination = index == 0 ? output : output.numbered(index + 1)
       let dimensions = try render(page, to: destination, as: outputUTI, operations: operations)
       if index == 0 { firstDimensions = dimensions }
       written.append(destination)
@@ -145,36 +161,87 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     return (rendered.width, rendered.height)
   }
 
-  // MARK: - Text
+  // MARK: - Speaking
 
-  /// Read the document with AppKit and write out its plain text. HTML and RTF
-  /// used to be copied byte for byte, so "convert to text" returned markup.
   @MainActor
-  private func convertText(
+  private func speak(
     _ input: URL,
     from inputType: UTType,
-    to output: URL,
+    to outputType: UTType,
+    at output: URL,
+    operations: [Operation],
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
     let start = Date()
-    progress(0.2)
 
     let text: String
-    if inputType.conforms(to: .plainText) {
-      text = try String(contentsOf: input, encoding: .utf8)
-    } else {
-      guard let attributed = try? NSAttributedString(
-        url: input,
-        options: [.documentType: Self.documentType(for: inputType)],
-        documentAttributes: nil
-      ) else {
-        throw ProcessingError.conversionFailed(reason: "Cannot read \(input.lastPathComponent)")
+    if inputType.conforms(to: .pdf) {
+      guard let pdf = PDFDocument(url: input) else {
+        throw ProcessingError.conversionFailed(reason: "Cannot open \(input.lastPathComponent)")
       }
-      text = attributed.string
+      text = pdf.string ?? ""
+    } else {
+      text = try DocumentText.read(input, as: inputType).string
     }
 
-    progress(0.8)
-    try text.write(to: output, atomically: true, encoding: .utf8)
+    // The recognition language doubles as the speaking one: both answer "which
+    // language is this document in".
+    let language = operations.compactMap { operation -> String? in
+      guard case .recognizeText(let languages) = operation else { return nil }
+      return languages.first
+    }.first
+
+    try await SpeechSynthesis.write(text, to: output, as: outputType, language: language, progress: progress)
+
+    let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
+    return ProcessingResult(
+      outputURL: output,
+      outputSize: attributes[.size] as? Int64 ?? 0,
+      outputDimensions: nil,
+      duration: Date().timeIntervalSince(start)
+    )
+  }
+
+  // MARK: - Reading a PDF
+
+  /// Text from a PDF: what is embedded, and OCR for the pages without any.
+  private func readText(
+    from input: URL,
+    operations: [Operation],
+    to output: URL,
+    progress: @escaping @Sendable (Double) -> Void
+  ) throws -> ProcessingResult {
+    let start = Date()
+
+    guard let pdf = PDFDocument(url: input) else {
+      throw ProcessingError.conversionFailed(reason: "Cannot open \(input.lastPathComponent)")
+    }
+    guard pdf.pageCount > 0 else {
+      throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no pages")
+    }
+
+    let languages = operations.compactMap { operation -> [String]? in
+      guard case .recognizeText(let languages) = operation else { return nil }
+      return languages
+    }.first ?? []
+
+    var pages: [String] = []
+    for index in 0..<pdf.pageCount {
+      try Task.checkCancellation()
+      guard let page = pdf.page(at: index) else { continue }
+
+      let embedded = page.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      if !embedded.isEmpty {
+        pages.append(embedded)
+      } else if let image = try? rasterise(page) {
+        pages.append(try TextRecognizer.text(in: image, languages: languages))
+      }
+
+      progress(Double(index + 1) / Double(pdf.pageCount) * 0.95)
+    }
+
+    // A form feed is the long-standing way to say "page break" in plain text.
+    try pages.joined(separator: "\n\u{000C}\n").write(to: output, atomically: true, encoding: .utf8)
     progress(1.0)
 
     let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
@@ -186,9 +253,57 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     )
   }
 
-  private static func documentType(for type: UTType) -> NSAttributedString.DocumentType {
-    NSAttributedString.textDocumentTypes.first { type.conforms(to: $0.key) }?.value ?? .plain
+  /// A page as pixels, for the reader to look at.
+  private func rasterise(_ page: PDFPage) throws -> CGImage {
+    let bounds = page.bounds(for: .mediaBox)
+    // Text recognition wants detail; 2x the PDF's 72 dpi is the usual floor.
+    let scale: CGFloat = 2
+    let thumbnail = page.thumbnail(
+      of: CGSize(width: bounds.width * scale, height: bounds.height * scale),
+      for: .mediaBox
+    )
+    guard let image = thumbnail.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+      throw ProcessingError.conversionFailed(reason: "Cannot rasterise the page")
+    }
+    return image
   }
+
+  // MARK: - Text
+
+  /// Read the document, then write it out in the format that was asked for.
+  ///
+  /// HTML, RTF, DOCX, Markdown and plain text all go through the same pair of
+  /// system readers and writers, so any of them converts to any other that can
+  /// be written - PDF included.
+  @MainActor
+  private func convertText(
+    _ input: URL,
+    from inputType: UTType,
+    to outputType: UTType,
+    at output: URL,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> ProcessingResult {
+    let start = Date()
+    progress(0.2)
+
+    guard DocumentText.canWrite(outputType) else {
+      throw ProcessingError.unsupportedConversion(from: inputType, to: outputType)
+    }
+
+    let document = try DocumentText.read(input, as: inputType)
+    progress(0.7)
+    try DocumentText.write(document, to: output, as: outputType)
+    progress(1.0)
+
+    let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
+    return ProcessingResult(
+      outputURL: output,
+      outputSize: attributes[.size] as? Int64 ?? 0,
+      outputDimensions: nil,
+      duration: Date().timeIntervalSince(start)
+    )
+  }
+
 
   // MARK: - Helpers
 
@@ -200,26 +315,18 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     return requested ?? UTType(filenameExtension: output.pathExtension) ?? fallback
   }
 
-  private static func pageURL(_ output: URL, page: Int) -> URL {
-    let base = output.deletingPathExtension().lastPathComponent
-    let ext = output.pathExtension
-    let name = String(format: "%@-%03d", base, page)
-    return output
-      .deletingLastPathComponent()
-      .appendingPathComponent(ext.isEmpty ? name : "\(name).\(ext)")
-  }
 
   private static func quality(from operations: [Operation]) -> Float {
     let level = operations.compactMap { operation -> Int? in
       guard case .quality(let level) = operation else { return nil }
       return level
     }.first
-    return Float(level ?? 85) / 100.0
+    return Float(level ?? ImageProcessor.defaultQuality) / 100.0
   }
 
   private static func apply(_ operation: Operation, to image: CIImage) -> CIImage {
     switch operation {
-    case .convertFormat, .quality:
+    case .convertFormat, .quality, .recognizeText, .encode:
       return image
     case .resize(let width, let height, _):
       let target = CGSize(
@@ -243,21 +350,3 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
   }
 }
 
-private extension NSAttributedString {
-  /// Text document types AppKit can read, paired with the UTType that names
-  /// them, so the supported list follows AppKit rather than a hand-written one.
-  static let textDocumentTypes: [UTType: NSAttributedString.DocumentType] = {
-    let candidates: [(UTType?, NSAttributedString.DocumentType)] = [
-      (.plainText, .plain),
-      (.html, .html),
-      (.rtf, .rtf),
-      (UTType("public.rtfd"), .rtfd),
-      (UTType("org.oasis-open.opendocument.text"), .officeOpenXML),
-      (UTType("org.openxmlformats.wordprocessingml.document"), .officeOpenXML),
-    ]
-    return candidates.reduce(into: [:]) { result, candidate in
-      guard let type = candidate.0 else { return }
-      result[type] = candidate.1
-    }
-  }()
-}

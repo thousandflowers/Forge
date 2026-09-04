@@ -40,10 +40,165 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       )
     }
 
+    // Media asked for text is transcribed, whether the words are in a
+    // recording or in the soundtrack of a video.
+    let wanted = Self.outputType(for: output, operations: operations, fallback: .mpeg4Movie)
+    if wanted.conforms(to: .plainText), !audioTracks.isEmpty {
+      return try await transcribe(input, to: output, operations: operations, start: start, progress: progress)
+    }
+
     if videoTracks.isEmpty {
+      // Audio asked for a movie container is wrapped rather than converted:
+      // the export writes the track into the container as it stands.
+      let requestedType = Self.outputType(for: output, operations: operations, fallback: .mpeg4Audio)
+      if FormatCatalog.isWritableVideo(requestedType) {
+        return try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress)
+      }
       return try await convertAudio(input, to: output, operations: operations, start: start, progress: progress)
     }
+
+    // A video asked to become an image is a frame export, not a re-encode:
+    // this is what turns a clip into an animated GIF, or into a folder of
+    // stills.
+    let requested = Self.outputType(for: output, operations: operations, fallback: .mpeg4Movie)
+    if FormatCatalog.isWritableImage(requested) {
+      return try await exportFrames(
+        asset, to: output, as: requested, operations: operations, start: start, progress: progress
+      )
+    }
+
     return try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress)
+  }
+
+  // MARK: - Words out of a recording
+
+  private func transcribe(
+    _ input: URL,
+    to output: URL,
+    operations: [Operation],
+    start: Date,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> ProcessingResult {
+    // The recognition language doubles as the transcription one: both answer
+    // "which language is this in".
+    let locale = operations.compactMap { operation -> String? in
+      guard case .recognizeText(let languages) = operation else { return nil }
+      return languages.first
+    }.first
+
+    let text = try await Transcription.text(of: input, locale: locale, progress: progress)
+    try text.write(to: output, atomically: true, encoding: .utf8)
+    progress(1.0)
+
+    let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
+    return ProcessingResult(
+      outputURL: output,
+      outputSize: attributes[.size] as? Int64 ?? 0,
+      outputDimensions: nil,
+      duration: Date().timeIntervalSince(start)
+    )
+  }
+
+  // MARK: - Frames out of a video
+
+  /// How often to sample when turning a video into frames. Twelve is the
+  /// long-standing convention for an animated GIF: smooth enough to read, and
+  /// small enough to send.
+  private static let framesPerSecond: Double = 12
+
+  /// Longest side of an exported frame when the preset does not say. A GIF at
+  /// the source resolution is unusable at any length, so there is a default,
+  /// and `--resize` overrides it.
+  private static let defaultFrameSide: CGFloat = 640
+
+  private func exportFrames(
+    _ asset: AVURLAsset,
+    to output: URL,
+    as type: UTType,
+    operations: [Operation],
+    start: Date,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> ProcessingResult {
+    let duration = try await asset.load(.duration).seconds
+    guard duration > 0 else {
+      throw ProcessingError.conversionFailed(reason: "The video has no duration to sample")
+    }
+
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.appliesPreferredTrackTransform = true
+    generator.requestedTimeToleranceBefore = .zero
+    generator.requestedTimeToleranceAfter = .zero
+    generator.maximumSize = try await Self.frameSize(for: operations, asset: asset)
+
+    let step = 1 / Self.framesPerSecond
+    let times = stride(from: 0, to: duration, by: step).map {
+      CMTime(seconds: $0, preferredTimescale: 600)
+    }
+    guard !times.isEmpty else {
+      throw ProcessingError.conversionFailed(reason: "The video is too short to sample")
+    }
+
+    var frames: [ImageFrame] = []
+    frames.reserveCapacity(times.count)
+    for (index, time) in times.enumerated() {
+      try Task.checkCancellation()
+      let image = try generator.copyCGImage(at: time, actualTime: nil)
+      frames.append(ImageFrame(image: image, duration: step))
+      progress(Double(index + 1) / Double(times.count) * 0.9)
+    }
+
+    let extras = try Self.writeFrames(frames, to: output, as: type, operations: operations)
+    progress(1.0)
+
+    return ProcessingResult(
+      outputURL: output,
+      outputSize: try Self.fileSize(output),
+      outputDimensions: (frames[0].image.width, frames[0].image.height),
+      duration: Date().timeIntervalSince(start),
+      additionalOutputs: extras
+    )
+  }
+
+  /// The size to sample at: what the preset asked for, or a readable default
+  /// that never enlarges the source.
+  private static func frameSize(for operations: [Operation], asset: AVURLAsset) async throws -> CGSize {
+    if let target = operations.compactMap(resizeTarget).first {
+      return CGSize(width: target.width, height: target.height)
+    }
+    guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+      return CGSize(width: defaultFrameSide, height: defaultFrameSide)
+    }
+    let natural = try await track.load(.naturalSize)
+    let longest = max(abs(natural.width), abs(natural.height))
+    guard longest > defaultFrameSide else { return natural }
+    let scale = defaultFrameSide / longest
+    return CGSize(width: abs(natural.width) * scale, height: abs(natural.height) * scale)
+  }
+
+  private static func writeFrames(
+    _ frames: [ImageFrame],
+    to output: URL,
+    as type: UTType,
+    operations: [Operation]
+  ) throws -> [URL] {
+    var options: [CFString: Any] = [:]
+    if type.conforms(to: .jpeg) || type.conforms(to: .heic) {
+      let level = operations.compactMap(qualityLevel).first ?? ImageProcessor.defaultQuality
+      options[kCGImageDestinationLossyCompressionQuality] = Float(level) / 100
+    }
+
+    if FormatCatalog.holdsMultipleFrames(type) {
+      try ImageFrames.write(frames, to: output, as: type, frameOptions: options)
+      return []
+    }
+
+    var extras: [URL] = []
+    for (index, frame) in frames.enumerated() {
+      let destination = index == 0 ? output : output.numbered(index + 1)
+      try ImageFrames.write([frame], to: destination, as: type, frameOptions: options)
+      if index > 0 { extras.append(destination) }
+    }
+    return extras
   }
 
   // MARK: - Video
@@ -61,7 +216,11 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     }
 
     let fileType = AVFileType(outputType.identifier)
-    let preferred = Self.videoPreset(for: operations, available: AVAssetExportSession.allExportPresets())
+    let available = AVAssetExportSession.allExportPresets()
+    // A named codec wins over a size: asking for ProRes and getting H.264
+    // because the preset list is sorted by pixels would be the wrong answer.
+    let preferred = Self.chosenCodec(in: operations)?.exportPreset
+      ?? Self.videoPreset(for: operations, available: available)
 
     // Not every preset works with every asset, and the ones that do cannot
     // always write every container. Try the best match, then fall back rather
@@ -184,6 +343,10 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     return nil
   }
 
+  static func chosenCodec(in operations: [Operation]) -> Codec? {
+    operations.compactMap { if case .encode(let codec) = $0 { return codec } else { return nil } }.first
+  }
+
   /// Read `1280x720` out of `AVAssetExportPreset1280x720`.
   static func dimensions(inPresetNamed name: String) -> (width: Int, height: Int)? {
     let allowed: Set<Character> = Set("0123456789x")
@@ -214,7 +377,18 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
     let outputType = Self.outputType(for: output, operations: operations, fallback: .mpeg4Audio)
-    guard let formatID = FormatCatalog.audioFormatID(for: outputType) else {
+
+    // A chosen codec decides what goes in the container, which is what makes
+    // Apple Lossless in an .m4a and Opus in a .caf reachable at all.
+    let chosen = Self.chosenCodec(in: operations)?.audioFormatID
+    if let chosen, !FormatCatalog.canEncodeAudio(type: outputType, formatID: chosen) {
+      throw ProcessingError.conversionFailed(
+        reason: "\(Self.chosenCodec(in: operations)?.title ?? "That codec") does not fit in "
+          + "\(outputType.preferredFilenameExtension?.uppercased() ?? outputType.identifier)."
+      )
+    }
+
+    guard let formatID = chosen ?? FormatCatalog.audioFormatID(for: outputType) else {
       let inputType = UTType(filenameExtension: input.pathExtension) ?? .audio
       throw ProcessingError.unsupportedConversion(from: inputType, to: outputType)
     }

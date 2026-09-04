@@ -3,6 +3,7 @@ import AVFoundation
 import AudioToolbox
 import CoreGraphics
 import ImageIO
+import ModelIO
 import UniformTypeIdentifiers
 
 /// Single source of truth for the formats Forge can actually handle.
@@ -45,6 +46,13 @@ enum FormatCatalog {
   /// it is offered, so a host that cannot encode FLAC simply never lists it.
   static let writableAudioTypes: [UTType: AudioFormatID] = Self.probeAudioTypes()
 
+  /// 3D model formats, asked of ModelIO. Notably absent: glTF, GLB and FBX.
+  static let readableModelTypes: Set<UTType> = Self.modelTypes { MDLAsset.canImportFileExtension($0) }
+  static let writableModelTypes: Set<UTType> = Self.modelTypes { MDLAsset.canExportFileExtension($0) }
+
+  static func isReadableModel(_ type: UTType) -> Bool { readableModelTypes.contains(type) }
+  static func isWritableModel(_ type: UTType) -> Bool { writableModelTypes.contains(type) }
+
   // MARK: - Queries
 
   static func isReadableImage(_ type: UTType) -> Bool {
@@ -73,6 +81,19 @@ enum FormatCatalog {
     return writableVideoTypes.contains { type.conforms(to: $0) }
   }
 
+  /// Whether this type can hold more than one image in a single file.
+  ///
+  /// ImageIO exposes no query for it, so the set is declared. It is short and
+  /// stable: GIF and HEICS animate, TIFF and PDF are multi-page, and
+  /// everything else ImageIO writes holds exactly one image.
+  static func holdsMultipleFrames(_ type: UTType) -> Bool {
+    multiFrameTypes.contains { type.conforms(to: $0) }
+  }
+
+  private static let multiFrameTypes: Set<UTType> = Set(
+    ["com.compuserve.gif", "public.heics", "public.tiff", "com.adobe.pdf"].compactMap { UTType($0) }
+  )
+
   /// Big-endian samples are the AIFF convention; every other PCM container
   /// here is little-endian.
   static func usesBigEndianPCM(_ type: UTType) -> Bool {
@@ -95,6 +116,10 @@ enum FormatCatalog {
       (UTType("com.apple.coreaudio-format"), kAudioFormatLinearPCM),
       (UTType("com.apple.m4a-audio"), kAudioFormatMPEG4AAC),
       (UTType("org.xiph.flac"), kAudioFormatFLAC),
+      // The audiobook container. macOS types the extension as the protected
+      // variant, which describes the type database rather than the file: what
+      // gets written is plain AAC in an MP4 container.
+      (UTType("com.apple.protected-mpeg-4-audio-b"), kAudioFormatMPEG4AAC),
     ]
     // Apple Lossless and Opus are both encodable on macOS but deliberately
     // absent: ALAC shares the .m4a container with AAC and Opus is written into
@@ -108,9 +133,19 @@ enum FormatCatalog {
     }
   }
 
+  /// Whether this host can encode with a given Core Audio format, in any
+  /// container it fits.
+  static func canEncode(_ formatID: AudioFormatID) -> Bool {
+    let containers = ["m4a", "caf", "wav", "flac", "aiff"]
+    return containers.contains { ext in
+      guard let type = UTType(filenameExtension: ext) else { return false }
+      return canEncodeAudio(type: type, formatID: formatID)
+    }
+  }
+
   /// Try to open a throwaway file for writing: the cheapest honest answer to
   /// "can this host encode that".
-  private static func canEncodeAudio(type: UTType, formatID: AudioFormatID) -> Bool {
+  static func canEncodeAudio(type: UTType, formatID: AudioFormatID) -> Bool {
     guard let ext = type.preferredFilenameExtension else { return false }
     let probe = FileManager.default.temporaryDirectory
       .appendingPathComponent("forge-probe-\(UUID().uuidString).\(ext)")
@@ -127,6 +162,13 @@ enum FormatCatalog {
       settings[AVLinearPCMIsBigEndianKey] = usesBigEndianPCM(type)
     }
     return (try? AVAudioFile(forWriting: probe, settings: settings)) != nil
+  }
+
+  /// ModelIO answers per extension, so the candidates are extensions and the
+  /// answer decides which survive.
+  private static func modelTypes(_ supported: (String) -> Bool) -> Set<UTType> {
+    let candidates = ["obj", "stl", "ply", "abc", "usd", "usda", "usdc", "usdz"]
+    return Set(candidates.filter(supported).compactMap { UTType(filenameExtension: $0) })
   }
 
   /// The movie containers AVFoundation exports to.

@@ -1,0 +1,56 @@
+[
+  {
+    "author": "thousandflowers",
+    "summary": "A photograph small enough to email, with the metadata left alone.",
+    "preset": {
+      "name": "Email attachment",
+      "description": "1600 px JPEG at quality 70.",
+      "category": "image",
+      "actions": [
+        { "kind": "convertFormat", "format": { "identifier": "public.jpeg" } },
+        { "kind": "resize", "width": 1600, "height": 1600, "fitMode": "proportional" },
+        { "kind": "quality", "level": 70 }
+      ]
+    }
+  },
+  {
+    "author": "thousandflowers",
+    "summary": "A screen recording light enough to drop into a chat.",
+    "preset": {
+      "name": "Clip for chat",
+      "description": "720p MP4, H.264.",
+      "category": "video",
+      "actions": [
+        { "kind": "convertFormat", "format": { "identifier": "public.mpeg-4" } },
+        { "kind": "resize", "width": 1280, "height": 720, "fitMode": "proportional" },
+        { "kind": "encode", "codec": "h264" }
+      ]
+    }
+  },
+  {
+    "author": "thousandflowers",
+    "summary": "A scanned page as text you can search.",
+    "preset": {
+      "name": "Scan to text",
+      "description": "Reads the page, writes plain text.",
+      "category": "document",
+      "actions": [
+        { "kind": "convertFormat", "format": { "identifier": "public.plain-text" } },
+        { "kind": "recognizeText", "languages": [] }
+      ]
+    }
+  },
+  {
+    "author": "thousandflowers",
+    "summary": "An archive copy that loses nothing.",
+    "preset": {
+      "name": "Lossless audio",
+      "description": "Apple Lossless in an M4A.",
+      "category": "audio",
+      "actions": [
+        { "kind": "convertFormat", "format": { "identifier": "com.apple.m4a-audio" } },
+        { "kind": "encode", "codec": "appleLossless" }
+      ]
+    }
+  }
+]
