@@ -305,7 +305,7 @@ final class BatchViewModel: ObservableObject {
     let gates = ProgressGates()
     let outputs = OutputSizes()
 
-    await Batch.run(
+    _ = await Batch.run(
       files,
       preset: preset,
       mode: mode,

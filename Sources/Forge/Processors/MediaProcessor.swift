@@ -104,9 +104,11 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     if wanted.conforms(to: .plainText) {
       try text.write(to: output, atomically: true, encoding: .utf8)
     } else {
-      // AppKit's document writer belongs to the main actor.
-      let words = NSAttributedString(string: text)
-      try await MainActor.run { try DocumentText.write(words, to: output, as: wanted) }
+      // AppKit's document writer belongs to the main actor, and so does the
+      // attributed string it is handed: NSAttributedString is not Sendable.
+      try await MainActor.run {
+        try DocumentText.write(NSAttributedString(string: text), to: output, as: wanted)
+      }
     }
     progress(1.0)
 
