@@ -350,17 +350,23 @@ actor ProcessingCoordinator {
     case .overwrite:
       // Converting in place still renames when the format changes: JPEG bytes
       // in a file called `.png` are not a converted file, they are a broken one.
-      let final = file.url
+      let named = file.url
         .deletingLastPathComponent()
         // No size in the name here: converting in place means the file stays
         // where it is, under the name it has.
         .appendingPathComponent(
           outputName(for: file, preset: preset, extension: outputExtension, fallbackSuffix: "")
         )
+      // Overwrite replaces the file it was handed, and nothing else. Changing
+      // the format changes the name, and a *different* file already holding
+      // that name is somebody else's data: it used to be replaced silently and
+      // was not backed up either, because the backup is taken of the source.
+      // It takes the next free name instead, which is what the other modes do.
+      let final = named == file.url ? named : try reserveUniqueURL(named)
       return OutputPlan(
         finalURL: final,
         workURL: scratchURL(besides: final),
-        reservationURL: nil,
+        reservationURL: final == file.url ? nil : final,
         replacesSource: true,
         removesSource: final != file.url
       )
