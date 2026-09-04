@@ -29,10 +29,8 @@ struct ProcessingResult: Sendable {
 /// Protocol for file processors
 protocol FileProcessor: AnyObject, Sendable {
   var name: String { get }
-  var supportedTypes: [UTType] { get }
 
   func canProcess(_ file: ProcessableFile) -> Bool
-  func supportedOutputTypes(for input: UTType) -> [UTType]
 
   /// Process the input file and write to output location.
   /// - Parameters:

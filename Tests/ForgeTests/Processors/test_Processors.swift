@@ -234,13 +234,35 @@ final class ConversionTests: BaseTestCase {
 
   /// WebP was offered as an output format although macOS ships no encoder, so
   /// the failure surfaced only at the very last step.
-  func test_image_webpIsNotOfferedAsOutput() {
-    let webp = UTType("org.webmproject.webp")
-    XCTAssertNotNil(webp, "WebP should still be a known type")
-    XCTAssertFalse(
-      ImageProcessor().supportedOutputTypes(for: .png).contains(webp!),
-      "WebP cannot be encoded on macOS and must not be listed"
-    )
+  func test_image_webpIsReadableButNotWritable() throws {
+    let webp = try XCTUnwrap(UTType("org.webmproject.webp"))
+    XCTAssertTrue(FormatCatalog.isReadableImage(webp), "WebP should still be readable")
+    XCTAssertFalse(FormatCatalog.isWritableImage(webp), "macOS has no WebP encoder")
+  }
+
+  /// Asking for a format the machine cannot encode has to fail with a message
+  /// that names both ends. Saying only "cannot write JPEG" for an MP3 reads as
+  /// though JPEG were the problem.
+  func test_image_unwritableFormatFailsCleanly() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 64, height: 64)
+    let webp = try XCTUnwrap(UTType("org.webmproject.webp"))
+    let destination = try folder("out")
+
+    do {
+      _ = try await coordinator().processFile(
+        try ProcessableFile(url: source),
+        with: .make(format: webp, category: .image),
+        destinationMode: .copyTo,
+        destinationURL: destination
+      ) { _ in }
+      XCTFail("writing WebP should fail")
+    } catch {
+      XCTAssertEqual(
+        error.localizedDescription,
+        "Forge cannot convert PNG to WEBP.",
+        "the message has to name both ends of the conversion"
+      )
+    }
   }
 
   // MARK: - Documents

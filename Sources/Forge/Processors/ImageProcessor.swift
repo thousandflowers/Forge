@@ -8,9 +8,6 @@ import UniformTypeIdentifiers
 final class ImageProcessor: FileProcessor, @unchecked Sendable {
   let name = "Image Processor"
 
-  /// What this machine can decode, asked of ImageIO rather than listed by hand.
-  var supportedTypes: [UTType] { Array(FormatCatalog.readableImageTypes) }
-
   private let ciContext: CIContext
 
   init() {
@@ -22,13 +19,6 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
 
   func canProcess(_ file: ProcessableFile) -> Bool {
     FormatCatalog.isReadableImage(file.fileType)
-  }
-
-  /// Only the formats ImageIO can actually encode. WebP, for one, is readable
-  /// on macOS but has no encoder, and offering it produced a failure at the
-  /// last possible moment.
-  func supportedOutputTypes(for input: UTType) -> [UTType] {
-    FormatCatalog.writableImageTypes.sorted { $0.identifier < $1.identifier }
   }
 
   func process(
@@ -62,7 +52,8 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
 
     let outputUTI = determineOutputUTI(from: output, operations: operations)
     guard FormatCatalog.isWritableImage(outputUTI) else {
-      throw ProcessingError.unsupportedFormat(outputUTI)
+      let inputType = UTType(filenameExtension: input.pathExtension) ?? .image
+      throw ProcessingError.unsupportedConversion(from: inputType, to: outputUTI)
     }
 
     guard let destination = CGImageDestinationCreateWithURL(

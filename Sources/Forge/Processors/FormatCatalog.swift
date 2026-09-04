@@ -49,15 +49,18 @@ enum FormatCatalog {
   // MARK: - Queries
 
   static func isReadableImage(_ type: UTType) -> Bool {
-    readableImageTypes.contains { type.conforms(to: $0) }
+    if readableImageTypes.contains(type) { return true }
+    return readableImageTypes.contains { type.conforms(to: $0) }
   }
 
   static func isWritableImage(_ type: UTType) -> Bool {
-    writableImageTypes.contains { type.conforms(to: $0) }
+    if writableImageTypes.contains(type) { return true }
+    return writableImageTypes.contains { type.conforms(to: $0) }
   }
 
   static func isReadableMedia(_ type: UTType) -> Bool {
-    readableMediaTypes.contains { type.conforms(to: $0) }
+    if readableMediaTypes.contains(type) { return true }
+    return readableMediaTypes.contains { type.conforms(to: $0) }
   }
 
   /// The codec to encode with when writing audio to `type`, if this host can.
@@ -67,7 +70,8 @@ enum FormatCatalog {
   }
 
   static func isWritableVideo(_ type: UTType) -> Bool {
-    writableVideoTypes.contains { type.conforms(to: $0) }
+    if writableVideoTypes.contains(type) { return true }
+    return writableVideoTypes.contains { type.conforms(to: $0) }
   }
 
   /// Big-endian samples are the AIFF convention; every other PCM container

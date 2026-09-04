@@ -12,9 +12,7 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   var quality: Int?        // 1-100
   var filters: [FilterType]
 
-  var icon: String?
   var category: PresetCategory
-  var applicableFileTypes: [UTType]?  // nil = all types
 
   init(
     id: UUID = UUID(),
@@ -24,9 +22,7 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
     resize: ResizeSpec? = nil,
     quality: Int? = nil,
     filters: [FilterType] = [],
-    icon: String? = nil,
     category: PresetCategory,
-    applicableFileTypes: [UTType]? = nil
   ) {
     self.id = id
     self.name = name
@@ -35,9 +31,7 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
     self.resize = resize
     self.quality = quality
     self.filters = filters
-    self.icon = icon
     self.category = category
-    self.applicableFileTypes = applicableFileTypes
   }
 
   /// Convert preset to an ordered list of operations

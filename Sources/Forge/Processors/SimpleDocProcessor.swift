@@ -13,24 +13,14 @@ import UniformTypeIdentifiers
 final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
   let name = "Document Processor"
 
-  /// Input types, taken from the readers that actually exist: PDFKit for PDF,
-  /// AppKit's document readers for the rest.
-  let supportedTypes: [UTType] = {
-    let text = NSAttributedString.textDocumentTypes.keys.sorted { $0.identifier < $1.identifier }
-    return [.pdf] + text
-  }()
+  /// PDF plus whatever AppKit's document readers accept, so the list follows
+  /// the readers that exist rather than one written out by hand.
+  private let readableTypes: [UTType] = [.pdf] + NSAttributedString.textDocumentTypes.keys
 
   private let ciContext = CIContext(options: [.cacheIntermediates: false])
 
   func canProcess(_ file: ProcessableFile) -> Bool {
-    supportedTypes.contains { file.fileType.conforms(to: $0) }
-  }
-
-  func supportedOutputTypes(for input: UTType) -> [UTType] {
-    if input.conforms(to: .pdf) {
-      return FormatCatalog.writableImageTypes.sorted { $0.identifier < $1.identifier }
-    }
-    return [.plainText]
+    readableTypes.contains { file.fileType.conforms(to: $0) }
   }
 
   func process(
@@ -71,7 +61,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
 
     let outputUTI = Self.outputUTI(for: output, operations: operations, fallback: .jpeg)
     guard FormatCatalog.isWritableImage(outputUTI) else {
-      throw ProcessingError.unsupportedFormat(outputUTI)
+      throw ProcessingError.unsupportedConversion(from: .pdf, to: outputUTI)
     }
 
     var written: [URL] = []
@@ -110,8 +100,11 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     operations: [Operation]
   ) throws -> (width: Int, height: Int) {
     let bounds = page.bounds(for: .mediaBox)
-    // 2x the PDF's 72 dpi, so text stays readable instead of soft.
-    let renderScale: CGFloat = 2
+    // 2x the PDF's 72 dpi so text stays readable, but capped: a poster-sized
+    // page at 2x is hundreds of megabytes of bitmap.
+    let maximumSide: CGFloat = 4096
+    let longestSide = max(bounds.width, bounds.height)
+    let renderScale = longestSide > 0 ? min(2, maximumSide / longestSide) : 1
     let size = CGSize(width: bounds.width * renderScale, height: bounds.height * renderScale)
 
     let thumbnail = page.thumbnail(of: size, for: .mediaBox)

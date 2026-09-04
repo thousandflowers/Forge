@@ -166,6 +166,19 @@ final class BatchViewModel: ObservableObject {
     let existing = Set(files.map(\.url))
     let added = urls.compactMap { try? ProcessableFile(url: $0) }.filter { !existing.contains($0.url) }
     files.append(contentsOf: added)
+    loadVideoDimensions(for: added)
+  }
+
+  /// Video sizes need the asset opened, which is far too slow to do for every
+  /// file while the drop is being handled. They fill in as they arrive.
+  private func loadVideoDimensions(for added: [ProcessableFile]) {
+    for file in added where file.dimensions == nil {
+      Task { [weak self] in
+        guard let size = await ProcessableFile.videoDimensions(url: file.url, type: file.fileType) else { return }
+        guard let self, let index = self.files.firstIndex(where: { $0.id == file.id }) else { return }
+        self.files[index].dimensions = size
+      }
+    }
   }
 
   func clear() {
@@ -187,6 +200,7 @@ final class BatchViewModel: ObservableObject {
   func convert(model: AppModel, preset: RulePreset, mode: DestinationMode, destination: URL?) async {
     guard !files.isEmpty else { return }
 
+    let cancellation = self.cancellation
     cancellation.reset()
     isProcessing = true
     progress = 0
@@ -196,7 +210,6 @@ final class BatchViewModel: ObservableObject {
     let coordinator = model.coordinator
     let limit = max(1, await coordinator.maxConcurrentNative)
     let total = files.count
-    let cancellation = self.cancellation
 
     // Each file is packaged up here, on the main actor, so the group below
     // only ever touches values it is allowed to touch.
@@ -253,15 +266,14 @@ final class BatchViewModel: ObservableObject {
   }
 
   /// Progress arrives off the main actor and far more often than the screen
-  /// can use, so it is coalesced to whole percentage points.
+  /// can use. Coalescing happens before the hop, so a long conversion does not
+  /// spawn thousands of tasks that each decide they have nothing to do.
   private func progressHandler(for id: UUID) -> @Sendable (Double) -> Void {
-    { [weak self] fraction in
-      Task { @MainActor in
-        guard let self else { return }
-        let rounded = (fraction * 100).rounded() / 100
-        guard self.fileProgress[id] != rounded else { return }
-        self.fileProgress[id] = rounded
-      }
+    let latest = ProgressGate()
+    return { [weak self] fraction in
+      let rounded = (fraction * 100).rounded() / 100
+      guard latest.advance(to: rounded) else { return }
+      Task { @MainActor in self?.fileProgress[id] = rounded }
     }
   }
 }
@@ -276,6 +288,20 @@ private struct Outcome: Sendable {
   let id: UUID
   let status: FileStatus
   let output: URL?
+}
+
+/// Lets a progress value through only when it has actually moved.
+private final class ProgressGate: @unchecked Sendable {
+  private let lock = NSLock()
+  private var last: Double = -1
+
+  func advance(to value: Double) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard value != last else { return false }
+    last = value
+    return true
+  }
 }
 
 /// A cancel flag both the main actor and the conversion tasks can see.

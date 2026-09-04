@@ -3,9 +3,9 @@ import CoreServices
 
 /// Watches one folder and reports files that have finished arriving.
 ///
-/// The previous version reacted to every event flag, including the ones raised
-/// by its own output, and called a fixed one-second delay a debounce, so a file
-/// still being copied was handed over half-written.
+/// Every piece of mutable state lives on `queue`. The FSEvents callback fires
+/// there, and so does the settle timer, so the caller's thread never touches
+/// the same storage they do.
 final class MonitoredFolderWatcher {
   typealias FileAddedHandler = @Sendable (URL) async -> Void
 
@@ -15,72 +15,93 @@ final class MonitoredFolderWatcher {
   private static let pollInterval: TimeInterval = 0.5
 
   private let queue = DispatchQueue(label: "com.eugeniozamengo.Forge.watcher", qos: .utility)
+
+  /// Everything below is `queue`-only.
   private var stream: FSEventStreamRef?
   private var root: URL?
   private var includeSubfolders = false
   private var handler: FileAddedHandler?
-
   /// Files seen but not yet settled, with the size they were last seen at.
   private var pending: [String: (size: Int64, since: Date)] = [:]
   private var timer: DispatchSourceTimer?
 
-  deinit { stop() }
-
-  func startWatching(folder: MonitoredFolder, handler: @escaping FileAddedHandler) throws {
-    stop()
-
-    self.root = folder.url
-    self.includeSubfolders = folder.includeSubfolders
-    self.handler = handler
-
-    let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
-      guard let info else { return }
-      let watcher = Unmanaged<MonitoredFolderWatcher>.fromOpaque(info).takeUnretainedValue()
-      let paths = paths.assumingMemoryBound(to: UnsafePointer<CChar>.self)
-      for index in 0..<count {
-        watcher.handleEvent(path: String(cString: paths[index]), flags: flags[index])
-      }
-    }
-
-    var context = FSEventStreamContext(
-      version: 0,
-      info: Unmanaged.passUnretained(self).toOpaque(),
-      retain: nil,
-      release: nil,
-      copyDescription: nil
-    )
-
-    guard let stream = FSEventStreamCreate(
-      kCFAllocatorDefault,
-      callback,
-      &context,
-      [folder.url.path] as CFArray,
-      FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-      Self.pollInterval,
-      UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer)
-    ) else {
-      throw ProcessingError.conversionFailed(
-        reason: "Cannot watch \(folder.url.lastPathComponent)"
-      )
-    }
-
-    FSEventStreamSetDispatchQueue(stream, queue)
-    guard FSEventStreamStart(stream) else {
+  deinit {
+    // `deinit` cannot wait on the queue without risking a deadlock, and by the
+    // time it runs nothing else holds a reference, so tear the stream down here.
+    if let stream {
+      FSEventStreamStop(stream)
       FSEventStreamInvalidate(stream)
       FSEventStreamRelease(stream)
-      throw ProcessingError.conversionFailed(
-        reason: "Cannot start watching \(folder.url.lastPathComponent)"
-      )
     }
-    self.stream = stream
+    timer?.cancel()
+  }
+
+  func startWatching(folder: MonitoredFolder, handler: @escaping FileAddedHandler) throws {
+    try queue.sync {
+      teardown()
+
+      let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
+        guard let info else { return }
+        let watcher = Unmanaged<MonitoredFolderWatcher>.fromOpaque(info).takeUnretainedValue()
+        let paths = paths.assumingMemoryBound(to: UnsafePointer<CChar>.self)
+        for index in 0..<count {
+          watcher.handleEvent(path: String(cString: paths[index]), flags: flags[index])
+        }
+      }
+
+      var context = FSEventStreamContext(
+        version: 0,
+        info: Unmanaged.passUnretained(self).toOpaque(),
+        retain: nil,
+        release: nil,
+        copyDescription: nil
+      )
+
+      guard let stream = FSEventStreamCreate(
+        kCFAllocatorDefault,
+        callback,
+        &context,
+        [folder.url.path] as CFArray,
+        FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+        Self.pollInterval,
+        UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer)
+      ) else {
+        throw ProcessingError.conversionFailed(
+          reason: "Cannot watch \(folder.url.lastPathComponent)"
+        )
+      }
+
+      FSEventStreamSetDispatchQueue(stream, queue)
+      guard FSEventStreamStart(stream) else {
+        FSEventStreamInvalidate(stream)
+        FSEventStreamRelease(stream)
+        throw ProcessingError.conversionFailed(
+          reason: "Cannot start watching \(folder.url.lastPathComponent)"
+        )
+      }
+
+      self.stream = stream
+      self.root = folder.url
+      self.includeSubfolders = folder.includeSubfolders
+      self.handler = handler
+    }
   }
 
   func stopWatching(folder: MonitoredFolder) {
-    guard root?.path == folder.url.path else { return }
-    stop()
+    queue.sync {
+      guard root?.standardizedFileURL == folder.url.standardizedFileURL else { return }
+      teardown()
+    }
   }
 
   func stop() {
+    queue.sync { teardown() }
+  }
+
+  // MARK: - Queue-only
+
+  private func teardown() {
+    dispatchPrecondition(condition: .onQueue(queue))
     if let stream {
       FSEventStreamStop(stream)
       FSEventStreamInvalidate(stream)
@@ -89,15 +110,13 @@ final class MonitoredFolderWatcher {
     stream = nil
     timer?.cancel()
     timer = nil
-    queue.async { [weak self] in self?.pending.removeAll() }
+    pending.removeAll()
     root = nil
     handler = nil
   }
 
-  // MARK: - Events
-
-  /// Called on `queue`, which also owns `pending`.
   private func handleEvent(path: String, flags: FSEventStreamEventFlags) {
+    dispatchPrecondition(condition: .onQueue(queue))
     guard Self.isFileArrival(flags) else { return }
 
     let url = URL(fileURLWithPath: path)
@@ -135,6 +154,7 @@ final class MonitoredFolderWatcher {
   }
 
   private func startTimerIfNeeded() {
+    dispatchPrecondition(condition: .onQueue(queue))
     guard timer == nil else { return }
     let timer = DispatchSource.makeTimerSource(queue: queue)
     timer.schedule(deadline: .now() + Self.pollInterval, repeating: Self.pollInterval)
@@ -146,6 +166,7 @@ final class MonitoredFolderWatcher {
   /// Hand over the files whose size has stopped changing. A file still being
   /// copied grows between ticks, so it simply waits another round.
   private func drainSettled() {
+    dispatchPrecondition(condition: .onQueue(queue))
     let now = Date()
     var ready: [URL] = []
 

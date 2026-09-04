@@ -77,9 +77,7 @@ final class AppModel: ObservableObject {
         resize: preset.resize,
         quality: preset.quality,
         filters: preset.filters,
-        icon: preset.icon,
         category: preset.category,
-        applicableFileTypes: preset.applicableFileTypes
       )
     )
   }
@@ -196,6 +194,10 @@ final class AppModel: ObservableObject {
       if let output = entry.outputURL { remember(output) }
     } catch is CancellationError {
       // nothing to say
+    } catch ProcessingError.unreadableFormat, ProcessingError.unsupportedConversion, ProcessingError.unknownType {
+      // A watched folder receives whatever is dropped in it. Files the preset
+      // cannot convert are recorded in history; interrupting the user for each
+      // one is not useful.
     } catch {
       report(error, doing: "converting “\(url.lastPathComponent)”")
     }

@@ -18,16 +18,8 @@ import UniformTypeIdentifiers
 final class MediaProcessor: FileProcessor, @unchecked Sendable {
   let name = "Media Processor"
 
-  var supportedTypes: [UTType] { Array(FormatCatalog.readableMediaTypes) }
-
   func canProcess(_ file: ProcessableFile) -> Bool {
     FormatCatalog.isReadableMedia(file.fileType)
-  }
-
-  func supportedOutputTypes(for input: UTType) -> [UTType] {
-    let audio = Array(FormatCatalog.writableAudioTypes.keys)
-    let video = Array(FormatCatalog.writableVideoTypes)
-    return (audio + video).sorted { $0.identifier < $1.identifier }
   }
 
   func process(
@@ -65,17 +57,20 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   ) async throws -> ProcessingResult {
     let outputType = Self.outputType(for: output, operations: operations, fallback: .mpeg4Movie)
     guard FormatCatalog.isWritableVideo(outputType) else {
-      throw ProcessingError.unsupportedFormat(outputType)
-    }
-
-    let presetName = Self.videoPreset(for: operations, available: AVAssetExportSession.allExportPresets())
-
-    guard let session = AVAssetExportSession(asset: asset, presetName: presetName) else {
-      throw ProcessingError.conversionFailed(reason: "No export preset available for this video")
+      throw ProcessingError.unsupportedConversion(from: .movie, to: outputType)
     }
 
     let fileType = AVFileType(outputType.identifier)
-    guard session.supportedFileTypes.contains(fileType) else {
+    let preferred = Self.videoPreset(for: operations, available: AVAssetExportSession.allExportPresets())
+
+    // Not every preset works with every asset, and the ones that do cannot
+    // always write every container. Try the best match, then fall back rather
+    // than failing on a video AVFoundation is perfectly able to convert.
+    guard let session = Self.makeSession(
+      asset: asset,
+      preferred: preferred,
+      fileType: fileType
+    ) else {
       throw ProcessingError.conversionFailed(
         reason: "Cannot write \(outputType.preferredFilenameExtension ?? outputType.identifier) from this video"
       )
@@ -86,11 +81,20 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     session.shouldOptimizeForNetworkUse = true
 
     // The export publishes progress as a polled property, so a sibling task
-    // samples it while the export runs.
+    // samples it while the export runs. It has to keep polling through the
+    // statuses before `.exporting` too: sampling only while already exporting
+    // meant the loop exited immediately and no progress was ever reported.
     let box = ExportBox(session)
     let reporter = Task {
-      while !Task.isCancelled && box.session.status == .exporting {
-        progress(Double(box.session.progress))
+      while !Task.isCancelled {
+        switch box.session.status {
+        case .completed, .failed, .cancelled:
+          return
+        case .exporting:
+          progress(Double(box.session.progress))
+        default:
+          break
+        }
         try? await Task.sleep(nanoseconds: 100_000_000)
       }
     }
@@ -165,6 +169,21 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       : AVAssetExportPresetPassthrough
   }
 
+  /// The first preset that both opens for this asset and writes this container.
+  private static func makeSession(
+    asset: AVAsset,
+    preferred: String,
+    fileType: AVFileType
+  ) -> AVAssetExportSession? {
+    let candidates = [preferred, AVAssetExportPresetHighestQuality, AVAssetExportPresetPassthrough]
+    for name in candidates {
+      guard let session = AVAssetExportSession(asset: asset, presetName: name),
+            session.supportedFileTypes.contains(fileType) else { continue }
+      return session
+    }
+    return nil
+  }
+
   /// Read `1280x720` out of `AVAssetExportPreset1280x720`.
   static func dimensions(inPresetNamed name: String) -> (width: Int, height: Int)? {
     let allowed: Set<Character> = Set("0123456789x")
@@ -196,7 +215,8 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   ) async throws -> ProcessingResult {
     let outputType = Self.outputType(for: output, operations: operations, fallback: .mpeg4Audio)
     guard let formatID = FormatCatalog.audioFormatID(for: outputType) else {
-      throw ProcessingError.unsupportedFormat(outputType)
+      let inputType = UTType(filenameExtension: input.pathExtension) ?? .audio
+      throw ProcessingError.unsupportedConversion(from: inputType, to: outputType)
     }
 
     let inputFile = try AVAudioFile(forReading: input)
@@ -261,7 +281,6 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       try outputFile.write(from: buffer)
       progress(inputFile.framePosition)
     }
-    _ = outputFile
   }
 
   /// Map a 1-100 quality level onto a per-channel bitrate.

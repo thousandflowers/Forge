@@ -101,7 +101,7 @@ actor ProcessingCoordinator {
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
     guard let processor = await registry.processor(for: file) else {
-      throw ProcessingError.unsupportedFormat(file.fileType)
+      throw ProcessingError.unreadableFormat(file.fileType)
     }
 
     let plan = try makeOutputPlan(
