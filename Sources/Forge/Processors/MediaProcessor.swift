@@ -43,7 +43,120 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     if videoTracks.isEmpty {
       return try await convertAudio(input, to: output, operations: operations, start: start, progress: progress)
     }
+
+    // A video asked to become an image is a frame export, not a re-encode:
+    // this is what turns a clip into an animated GIF, or into a folder of
+    // stills.
+    let requested = Self.outputType(for: output, operations: operations, fallback: .mpeg4Movie)
+    if FormatCatalog.isWritableImage(requested) {
+      return try await exportFrames(
+        asset, to: output, as: requested, operations: operations, start: start, progress: progress
+      )
+    }
+
     return try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress)
+  }
+
+  // MARK: - Frames out of a video
+
+  /// How often to sample when turning a video into frames. Twelve is the
+  /// long-standing convention for an animated GIF: smooth enough to read, and
+  /// small enough to send.
+  private static let framesPerSecond: Double = 12
+
+  /// Longest side of an exported frame when the preset does not say. A GIF at
+  /// the source resolution is unusable at any length, so there is a default,
+  /// and `--resize` overrides it.
+  private static let defaultFrameSide: CGFloat = 640
+
+  private func exportFrames(
+    _ asset: AVURLAsset,
+    to output: URL,
+    as type: UTType,
+    operations: [Operation],
+    start: Date,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> ProcessingResult {
+    let duration = try await asset.load(.duration).seconds
+    guard duration > 0 else {
+      throw ProcessingError.conversionFailed(reason: "The video has no duration to sample")
+    }
+
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.appliesPreferredTrackTransform = true
+    generator.requestedTimeToleranceBefore = .zero
+    generator.requestedTimeToleranceAfter = .zero
+    generator.maximumSize = try await Self.frameSize(for: operations, asset: asset)
+
+    let step = 1 / Self.framesPerSecond
+    let times = stride(from: 0, to: duration, by: step).map {
+      CMTime(seconds: $0, preferredTimescale: 600)
+    }
+    guard !times.isEmpty else {
+      throw ProcessingError.conversionFailed(reason: "The video is too short to sample")
+    }
+
+    var frames: [ImageFrame] = []
+    frames.reserveCapacity(times.count)
+    for (index, time) in times.enumerated() {
+      try Task.checkCancellation()
+      let image = try generator.copyCGImage(at: time, actualTime: nil)
+      frames.append(ImageFrame(image: image, duration: step))
+      progress(Double(index + 1) / Double(times.count) * 0.9)
+    }
+
+    let extras = try Self.writeFrames(frames, to: output, as: type, operations: operations)
+    progress(1.0)
+
+    return ProcessingResult(
+      outputURL: output,
+      outputSize: try Self.fileSize(output),
+      outputDimensions: (frames[0].image.width, frames[0].image.height),
+      duration: Date().timeIntervalSince(start),
+      additionalOutputs: extras
+    )
+  }
+
+  /// The size to sample at: what the preset asked for, or a readable default
+  /// that never enlarges the source.
+  private static func frameSize(for operations: [Operation], asset: AVURLAsset) async throws -> CGSize {
+    if let target = operations.compactMap(resizeTarget).first {
+      return CGSize(width: target.width, height: target.height)
+    }
+    guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+      return CGSize(width: defaultFrameSide, height: defaultFrameSide)
+    }
+    let natural = try await track.load(.naturalSize)
+    let longest = max(abs(natural.width), abs(natural.height))
+    guard longest > defaultFrameSide else { return natural }
+    let scale = defaultFrameSide / longest
+    return CGSize(width: abs(natural.width) * scale, height: abs(natural.height) * scale)
+  }
+
+  private static func writeFrames(
+    _ frames: [ImageFrame],
+    to output: URL,
+    as type: UTType,
+    operations: [Operation]
+  ) throws -> [URL] {
+    var options: [CFString: Any] = [:]
+    if type.conforms(to: .jpeg) || type.conforms(to: .heic) {
+      let level = operations.compactMap(qualityLevel).first ?? 85
+      options[kCGImageDestinationLossyCompressionQuality] = Float(level) / 100
+    }
+
+    if FormatCatalog.holdsMultipleFrames(type) {
+      try ImageFrames.write(frames, to: output, as: type, frameOptions: options)
+      return []
+    }
+
+    var extras: [URL] = []
+    for (index, frame) in frames.enumerated() {
+      let destination = index == 0 ? output : output.numbered(index + 1)
+      try ImageFrames.write([frame], to: destination, as: type, frameOptions: options)
+      if index > 0 { extras.append(destination) }
+    }
+    return extras
   }
 
   // MARK: - Video

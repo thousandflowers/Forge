@@ -37,58 +37,81 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     guard let source = CGImageSourceCreateWithURL(input as CFURL, inputOptions as CFDictionary) else {
       throw ProcessingError.conversionFailed(reason: "Cannot read \(input.lastPathComponent)")
     }
-    guard let cgImage = CGImageSourceCreateImageAtIndex(source, 0, inputOptions as CFDictionary) else {
+
+    // Every frame, not just the first. An animated GIF used to convert to a
+    // single still and a multi-page TIFF lost all but its first page.
+    let frames = ImageFrames.read(source, options: inputOptions as CFDictionary)
+    guard !frames.isEmpty else {
       throw ProcessingError.conversionFailed(reason: "Cannot decode \(input.lastPathComponent)")
     }
 
-    var ciImage = CIImage(cgImage: cgImage)
-
-    for (index, operation) in operations.enumerated() {
-      try Task.checkCancellation()
-      progress(Double(index) / Double(max(1, operations.count)) * 0.7)
-      ciImage = try applyOperation(operation, to: ciImage)
-    }
-    progress(0.7)
-
     let outputUTI = determineOutputUTI(from: output, operations: operations)
-    guard FormatCatalog.isWritableImage(outputUTI) else {
-      let inputType = UTType(filenameExtension: input.pathExtension) ?? .image
+    let inputType = UTType(filenameExtension: input.pathExtension) ?? .image
+    guard FormatCatalog.isWritableImage(outputUTI) || FormatCatalog.isWritableVideo(outputUTI) else {
       throw ProcessingError.unsupportedConversion(from: inputType, to: outputUTI)
     }
 
-    guard let destination = CGImageDestinationCreateWithURL(
-      output as CFURL,
-      outputUTI.identifier as CFString,
-      1,
-      nil
-    ) else {
-      throw ProcessingError.conversionFailed(
-        reason: "Cannot write \(outputUTI.preferredFilenameExtension ?? outputUTI.identifier)"
-      )
+    var rendered: [ImageFrame] = []
+    rendered.reserveCapacity(frames.count)
+    for (index, frame) in frames.enumerated() {
+      try Task.checkCancellation()
+      rendered.append(ImageFrame(image: try transform(frame.image, with: operations), duration: frame.duration))
+      progress(Double(index + 1) / Double(frames.count) * 0.9)
     }
 
-    guard let rendered = ciContext.createCGImage(ciImage, from: ciImage.extent) else {
-      throw ProcessingError.conversionFailed(reason: "Failed to render \(input.lastPathComponent)")
+    // An animation asked to become a movie is written as one, which is what
+    // turns a GIF back into video.
+    var extras: [URL] = []
+    if FormatCatalog.isWritableVideo(outputUTI) {
+      try await MovieWriter.write(rendered, to: output, as: outputUTI) { progress(0.9 + $0 * 0.1) }
+    } else {
+      let options = destinationOptions(for: outputUTI, operations: operations, source: source)
+      extras = try writeFrames(rendered, to: output, as: outputUTI, options: options)
     }
-
-    try Task.checkCancellation()
-
-    let options = destinationOptions(for: outputUTI, operations: operations, source: source)
-    CGImageDestinationAddImage(destination, rendered, options as CFDictionary)
-
-    guard CGImageDestinationFinalize(destination) else {
-      throw ProcessingError.conversionFailed(reason: "Failed to write \(output.lastPathComponent)")
-    }
-
     progress(1.0)
 
     let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
     return ProcessingResult(
       outputURL: output,
       outputSize: attributes[.size] as? Int64 ?? 0,
-      outputDimensions: (rendered.width, rendered.height),
-      duration: Date().timeIntervalSince(start)
+      outputDimensions: (rendered[0].image.width, rendered[0].image.height),
+      duration: Date().timeIntervalSince(start),
+      additionalOutputs: extras
     )
+  }
+
+  /// Put the frames where they belong: one file if the format can hold them
+  /// all, otherwise one file each, the way PDF pages are handled.
+  private func writeFrames(
+    _ frames: [ImageFrame],
+    to output: URL,
+    as type: UTType,
+    options: [CFString: Any]
+  ) throws -> [URL] {
+    if frames.count == 1 || FormatCatalog.holdsMultipleFrames(type) {
+      try ImageFrames.write(frames, to: output, as: type, frameOptions: options)
+      return []
+    }
+
+    var extras: [URL] = []
+    for (index, frame) in frames.enumerated() {
+      let destination = index == 0 ? output : output.numbered(index + 1)
+      try ImageFrames.write([frame], to: destination, as: type, frameOptions: options)
+      if index > 0 { extras.append(destination) }
+    }
+    return extras
+  }
+
+  /// Apply the preset's operations to one frame and render it.
+  private func transform(_ image: CGImage, with operations: [Operation]) throws -> CGImage {
+    var ciImage = CIImage(cgImage: image)
+    for operation in operations {
+      ciImage = try applyOperation(operation, to: ciImage)
+    }
+    guard let rendered = ciContext.createCGImage(ciImage, from: ciImage.extent) else {
+      throw ProcessingError.conversionFailed(reason: "Failed to render frame")
+    }
+    return rendered
   }
 
   // MARK: - Output

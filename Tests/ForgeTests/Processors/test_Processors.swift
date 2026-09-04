@@ -301,3 +301,257 @@ final class ConversionTests: BaseTestCase {
     XCTAssertTrue(text.contains("Forge"))
   }
 }
+
+/// Files that hold more than one image.
+///
+/// Forge used to read frame zero and throw the rest away, so an animated GIF
+/// converted to a single still and a multi-page TIFF lost every page but one.
+final class MultiFrameTests: BaseTestCase {
+
+  func test_animationSurvivesAConversionToAnotherAnimatedFormat() async throws {
+    let source = try Fixture.animatedGIF(at: path("loop.gif"), frames: 5)
+    XCTAssertEqual(Self.frameCount(of: source), 5, "the fixture itself must animate")
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .gif, resize: ResizeSpec(width: 24, height: 24, fitMode: .stretch), category: .image),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    let output = try XCTUnwrap(entry.outputURL)
+    XCTAssertEqual(Self.frameCount(of: output), 5, "frames were dropped")
+    XCTAssertEqual(try ProcessableFile(url: output).dimensions?.width, 24, "the resize skipped the frames")
+  }
+
+  /// A still format cannot hold an animation, so every frame becomes a file,
+  /// the way PDF pages already do.
+  func test_animationBecomesOneFilePerFrameInAStillFormat() async throws {
+    let source = try Fixture.animatedGIF(at: path("loop.gif"), frames: 4)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .jpeg, quality: 80, category: .image),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(entry.status, .completed)
+    XCTAssertEqual(contents(of: destination), ["loop-002.jpeg", "loop-003.jpeg", "loop-004.jpeg", "loop.jpeg"])
+  }
+
+  func test_frameDelaysAreCarriedAcross() async throws {
+    let source = try Fixture.animatedGIF(at: path("loop.gif"), frames: 3, delay: 0.25)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .gif, category: .image),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    let delay = try XCTUnwrap(Self.firstDelay(of: try XCTUnwrap(entry.outputURL)))
+    XCTAssertEqual(delay, 0.25, accuracy: 0.02, "the timing was lost")
+  }
+
+  func test_aStillImageIsStillOneFile() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 64, height: 64)
+    let destination = try folder("out")
+
+    _ = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .jpeg, quality: 80, category: .image),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(contents(of: destination), ["photo.jpeg"])
+  }
+
+  private static func frameCount(of url: URL) -> Int {
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return 0 }
+    return CGImageSourceGetCount(source)
+  }
+
+  private static func firstDelay(of url: URL) -> Double? {
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+          let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+          let gif = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any] else { return nil }
+    return gif[kCGImagePropertyGIFUnclampedDelayTime] as? Double
+      ?? gif[kCGImagePropertyGIFDelayTime] as? Double
+  }
+}
+
+/// A video asked to become an image is a frame export.
+final class VideoToImagesTests: BaseTestCase {
+
+  func test_videoBecomesAnAnimatedGIF() async throws {
+    let source = try await Fixture.video(
+      at: path("clip.mp4"),
+      seconds: 1,
+      size: CGSize(width: 320, height: 240),
+      withAudio: false
+    )
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .gif, category: .video),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(entry.status, .completed)
+    let output = try XCTUnwrap(entry.outputURL)
+    XCTAssertEqual(output.pathExtension, "gif")
+
+    let gif = try XCTUnwrap(CGImageSourceCreateWithURL(output as CFURL, nil))
+    // One second at twelve frames a second, give or take the final sample.
+    XCTAssertGreaterThan(CGImageSourceGetCount(gif), 8)
+    XCTAssertEqual(contents(of: destination), ["clip.gif"], "an animation is one file")
+  }
+
+  func test_videoBecomesOneImagePerFrameInAStillFormat() async throws {
+    let source = try await Fixture.video(
+      at: path("clip.mp4"),
+      seconds: 1,
+      size: CGSize(width: 160, height: 120),
+      withAudio: false
+    )
+    let destination = try folder("out")
+
+    _ = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .png, category: .video),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertGreaterThan(contents(of: destination).count, 8)
+    XCTAssertTrue(contents(of: destination).contains("clip.png"))
+    XCTAssertTrue(contents(of: destination).contains("clip-002.png"))
+  }
+
+  /// A GIF at the source resolution is unusable at any length, so frames are
+  /// capped unless the preset says otherwise.
+  func test_framesAreCappedUnlessAskedOtherwise() async throws {
+    let source = try await Fixture.video(
+      at: path("big.mp4"),
+      seconds: 1,
+      size: CGSize(width: 1920, height: 1080),
+      withAudio: false
+    )
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .gif, category: .video),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    let width = try XCTUnwrap(ProcessableFile(url: try XCTUnwrap(entry.outputURL)).dimensions?.width)
+    XCTAssertLessThanOrEqual(width, 640)
+    XCTAssertGreaterThan(width, 320, "capping should not shrink it to nothing")
+  }
+
+  func test_aRequestedSizeWins() async throws {
+    let source = try await Fixture.video(
+      at: path("big.mp4"),
+      seconds: 1,
+      size: CGSize(width: 1920, height: 1080),
+      withAudio: false
+    )
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .gif, resize: ResizeSpec(width: 200, height: 200, fitMode: .proportional), category: .video),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    let width = try XCTUnwrap(ProcessableFile(url: try XCTUnwrap(entry.outputURL)).dimensions?.width)
+    XCTAssertLessThanOrEqual(width, 200)
+  }
+}
+
+/// The other direction: an animation becomes a movie.
+final class ImagesToVideoTests: BaseTestCase {
+
+  func test_animatedGIFBecomesAVideo() async throws {
+    let source = try Fixture.animatedGIF(at: path("loop.gif"), frames: 12, size: 64, delay: 0.1)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .mpeg4Movie, category: .video),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+    let output = try XCTUnwrap(entry.outputURL)
+    XCTAssertEqual(output.pathExtension, "mp4")
+
+    let asset = AVURLAsset(url: output)
+    let tracks = try await asset.loadTracks(withMediaType: .video)
+    XCTAssertEqual(tracks.count, 1)
+
+    // Twelve frames at a tenth of a second each.
+    let duration = try await asset.load(.duration).seconds
+    XCTAssertEqual(duration, 1.2, accuracy: 0.3)
+  }
+
+  /// A round trip has to keep the motion: video to GIF and back again.
+  func test_videoToGIFAndBackKeepsTheFrames() async throws {
+    let source = try await Fixture.video(
+      at: path("clip.mp4"),
+      seconds: 1,
+      size: CGSize(width: 160, height: 120),
+      withAudio: false
+    )
+    let gifFolder = try folder("gif")
+    let backFolder = try folder("back")
+    let coordinator = coordinator()
+
+    let toGIF = try await coordinator.processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .gif, category: .video),
+      destinationMode: .copyTo,
+      destinationURL: gifFolder
+    ) { _ in }
+
+    let backToVideo = try await coordinator.processFile(
+      try ProcessableFile(url: try XCTUnwrap(toGIF.outputURL)),
+      with: .make(format: .mpeg4Movie, category: .video),
+      destinationMode: .copyTo,
+      destinationURL: backFolder
+    ) { _ in }
+
+    XCTAssertEqual(backToVideo.status, .completed, backToVideo.errorMessage ?? "")
+    let asset = AVURLAsset(url: try XCTUnwrap(backToVideo.outputURL))
+    let duration = try await asset.load(.duration).seconds
+    XCTAssertEqual(duration, 1.0, accuracy: 0.4)
+  }
+
+  func test_aStillImageBecomesAOneFrameVideo() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 128, height: 96)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .quickTimeMovie, category: .video),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+    let tracks = try await AVURLAsset(url: try XCTUnwrap(entry.outputURL))
+      .loadTracks(withMediaType: .video)
+    XCTAssertEqual(tracks.count, 1)
+  }
+}

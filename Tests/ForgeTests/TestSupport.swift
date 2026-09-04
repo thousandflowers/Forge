@@ -102,6 +102,46 @@ enum Fixture {
     return url
   }
 
+  /// An animated GIF with the requested number of frames.
+  @discardableResult
+  static func animatedGIF(
+    at url: URL,
+    frames: Int = 4,
+    size: Int = 48,
+    delay: Double = 0.1
+  ) throws -> URL {
+    guard let destination = CGImageDestinationCreateWithURL(
+      url as CFURL, UTType.gif.identifier as CFString, frames, nil
+    ) else {
+      throw Failure("Cannot write \(url.lastPathComponent)")
+    }
+
+    CGImageDestinationSetProperties(destination, [
+      kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]
+    ] as CFDictionary)
+
+    for frame in 0..<frames {
+      let shade = CGFloat(frame + 1) / CGFloat(frames + 1)
+      guard let context = CGContext(
+        data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: size * 4,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+      ) else { throw Failure("Cannot create a bitmap context") }
+      context.setFillColor(CGColor(red: shade, green: 1 - shade, blue: 0.4, alpha: 1))
+      context.fill(CGRect(x: 0, y: 0, width: size, height: size))
+      guard let image = context.makeImage() else { throw Failure("Cannot render a frame") }
+
+      CGImageDestinationAddImage(destination, image, [
+        kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: delay]
+      ] as CFDictionary)
+    }
+
+    guard CGImageDestinationFinalize(destination) else {
+      throw Failure("Cannot finalise \(url.lastPathComponent)")
+    }
+    return url
+  }
+
   /// A PDF with the requested number of pages.
   @discardableResult
   static func pdf(at url: URL, pages: Int) throws -> URL {

@@ -71,7 +71,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       try Task.checkCancellation()
       guard let page = pdf.page(at: index) else { continue }
 
-      let destination = index == 0 ? output : Self.pageURL(output, page: index + 1)
+      let destination = index == 0 ? output : output.numbered(index + 1)
       let dimensions = try render(page, to: destination, as: outputUTI, operations: operations)
       if index == 0 { firstDimensions = dimensions }
       written.append(destination)
@@ -200,14 +200,6 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     return requested ?? UTType(filenameExtension: output.pathExtension) ?? fallback
   }
 
-  private static func pageURL(_ output: URL, page: Int) -> URL {
-    let base = output.deletingPathExtension().lastPathComponent
-    let ext = output.pathExtension
-    let name = String(format: "%@-%03d", base, page)
-    return output
-      .deletingLastPathComponent()
-      .appendingPathComponent(ext.isEmpty ? name : "\(name).\(ext)")
-  }
 
   private static func quality(from operations: [Operation]) -> Float {
     let level = operations.compactMap { operation -> Int? in

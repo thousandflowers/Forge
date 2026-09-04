@@ -73,6 +73,19 @@ enum FormatCatalog {
     return writableVideoTypes.contains { type.conforms(to: $0) }
   }
 
+  /// Whether this type can hold more than one image in a single file.
+  ///
+  /// ImageIO exposes no query for it, so the set is declared. It is short and
+  /// stable: GIF and HEICS animate, TIFF is multi-page, and everything else
+  /// ImageIO writes holds exactly one image.
+  static func holdsMultipleFrames(_ type: UTType) -> Bool {
+    multiFrameTypes.contains { type.conforms(to: $0) }
+  }
+
+  private static let multiFrameTypes: Set<UTType> = Set(
+    ["com.compuserve.gif", "public.heics", "public.tiff"].compactMap { UTType($0) }
+  )
+
   /// Big-endian samples are the AIFF convention; every other PCM container
   /// here is little-endian.
   static func usesBigEndianPCM(_ type: UTType) -> Bool {
