@@ -28,10 +28,31 @@ struct SettingsView: View {
 }
 
 extension Bundle {
-  /// The version shown in Settings, read from the bundle rather than typed
-  /// into the view, where it went stale.
+  /// The version, read from the bundle rather than typed into a view where it
+  /// goes stale.
+  ///
+  /// Installed as `forge`, the tool is reached through a symlink, and
+  /// `Bundle.main` then describes the folder the link sits in rather than the
+  /// app. Following the executable back to its own bundle is what makes
+  /// `forge --version` report the same number the app does.
   var shortVersion: String {
-    let version = object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-    return version ?? "development build"
+    if let version = object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+      return version
+    }
+    return Self.versionFromExecutablePath() ?? "development build"
+  }
+
+  static func versionFromExecutablePath() -> String? {
+    guard let executable = CommandLine.arguments.first else { return nil }
+    let resolved = URL(fileURLWithPath: executable).resolvingSymlinksInPath()
+    // .../Forge.app/Contents/MacOS/Forge -> .../Forge.app/Contents/Info.plist
+    let contents = resolved.deletingLastPathComponent().deletingLastPathComponent()
+    let plist = contents.appendingPathComponent("Info.plist")
+
+    guard let data = try? Data(contentsOf: plist),
+          let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+      return nil
+    }
+    return info["CFBundleShortVersionString"] as? String
   }
 }

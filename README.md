@@ -20,6 +20,7 @@ Drag in hundreds of images, videos, audio files, or PDFs. Pick a preset. Convert
 ## Why Forge
 
 - **Native & dependency-free** - Core Image, AVFoundation and PDFKit do the work. No ImageMagick, FFmpeg or LibreOffice to install.
+- **App and command line, one binary** - `forge` shares the engine and the presets with the window.
 - **Batch-first** - drop hundreds of files; a new one starts the moment a slot frees up, so one long video does not hold up the queue.
 - **Careful with your files** - conversions are written to a scratch file and moved into place, output names never collide silently, and converting in place can keep a backup of the original.
 - **Watched folders** - assign a preset to a folder and anything dropped in is converted automatically (FSEvents).
@@ -71,6 +72,40 @@ treats that as a background agent: it runs, but no window ever appears. Use
 
 Requires macOS 13+ (Ventura) and Swift 5.9+.
 
+## Command line
+
+The same binary is also `forge`. Install it once:
+
+```bash
+ln -s /Applications/Forge.app/Contents/MacOS/Forge /usr/local/bin/forge
+```
+
+```bash
+forge convert *.png --to jpeg --quality 80 --out ./web
+forge convert photo.heic --preset "Web JPEG" --out ~/Desktop
+forge convert clip.mov --to mp4 --resize 1280x720 --out ./out
+forge convert *.png --to jpeg --overwrite          # keeps a backup
+forge watch ~/Desktop/incoming --preset "Web JPEG" --out ~/Desktop/web
+
+forge presets              # the same presets the app shows
+forge formats              # what this Mac can read and write
+```
+
+It reads the presets you save in the app, writes to the same history, and exits
+non-zero if any file failed, so it drops straight into a script. Converted paths
+go to stdout and problems to stderr:
+
+```bash
+forge convert *.heic --to jpeg --out ./web --quiet > converted.txt
+```
+
+Shell completions come from the tool itself:
+
+```bash
+forge --generate-completion-script zsh  > ~/.zsh/completions/_forge
+forge --generate-completion-script bash > /usr/local/etc/bash_completion.d/forge
+```
+
 ## Usage
 
 **Batch convert**
@@ -120,7 +155,8 @@ directory, so running them never touches the data the app keeps for you.
 - [ ] Completion notifications
 - [ ] Preset import/export
 - [ ] Signing and notarization
-- [ ] CLI (`forge`) + Shortcuts integration
+- [x] CLI (`forge`) with shell completions
+- [ ] Shortcuts integration
 
 ## Contributing
 

@@ -206,101 +206,64 @@ final class BatchViewModel: ObservableObject {
     isProcessing = true
     progress = 0
     fileProgress.removeAll()
+    statusMap.removeAll()
     defer { isProcessing = false }
 
-    let coordinator = model.coordinator
-    let limit = max(1, await coordinator.maxConcurrentNative)
     let total = files.count
+    let coordinator = model.coordinator
+    let limit = await coordinator.maxConcurrentNative
 
-    // Each file is packaged up here, on the main actor, so the group below
-    // only ever touches values it is allowed to touch.
-    let jobs: [Job] = files.map { file in
-      let onProgress = progressHandler(for: file.id)
-      return Job(id: file.id) {
-        do {
-          let entry = try await coordinator.processFile(
-            file, with: preset, destinationMode: mode, destinationURL: destination,
-            progress: onProgress
-          )
-          return Outcome(id: file.id, status: .completed, output: entry.outputURL)
-        } catch is CancellationError {
-          return Outcome(id: file.id, status: .cancelled, output: nil)
-        } catch {
-          return Outcome(id: file.id, status: .failed, output: nil)
-        }
+    // Progress arrives far more often than the screen can use, so it is
+    // coalesced before hopping to the main actor rather than after.
+    let gates = ProgressGates()
+
+    await Batch.run(
+      files,
+      preset: preset,
+      mode: mode,
+      destination: destination,
+      limit: limit,
+      coordinator: coordinator,
+      shouldContinue: { !cancellation.isSet }
+    ) { [weak self] event in
+      if case .progress(let id, let fraction) = event {
+        guard gates.advance(id: id, to: (fraction * 100).rounded() / 100) else { return }
       }
-    }
-
-    var completed = 0
-
-    // A new file starts the moment a slot frees up, instead of waiting for a
-    // whole batch to drain: one long video no longer holds up everything queued
-    // behind it.
-    await withTaskGroup(of: Outcome.self) { group in
-      var next = 0
-
-      func spawn() async -> Bool {
-        guard !cancellation.isSet, next < jobs.count else { return false }
-        let job = jobs[next]
-        next += 1
-        await MainActor.run { self.statusMap[job.id] = .processing }
-        group.addTask { await job.run() }
-        return true
-      }
-
-      for _ in 0..<limit where await spawn() {}
-
-      while let outcome = await group.next() {
-        completed += 1
-        let done = completed
-        await MainActor.run {
-          self.statusMap[outcome.id] = outcome.status
-          self.fileProgress[outcome.id] = outcome.status == .completed ? 1 : 0
-          self.progress = Double(done) / Double(total)
-          if let output = outcome.output { model.remember(output) }
-        }
-        _ = await spawn()
-      }
+      Task { @MainActor [weak self] in self?.apply(event, of: total, in: model) }
     }
 
     await model.refreshHistory()
   }
 
-  /// Progress arrives off the main actor and far more often than the screen
-  /// can use. Coalescing happens before the hop, so a long conversion does not
-  /// spawn thousands of tasks that each decide they have nothing to do.
-  private func progressHandler(for id: UUID) -> @Sendable (Double) -> Void {
-    let latest = ProgressGate()
-    return { [weak self] fraction in
-      let rounded = (fraction * 100).rounded() / 100
-      guard latest.advance(to: rounded) else { return }
-      Task { @MainActor [weak self] in self?.fileProgress[id] = rounded }
+  private func apply(_ event: Batch.Event, of total: Int, in model: AppModel) {
+    switch event {
+    case .started(let id):
+      statusMap[id] = .processing
+
+    case .progress(let id, let fraction):
+      fileProgress[id] = fraction
+
+    case .finished(let id, let status, let output, _):
+      statusMap[id] = status
+      fileProgress[id] = status == .completed ? 1 : 0
+      if let output { model.remember(output) }
+      let done = statusMap.values.filter { $0 != .pending && $0 != .processing }.count
+      progress = total > 0 ? Double(done) / Double(total) : 0
     }
   }
+
 }
 
-/// One queued conversion, ready to run away from the main actor.
-private struct Job: Sendable {
-  let id: UUID
-  let run: @Sendable () async -> Outcome
-}
-
-private struct Outcome: Sendable {
-  let id: UUID
-  let status: ProcessingStatus
-  let output: URL?
-}
-
-/// Lets a progress value through only when it has actually moved.
-private final class ProgressGate: @unchecked Sendable {
+/// Lets a progress value through only when it has actually moved, per file.
+private final class ProgressGates: @unchecked Sendable {
   private let lock = NSLock()
-  private var last: Double = -1
+  private var last: [UUID: Double] = [:]
 
-  func advance(to value: Double) -> Bool {
+  func advance(id: UUID, to value: Double) -> Bool {
     lock.lock()
     defer { lock.unlock() }
-    guard value != last else { return false }
-    last = value
+    guard last[id] != value else { return false }
+    last[id] = value
     return true
   }
 }

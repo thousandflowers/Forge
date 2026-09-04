@@ -23,6 +23,10 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 
 cp .build/apple/Products/Release/Forge "$CONTENTS/MacOS/Forge"
 
+# No `forge` symlink beside the executable: the default macOS filesystem is
+# case-insensitive, so `forge` and `Forge` are the same name and the link would
+# point at itself. The tool is installed outside the bundle instead.
+
 if [ -f Resources/Forge.icns ]; then
   cp Resources/Forge.icns "$CONTENTS/Resources/Forge.icns"
   ICON_ENTRY='<key>CFBundleIconFile</key><string>Forge</string>'
@@ -58,3 +62,6 @@ echo "==> Verifying"
 lipo -archs "$CONTENTS/MacOS/Forge"
 codesign --verify --verbose=1 "$APP"
 echo "Built $APP"
+echo
+echo "To install the command-line tool:"
+echo "  ln -s \"$PWD/$CONTENTS/MacOS/Forge\" /usr/local/bin/forge"
