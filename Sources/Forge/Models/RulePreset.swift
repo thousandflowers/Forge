@@ -216,4 +216,24 @@ enum PresetCategory: String, Codable, CaseIterable, Sendable {
     case .custom: return "star"
     }
   }
+
+  /// Which kind of work a file of this type is in for.
+  ///
+  /// Asked once a file is actually in hand, so that what is offered for it
+  /// suits what it is: a photograph has no business being offered Audio → MP3.
+  /// `nil` for a type none of these describes, which is the signal to offer
+  /// everything rather than nothing.
+  init?(fileType: UTType) {
+    if fileType.conforms(to: .image) {
+      self = .image
+    } else if fileType.conforms(to: .movie) {
+      self = .video
+    } else if fileType.conforms(to: .audio) {
+      self = .audio
+    } else if fileType.conforms(to: .pdf) || fileType.conforms(to: .text) {
+      self = .document
+    } else {
+      return nil
+    }
+  }
 }

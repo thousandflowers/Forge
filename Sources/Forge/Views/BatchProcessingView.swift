@@ -6,67 +6,87 @@ struct BatchProcessingView: View {
   @EnvironmentObject private var model: AppModel
   @StateObject private var vm = BatchViewModel()
 
-  @State private var selectedPresetID: UUID?
-  @State private var destinationMode: DestinationMode = .copyTo
-  @State private var destinationURL: URL?
+  @State private var choice = ConvertChoice()
+  @State private var showingOptions = false
   @State private var isTargeted = false
-  @State private var showingAdjustments = false
-  @State private var overrideFormat: OutputFormat = .keep
-  @State private var overrideQuality: Double = 0
-  @State private var overrideWidth = ""
   @State private var confirming = false
 
-  private var preset: RulePreset? { model.presets.first { $0.id == selectedPresetID } }
-
-  /// The preset with this batch's adjustments applied, without touching the
-  /// saved one. Converting one folder differently should not mean editing a
-  /// preset and putting it back.
-  private var effectivePreset: RulePreset? {
-    guard var preset else { return nil }
-    if let format = overrideFormat.type {
-      preset = preset.replacing(.convertFormat(to: format))
-    }
-    if overrideQuality > 0 {
-      preset = preset.replacing(.quality(level: Int(overrideQuality)))
-    }
-    if let width = Int(overrideWidth.trimmingCharacters(in: .whitespaces)), width > 0 {
-      let mode = preset.resize?.fitMode ?? .proportional
-      preset = preset.replacing(.resize(width: width, height: nil, fitMode: mode))
-    }
-    return preset
+  /// The kinds of file in the list. What the sheet offers is decided from this,
+  /// so a PDF is asked different questions than a video.
+  private var kinds: Set<ConvertKind> {
+    Set(vm.files.compactMap { ConvertKind(fileType: $0.fileType) })
   }
 
-  private var hasAdjustments: Bool {
-    overrideFormat.type != nil || overrideQuality > 0 || !overrideWidth.isEmpty
+  private var totalSize: Int64 {
+    vm.files.reduce(0) { $0 + $1.fileSize }
   }
-  private var needsDestination: Bool { destinationMode != .overwrite }
-  private var canConvert: Bool {
-    !vm.files.isEmpty && preset != nil && !vm.isProcessing && (!needsDestination || destinationURL != nil)
-  }
+
+  private var preset: RulePreset? { choice.resolved(against: model.presets) }
 
   var body: some View {
-    Group {
+    VStack(spacing: 0) {
       if vm.files.isEmpty {
         dropZone
       } else {
-        VStack(spacing: 0) {
-          fileTable
-          Divider()
-          controlBar
-        }
+        fileTable
+      }
+      // Nothing sits under the list while it waits: the settings live in the
+      // sheet, and a bar of controls on an empty screen said nothing anybody
+      // could act on.
+      if vm.isProcessing {
+        Divider()
+        processingBar
+      } else if let saving = vm.lastSaving {
+        Divider()
+        resultBar(saving)
       }
     }
+    // A drop is accepted anywhere on the screen. Hanging this on the empty
+    // state meant dragging worked for the first file and silently stopped
+    // working for the second.
+    .dropDestination(for: URL.self) { urls, _ in
+      add(urls)
+      return true
+    } isTargeted: { isTargeted = $0 }
+    .overlay {
+      if isTargeted, !vm.files.isEmpty {
+        RoundedRectangle(cornerRadius: 8)
+          .strokeBorder(Color.accentColor, lineWidth: 2)
+          .padding(2)
+          .allowsHitTesting(false)
+      }
+    }
+    .animation(.easeOut(duration: 0.15), value: isTargeted)
     .navigationTitle("Convert")
     .toolbar {
       ToolbarItemGroup {
         Button { addFiles() } label: { Label("Add Files", systemImage: "plus") }
-        Button(role: .destructive) { vm.clear() } label: { Label("Clear", systemImage: "trash") }
-          .disabled(vm.files.isEmpty || vm.isProcessing)
+        // Nothing to clear is not a reason to show a disabled bin: it is a
+        // reason for there to be no bin.
+        if !vm.files.isEmpty {
+          Button(role: .destructive) { clear() } label: { Label("Clear", systemImage: "trash") }
+            .disabled(vm.isProcessing)
+          Button { showingOptions = true } label: { Label("Convert…", systemImage: "slider.horizontal.3") }
+            .disabled(vm.isProcessing)
+        }
       }
     }
-    .onAppear { if selectedPresetID == nil { selectedPresetID = model.usablePresets.first?.id } }
+    .sheet(isPresented: $showingOptions) {
+      ConvertOptionsSheet(
+        kinds: kinds,
+        fileCount: vm.files.count,
+        totalSize: totalSize,
+        presets: model.usablePresets,
+        choice: $choice,
+        onConvert: {
+          // Overwrite and Move both change what is already on disk, so they are
+          // worth a sentence before rather than an apology after.
+          if choice.destinationMode == .copyTo { start() } else { confirming = true }
+        }
+      )
+    }
     .confirmationDialog(summaryTitle, isPresented: $confirming) {
-      Button(destinationMode == .overwrite ? "Replace Files" : "Move Files", role: .destructive) {
+      Button(choice.destinationMode == .overwrite ? "Replace Files" : "Move Files", role: .destructive) {
         start()
       }
       Button("Cancel", role: .cancel) {}
@@ -92,10 +112,6 @@ struct BatchProcessingView: View {
     )
     .padding(28)
     .contentShape(Rectangle())
-    .dropDestination(for: URL.self) { urls, _ in
-      vm.add(urls); return true
-    } isTargeted: { isTargeted = $0 }
-    .animation(.easeOut(duration: 0.15), value: isTargeted)
   }
 
   private var fileTable: some View {
@@ -123,72 +139,53 @@ struct BatchProcessingView: View {
     }
   }
 
-  private var controlBar: some View {
-    VStack(spacing: 10) {
-      if vm.isProcessing {
-        ProgressView(value: vm.progress).progressViewStyle(.linear)
-      }
-      if showingAdjustments {
-        adjustments
-      }
-      HStack(spacing: 14) {
-        Picker("Preset", selection: $selectedPresetID) {
-          Text("Choose preset…").tag(UUID?.none)
-          ForEach(model.usablePresets) { p in Text(p.name).tag(Optional(p.id)) }
-        }
-        .labelsHidden().frame(maxWidth: 220)
-
-        Picker("Destination", selection: $destinationMode) {
-          ForEach(DestinationMode.allCases, id: \.self) { m in Text(m.displayName).tag(m) }
-        }
-        .labelsHidden().frame(maxWidth: 170)
-
-        if needsDestination {
-          Button { chooseDestination() } label: {
-            Label(destinationURL?.lastPathComponent ?? "Choose folder…", systemImage: "folder")
-              .lineLimit(1)
-          }
-        }
-
-        Toggle(isOn: $showingAdjustments) {
-          Label("Adjust", systemImage: hasAdjustments ? "slider.horizontal.3" : "slider.horizontal.below.rectangle")
-        }
-        .toggleStyle(.button)
-        .help("Change the format, size or quality for this batch only")
-
-        Spacer()
-
-        Text(vm.lastSaving ?? (vm.files.count == 1 ? "1 file" : "\(vm.files.count) files"))
-          .font(.callout).foregroundStyle(.secondary)
-
-        if vm.isProcessing {
-          Button("Cancel") { vm.cancel(model: model) }
-        } else {
-          Button {
-            // Overwrite and Move both change what is already on disk, so they
-            // are worth a sentence before rather than an apology after.
-            if destinationMode == .copyTo {
-              start()
-            } else {
-              confirming = true
-            }
-          } label: { Text("Convert").frame(minWidth: 84) }
-            .buttonStyle(.borderedProminent)
-            .keyboardShortcut(.defaultAction)
-            .disabled(!canConvert)
-        }
-      }
+  private var processingBar: some View {
+    HStack(spacing: 14) {
+      ProgressView(value: vm.progress).progressViewStyle(.linear)
+      Button("Cancel") { vm.cancel(model: model) }
     }
     .padding()
   }
 
+  /// What the batch cost, once it is known. Measured, not promised.
+  private func resultBar(_ saving: String) -> some View {
+    HStack(spacing: 14) {
+      Text(saving).font(.callout).foregroundStyle(.secondary)
+      Spacer()
+      Button("Convert Again…") { showingOptions = true }
+    }
+    .padding()
+  }
+
+  // MARK: - Doing it
+
+  /// Adding files opens the sheet: the question "what should these become" is
+  /// the whole reason the files were dropped, so it is asked straight away
+  /// rather than waiting to be found in a toolbar.
+  private func add(_ urls: [URL]) {
+    let wasEmpty = vm.files.isEmpty
+    vm.add(urls)
+    if wasEmpty, !vm.files.isEmpty { showingOptions = true }
+  }
+
+  private func clear() {
+    vm.clear()
+  }
+
   private func start() {
-    guard let preset = effectivePreset else { return }
-    Task { await vm.convert(model: model, preset: preset, mode: destinationMode, destination: destinationURL) }
+    guard let preset else { return }
+    Task {
+      await vm.convert(
+        model: model,
+        preset: preset,
+        mode: choice.destinationMode,
+        destination: choice.destinationURL
+      )
+    }
   }
 
   private var summaryTitle: String {
-    destinationMode == .overwrite
+    choice.destinationMode == .overwrite
       ? (vm.files.count == 1 ? "Replace this file?" : "Replace these \(vm.files.count) files?")
       : (vm.files.count == 1 ? "Move this file?" : "Move these \(vm.files.count) files?")
   }
@@ -198,15 +195,14 @@ struct BatchProcessingView: View {
   private var summary: String {
     var lines: [String] = []
 
-    let total = vm.files.reduce(Int64(0)) { $0 + $1.fileSize }
-    lines.append("\(vm.files.count) file\(vm.files.count == 1 ? "" : "s"), \(total.formatted(.byteCount(style: .file)))")
+    lines.append("\(vm.files.count) file\(vm.files.count == 1 ? "" : "s"), \(totalSize.formatted(.byteCount(style: .file)))")
 
-    if let preset = effectivePreset {
+    if let preset {
       let chain = preset.actions.map(PresetCard.chip).joined(separator: " · ")
       if !chain.isEmpty { lines.append(chain) }
     }
 
-    switch destinationMode {
+    switch choice.destinationMode {
     case .overwrite:
       lines.append(
         model.settings.createBackupBeforeOverwrite
@@ -222,59 +218,12 @@ struct BatchProcessingView: View {
     return lines.joined(separator: "\n")
   }
 
-  /// Overrides for this batch only. Empty means "whatever the preset says".
-  private var adjustments: some View {
-    HStack(spacing: 14) {
-      Picker("Format", selection: $overrideFormat) {
-        Text("From preset").tag(OutputFormat.keep)
-        Section("Images") { ForEach(OutputFormat.images) { Text($0.label).tag($0) } }
-        Section("Audio") { ForEach(OutputFormat.audio) { Text($0.label).tag($0) } }
-        Section("Video") { ForEach(OutputFormat.video) { Text($0.label).tag($0) } }
-        Section("Documents") { ForEach(OutputFormat.documents) { Text($0.label).tag($0) } }
-      }
-      .frame(maxWidth: 200)
-
-      HStack(spacing: 4) {
-        Text("Width").foregroundStyle(.secondary)
-        TextField("auto", text: $overrideWidth).frame(width: 60)
-      }
-
-      HStack(spacing: 6) {
-        Text("Quality").foregroundStyle(.secondary)
-        Slider(value: $overrideQuality, in: 0...100, step: 1).frame(width: 130)
-        Text(overrideQuality > 0 ? "\(Int(overrideQuality))" : "preset")
-          .monospacedDigit()
-          .foregroundStyle(.secondary)
-          .frame(width: 46, alignment: .leading)
-      }
-
-      Spacer()
-
-      Button("Reset") {
-        overrideFormat = .keep
-        overrideQuality = 0
-        overrideWidth = ""
-      }
-      .disabled(!hasAdjustments)
-    }
-    .padding(.bottom, 4)
-  }
-
   private func addFiles() {
     let panel = NSOpenPanel()
     panel.allowsMultipleSelection = true
     panel.canChooseDirectories = false
     panel.canChooseFiles = true
-    if panel.runModal() == .OK { vm.add(panel.urls) }
-  }
-
-  private func chooseDestination() {
-    let panel = NSOpenPanel()
-    panel.canChooseDirectories = true
-    panel.canChooseFiles = false
-    panel.allowsMultipleSelection = false
-    panel.prompt = "Choose"
-    if panel.runModal() == .OK { destinationURL = panel.url }
+    if panel.runModal() == .OK { add(panel.urls) }
   }
 }
 
@@ -292,6 +241,9 @@ final class BatchViewModel: ObservableObject {
   private let cancellation = CancellationFlag()
 
   func add(_ urls: [URL]) {
+    // What the last batch cost describes files that are no longer the ones on
+    // screen, so it stops being shown the moment the batch changes.
+    lastSaving = nil
     let existing = Set(files.map(\.url))
     let added = urls.compactMap { try? ProcessableFile(url: $0) }.filter { !existing.contains($0.url) }
     files.append(contentsOf: added)
@@ -315,6 +267,7 @@ final class BatchViewModel: ObservableObject {
     statusMap.removeAll()
     fileProgress.removeAll()
     progress = 0
+    lastSaving = nil
   }
 
   func cancel(model: AppModel) {
@@ -335,6 +288,7 @@ final class BatchViewModel: ObservableObject {
     progress = 0
     fileProgress.removeAll()
     statusMap.removeAll()
+    lastSaving = nil
     defer { isProcessing = false }
 
     let total = files.count

@@ -14,7 +14,11 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
   let name = "Document Processor"
 
   /// PDF plus whatever the system's document readers accept.
-  private let readableTypes: [UTType] = {
+  ///
+  /// Shared rather than private because the Convert screen has to offer the
+  /// controls this processor honours, and a second hand-written copy of the
+  /// list would drift from this one.
+  static let readableTypes: [UTType] = {
     var types: [UTType] = [.pdf]
     types.append(contentsOf: Array(DocumentText.readable.keys))
     if let markdown = DocumentText.markdown { types.append(markdown) }
@@ -24,7 +28,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
   private let ciContext = CIContext(options: [.cacheIntermediates: false])
 
   func canProcess(_ file: ProcessableFile) -> Bool {
-    readableTypes.contains { file.fileType.conforms(to: $0) }
+    Self.readableTypes.contains { file.fileType.conforms(to: $0) }
   }
 
   func process(

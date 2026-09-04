@@ -790,3 +790,142 @@ final class PresetEnablingTests: BaseTestCase {
     XCTAssertEqual(loaded.first?.isEnabled, false)
   }
 }
+
+/// Which kind of work a dropped file is in for. This decides what the Convert
+/// screen offers for it, so a wrong answer means being offered a conversion
+/// that cannot happen.
+final class FileCategoryTests: XCTestCase {
+
+  func test_eachKindOfFileFindsItsCategory() {
+    XCTAssertEqual(PresetCategory(fileType: .png), .image)
+    XCTAssertEqual(PresetCategory(fileType: .jpeg), .image)
+    XCTAssertEqual(PresetCategory(fileType: .mpeg4Movie), .video)
+    XCTAssertEqual(PresetCategory(fileType: .quickTimeMovie), .video)
+    XCTAssertEqual(PresetCategory(fileType: .mp3), .audio)
+    XCTAssertEqual(PresetCategory(fileType: .wav), .audio)
+    XCTAssertEqual(PresetCategory(fileType: .pdf), .document)
+    XCTAssertEqual(PresetCategory(fileType: .plainText), .document)
+  }
+
+  /// Audio in an MPEG-4 container must not read as video: the check order is
+  /// what keeps an M4A out of the video presets.
+  func test_audioInAnMPEG4ContainerIsStillAudio() {
+    XCTAssertEqual(PresetCategory(fileType: .mpeg4Audio), .audio)
+  }
+
+  /// No category is the signal to offer everything, so it has to stay nil
+  /// rather than fall into one of the four by accident.
+  func test_aTypeNoCategoryDescribesIsNil() {
+    XCTAssertNil(PresetCategory(fileType: .zip))
+  }
+}
+
+/// What a file is decides which controls the Convert sheet puts in front of
+/// somebody. A wrong answer here offers a setting the processor will ignore.
+final class ConvertKindTests: XCTestCase {
+
+  func test_eachFileFindsTheProcessorThatWillTakeIt() {
+    XCTAssertEqual(ConvertKind(fileType: .png), .image)
+    XCTAssertEqual(ConvertKind(fileType: .jpeg), .image)
+    XCTAssertEqual(ConvertKind(fileType: .mpeg4Movie), .video)
+    XCTAssertEqual(ConvertKind(fileType: .quickTimeMovie), .video)
+    XCTAssertEqual(ConvertKind(fileType: .mp3), .audio)
+    XCTAssertEqual(ConvertKind(fileType: .wav), .audio)
+    XCTAssertEqual(ConvertKind(fileType: .pdf), .document)
+  }
+
+  /// JSON and CSV are plain text to the system, and the document reader would
+  /// happily take them. `DataProcessor` is asked first, so they must land on
+  /// data — the only kind that offers nothing but a change of format.
+  func test_structuredTextIsDataNotDocument() {
+    XCTAssertEqual(ConvertKind(fileType: .json), .data)
+    if let csv = DataProcessor.csv {
+      XCTAssertEqual(ConvertKind(fileType: csv), .data)
+    }
+  }
+
+  func test_aTypeNothingReadsIsNil() {
+    XCTAssertNil(ConvertKind(fileType: .zip))
+  }
+
+  /// The controls each kind admits to, taken from what the processors read.
+  func test_onlyTheControlsTheProcessorHonoursAreOffered() {
+    XCTAssertTrue(ConvertKind.image.supportsFilter)
+    XCTAssertFalse(ConvertKind.image.supportsCodec)
+
+    XCTAssertTrue(ConvertKind.video.supportsCodec)
+    XCTAssertTrue(ConvertKind.video.supportsResize)
+    XCTAssertFalse(ConvertKind.video.supportsFilter)
+
+    XCTAssertTrue(ConvertKind.audio.supportsCodec)
+    XCTAssertFalse(ConvertKind.audio.supportsResize)
+    XCTAssertFalse(ConvertKind.audio.supportsQuality)
+
+    // A data file can only change format: everything else is refused outright.
+    for kind in [ConvertKind.data] {
+      XCTAssertFalse(kind.supportsResize)
+      XCTAssertFalse(kind.supportsQuality)
+      XCTAssertFalse(kind.supportsFilter)
+      XCTAssertFalse(kind.supportsCodec)
+      XCTAssertFalse(kind.supportsTextExtraction)
+    }
+  }
+
+  /// A PDF and a video are asked different questions. That difference is the
+  /// whole point of the sheet.
+  func test_aDocumentAndAVideoAreOfferedDifferentOutputs() {
+    let documentGroups = Set(ConvertKind.document.outputGroups.map(\.title))
+    let videoGroups = Set(ConvertKind.video.outputGroups.map(\.title))
+    XCTAssertTrue(documentGroups.contains("Read aloud"))
+    XCTAssertFalse(videoGroups.contains("Read aloud"))
+    XCTAssertTrue(videoGroups.contains("Video"))
+    XCTAssertFalse(documentGroups.contains("Video"))
+  }
+}
+
+/// What the sheet hands the coordinator.
+final class ConvertChoiceTests: XCTestCase {
+
+  /// Nothing chosen is nothing to run: Convert stays off rather than writing a
+  /// copy of the file under a new name.
+  func test_anEmptyChoiceResolvesToNothing() {
+    XCTAssertNil(ConvertChoice().resolved(against: []))
+  }
+
+  func test_theFieldsBecomeAChainInTheOrderTheyRun() throws {
+    var choice = ConvertChoice()
+    choice.format = OutputFormat(type: .jpeg)
+    choice.width = 1280
+    choice.quality = 80
+
+    let preset = try XCTUnwrap(choice.resolved(against: []))
+    let actions = preset.actions
+    XCTAssertEqual(actions.count, 3)
+    if case .convertFormat(let to) = actions[0] { XCTAssertEqual(to, UTType.jpeg) } else { XCTFail("format first") }
+    if case .resize(let width, _, _) = actions[1] { XCTAssertEqual(width, 1280) } else { XCTFail("resize second") }
+    if case .quality(let level) = actions[2] { XCTAssertEqual(level, 80) } else { XCTFail("quality third") }
+  }
+
+  /// A chosen preset is run as it stands, because it can hold things the sheet
+  /// has no control for.
+  func test_aChosenPresetIsRunWhole() {
+    let preset = RulePreset(
+      name: "Two filters",
+      description: "",
+      category: .image,
+      actions: [.filter(type: .grayscale), .filter(type: .sepia)]
+    )
+    var choice = ConvertChoice()
+    choice.presetID = preset.id
+
+    XCTAssertEqual(choice.resolved(against: [preset])?.actions.count, 2)
+  }
+
+  /// Asking for text asks for the language too, even when it is left open.
+  func test_askingForTextAddsRecognition() {
+    var choice = ConvertChoice()
+    choice.format = OutputFormat(type: .plainText)
+    XCTAssertTrue(choice.wantsText)
+    XCTAssertTrue(choice.customActions.contains { if case .recognizeText = $0 { return true } else { return false } })
+  }
+}

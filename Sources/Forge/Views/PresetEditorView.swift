@@ -276,6 +276,16 @@ struct OutputFormat: Identifiable, Hashable {
     Self.sorted(Set(DocumentText.writable.keys).union([.pdf]))
   }
 
+  /// Words out of a file: OCR for anything with pixels, transcription for
+  /// anything with a soundtrack. One format, because both paths write text.
+  static var text: [OutputFormat] { [OutputFormat(type: .plainText)] }
+
+  /// What `DataProcessor` writes, which is exactly what it reads: it refuses
+  /// any other pairing rather than writing something nothing can open.
+  static var data: [OutputFormat] { Self.sorted(Set(DataProcessor.readable)) }
+
+  static var models: [OutputFormat] { Self.sorted(FormatCatalog.writableModelTypes) }
+
   private static func sorted(_ types: Set<UTType>) -> [OutputFormat] {
     types.map { OutputFormat(type: $0) }.sorted { $0.label < $1.label }
   }
