@@ -98,12 +98,54 @@ Native, no new dependencies, in rough order of value.
 - [x] **A lower default image quality** - 80 rather than 85, measured: the step
       from 85 to 80 takes about a third off the file, and below 80 the curve
       flattens out.
+- [x] **A sheet that asks the right question** - dropping files opens the
+      Convert sheet, which offers only what the files in hand can honour: a PDF
+      is offered pages, filters and a voice, a CSV is offered another data
+      format and nothing else.
+- [x] **Capabilities you can search, filter, and act on** - plus a pass over
+      your own folders that puts the capabilities your files argue for first.
+- [x] **Presets that ask instead of deciding** - a parameter is filled in at
+      conversion time and can be spent in the filename.
+- [ ] **Rank the format lists** - the image row is nineteen chips including
+      ASTC, DDS, KTX and PVR, which nobody is looking for when converting a
+      PDF. Order them by what your own presets target and what went in, and put
+      the rest behind a More. Not a hardcoded shortlist: the ranking has to come
+      from the data, or it goes stale the moment macOS adds an encoder.
+- [ ] **History that leads somewhere** - a failed row says nothing about why it
+      failed, does not carry the path it wrote, and offers neither Reveal in
+      Finder nor a retry. The status is also shown twice per row, and the
+      duration reads 0.0s on anything quick.
+- [ ] **Every output in history** - a preset with two formats writes two files
+      and history records the first. The files are all on disk; the record is
+      not complete.
+- [ ] **Aspect ratios in the crop block** - 16:9, 1:1, 4:5 rather than typing
+      two numbers and knowing which is which.
+- [ ] **Remember what a preset was last answered** - a preset that asks for a
+      size asks again from its default every time.
 - [ ] **Localization** - the app is English-only.
 - [ ] **Finder action** - convert from the context menu, through a Finder
       extension. Needs a signed app extension, so it waits on notarization.
 - [x] **Menu bar item** - pick a preset, pick files, pick a folder. A
       conversion is usually a small errand and going to the window for it is
       more ceremony than the errand deserves.
+
+### Tools this Mac has, that Forge does not call yet
+
+Forge finds `ffmpeg`, `pandoc`, `tesseract` and `fonttools` when they are
+installed, and installs any of them with Homebrew from inside the app. Only
+WebP is wired through to a real conversion. Until the rest are, the cards say
+"installed, Forge does not call it yet" rather than turning green on a promise.
+
+- [ ] **Broadcast and legacy video through ffmpeg** - WMV, MXF, FLV, and AV1 or
+      VP9 encoding.
+- [ ] **Office and ebooks through pandoc** - XLSX, PPTX, EPUB.
+- [ ] **The OCR languages Vision does not have, through tesseract.**
+- [ ] **Font conversion through fonttools** - and a way to find it: it installs
+      into a Python user directory that a GUI app's PATH does not include, so
+      Forge currently reports it missing on a Mac that has it.
+- [ ] **A size ceiling on video and audio** - today only images are written,
+      measured and written again lower until they fit. A video asked to come in
+      under a size is not refused; the ceiling is simply not offered for it.
 
 ## Not planned, and why
 
@@ -188,6 +230,23 @@ installed.
 - **SVG vectorization** (image → SVG) - needs a tracer. macOS has none.
 - **SVGZ** - only useful once SVG itself is supported.
 
+### Nothing on this system translates
+
+- **Subtitles or text in another language.** Renaming a subtitle track `_it` to
+  get Italian is a good shape for the feature and there is nothing behind it:
+  macOS 13 ships no offline translation API. Translation arrived in macOS 15 and
+  is not reachable here, and the alternative is sending somebody's files to a
+  server, which this app is not going to start doing quietly. If the deployment
+  target ever moves to 15, this becomes possible on device and worth doing.
+
+### Packs hosted by Forge
+
+- **Downloading conversion packs from us.** A pack is code Forge did not build.
+  Shipping one means pinning a source, publishing a checksum, signing it, and
+  keeping all three current; in FFmpeg's case it also pulls that licence onto
+  this project. Forge notices what your Mac already has and installs it with
+  your own package manager instead. Same result, none of the supply chain.
+
 ### Not a Forge problem
 
 - **"Error when downloading large PDFs"** - if this is happening in another
@@ -224,9 +283,6 @@ Recorded so they are not reopened by accident. Each was a real fork in the road.
 True of the code as it stands. None of these is hidden by the app; they are
 here so nobody has to rediscover them.
 
-- **Only the first frame of a multi-frame image is read.** An animated GIF, a
-  HEICS sequence or a multi-page TIFF converts to a single still. This is the
-  same code path the video ↔ GIF work will replace.
 - **No retry.** A conversion that fails because a file was still being written,
   or a device was briefly busy, is reported as failed. Everything else about
   transient failure is handled - nothing is half-written, nothing is destroyed -
@@ -235,16 +291,29 @@ here so nobody has to rediscover them.
   work in the window, but they live in the SwiftUI view model, and testing them
   would need scaffolding out of proportion to the risk. The engine underneath
   them is tested.
-- **Preset categories are decoration.** They pick an icon and a label, and
-  filter nothing. Removing them would delete data already saved in everyone's
-  presets, so they stay until there is a reason to touch them.
+- **Preset categories now decide what a preset is offered.** They pick the
+  icon, and they also filter which steps the editor offers and which presets the
+  Convert sheet shows for a given file. A preset filed under the wrong category
+  will be offered the wrong steps; nothing checks that the category matches what
+  the actions actually do.
+- **The size ceiling is images only.** `ImageProcessor` writes, measures and
+  rewrites. Video and audio have no such loop, so the ceiling is not offered for
+  them rather than being offered and ignored.
+- **A multi-format conversion records one output in history.** Both files are
+  written and both are on disk; history keeps the first.
+- **The app is unsigned and not notarized.** First launch needs right click,
+  Open. The Finder extension waits on the same thing.
 - **Not measured:** memory on a batch of thousands of files, and behaviour on
   Intel hardware. The binary is universal and the tests pass on Apple silicon;
   no one has run it on an Intel Mac.
 
 ## Where the line is
 
-If a conversion needs a binary the user has to install, Forge says it cannot do
-it rather than doing it badly or silently. `forge formats` and the format list
+If a conversion needs a binary the user has to install, Forge says so, names the
+tool, and offers to install it with the user's own package manager. What it does
+not do is host that binary, bundle it, or download it behind the user's back. It
+also never reports a capability as working because the tool is present: having
+the tool and calling it are two different facts, and the screen keeps them
+apart. `forge formats` and the format list
 in the app are generated from the running system for the same reason: the app
 should never offer something it cannot deliver.
