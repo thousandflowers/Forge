@@ -2,31 +2,13 @@ import Foundation
 
 /// A folder that is watched for new files and automatically processes them
 struct MonitoredFolder: Identifiable, Codable, Hashable, Sendable {
-  let id: UUID
+  var id = UUID()
   var url: URL
   var ruleId: UUID
   var destinationMode: DestinationMode
   var destinationURL: URL?
-  var isActive: Bool
-  var includeSubfolders: Bool
-
-  init(
-    id: UUID = UUID(),
-    url: URL,
-    ruleId: UUID,
-    destinationMode: DestinationMode,
-    destinationURL: URL? = nil,
-    isActive: Bool = true,
-    includeSubfolders: Bool = false
-  ) {
-    self.id = id
-    self.url = url
-    self.ruleId = ruleId
-    self.destinationMode = destinationMode
-    self.destinationURL = destinationURL
-    self.isActive = isActive
-    self.includeSubfolders = includeSubfolders
-  }
+  var isActive = true
+  var includeSubfolders = false
 
   var displayName: String {
     url.lastPathComponent

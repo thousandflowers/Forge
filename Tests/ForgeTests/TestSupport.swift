@@ -40,7 +40,7 @@ class BaseTestCase: XCTestCase {
   private(set) lazy var store = PersistenceManager(root: workspace.appendingPathComponent("store"))
 
   func coordinator(settings: AppSettings = AppSettings()) -> ProcessingCoordinator {
-    ProcessingCoordinator(registry: ProcessorRegistry(), settings: settings, persistence: store)
+    ProcessingCoordinator(settings: settings, persistence: store)
   }
 
   func size(of url: URL) -> Int64 {

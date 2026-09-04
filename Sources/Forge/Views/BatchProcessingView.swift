@@ -72,7 +72,8 @@ struct BatchProcessingView: View {
           .foregroundStyle(.secondary)
       }
       TableColumn("Size") { f in
-        Text(formatBytes(f.fileSize)).foregroundStyle(.secondary).monospacedDigit()
+        Text(f.fileSize.formatted(.byteCount(style: .file)))
+          .foregroundStyle(.secondary).monospacedDigit()
       }
       TableColumn("Dimensions") { f in
         Text(f.dimensions.map { "\($0.width) × \($0.height)" } ?? "—").foregroundStyle(.secondary)
@@ -82,7 +83,7 @@ struct BatchProcessingView: View {
         if status == .processing, let fraction = vm.fileProgress[f.id] {
           ProgressView(value: fraction).progressViewStyle(.linear).frame(maxWidth: 120)
         } else {
-          statusLabel(status)
+          status.label
         }
       }
     }
@@ -155,7 +156,7 @@ struct BatchProcessingView: View {
 @MainActor
 final class BatchViewModel: ObservableObject {
   @Published var files: [ProcessableFile] = []
-  @Published var statusMap: [UUID: FileStatus] = [:]
+  @Published var statusMap: [UUID: ProcessingStatus] = [:]
   @Published var fileProgress: [UUID: Double] = [:]
   @Published var isProcessing = false
   @Published var progress: Double = 0
@@ -286,7 +287,7 @@ private struct Job: Sendable {
 
 private struct Outcome: Sendable {
   let id: UUID
-  let status: FileStatus
+  let status: ProcessingStatus
   let output: URL?
 }
 

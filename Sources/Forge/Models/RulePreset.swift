@@ -3,36 +3,16 @@ import UniformTypeIdentifiers
 
 /// A named preset containing a set of operations to apply
 struct RulePreset: Identifiable, Codable, Hashable, Sendable {
-  let id: UUID
+  var id = UUID()
   var name: String
   var description: String
 
   var targetFormat: UTType?
   var resize: ResizeSpec?
   var quality: Int?        // 1-100
-  var filters: [FilterType]
+  var filters: [FilterType] = []
 
   var category: PresetCategory
-
-  init(
-    id: UUID = UUID(),
-    name: String,
-    description: String,
-    targetFormat: UTType? = nil,
-    resize: ResizeSpec? = nil,
-    quality: Int? = nil,
-    filters: [FilterType] = [],
-    category: PresetCategory,
-  ) {
-    self.id = id
-    self.name = name
-    self.description = description
-    self.targetFormat = targetFormat
-    self.resize = resize
-    self.quality = quality
-    self.filters = filters
-    self.category = category
-  }
 
   /// Convert preset to an ordered list of operations
   func toOperations() -> [Operation] {

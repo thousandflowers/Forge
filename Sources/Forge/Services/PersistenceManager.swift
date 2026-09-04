@@ -21,7 +21,6 @@ actor PersistenceManager {
     return base.appendingPathComponent("Forge")
   }
 
-
   /// The root this instance stores under. Tests point it at a scratch
   /// directory so a test run cannot touch the files the app is keeping for the
   /// person using it.
@@ -115,7 +114,6 @@ actor PersistenceManager {
     }
     cachedHistory = []
   }
-
 }
 
 // URL and UTType already conform to Codable via Foundation

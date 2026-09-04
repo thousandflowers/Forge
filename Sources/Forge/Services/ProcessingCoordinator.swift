@@ -4,7 +4,15 @@ import UniformTypeIdentifiers
 /// Runs conversions, decides where their output lands, and keeps every write
 /// off the file the user already has on disk.
 actor ProcessingCoordinator {
-  private let registry: ProcessorRegistry
+  /// The processors, in the order they get asked. Images first because ImageIO
+  /// reads the widest set of types; documents last because their readers are
+  /// the most permissive about what counts as text.
+  private let processors: [FileProcessor] = [
+    ImageProcessor(),
+    MediaProcessor(),
+    SimpleDocProcessor(),
+  ]
+
   private let persistence: PersistenceManager
   private var settings: AppSettings
 
@@ -12,11 +20,9 @@ actor ProcessingCoordinator {
   private var activeTasks: [UUID: Task<ProcessingHistory, Error>] = [:]
 
   init(
-    registry: ProcessorRegistry,
     settings: AppSettings,
     persistence: PersistenceManager = .shared
   ) {
-    self.registry = registry
     self.settings = settings
     self.persistence = persistence
   }
@@ -81,11 +87,6 @@ actor ProcessingCoordinator {
     return try await task.value
   }
 
-  func cancelFile(_ file: ProcessableFile) {
-    activeTasks[file.id]?.cancel()
-    activeTasks.removeValue(forKey: file.id)
-  }
-
   func cancelAll() {
     for task in activeTasks.values { task.cancel() }
     activeTasks.removeAll()
@@ -100,7 +101,7 @@ actor ProcessingCoordinator {
     destinationURL: URL?,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
-    guard let processor = await registry.processor(for: file) else {
+    guard let processor = processors.first(where: { $0.canProcess(file) }) else {
       throw ProcessingError.unreadableFormat(file.fileType)
     }
 

@@ -24,7 +24,7 @@ struct PresetEditorView: View {
     _name = State(initialValue: preset?.name ?? "")
     _description = State(initialValue: preset?.description ?? "")
     _category = State(initialValue: preset?.category ?? .image)
-    _format = State(initialValue: OutputFormat.matching(preset?.targetFormat))
+    _format = State(initialValue: OutputFormat(type: preset?.targetFormat))
     _enableResize = State(initialValue: preset?.resize != nil)
     _width = State(initialValue: preset?.resize?.width.map(String.init) ?? "")
     _height = State(initialValue: preset?.resize?.height.map(String.init) ?? "")
@@ -145,11 +145,6 @@ struct OutputFormat: Identifiable, Hashable {
   static var images: [OutputFormat] { Self.sorted(FormatCatalog.writableImageTypes) }
   static var audio: [OutputFormat] { Self.sorted(Set(FormatCatalog.writableAudioTypes.keys)) }
   static var video: [OutputFormat] { Self.sorted(FormatCatalog.writableVideoTypes) }
-
-  static func matching(_ type: UTType?) -> OutputFormat {
-    guard let type else { return .keep }
-    return OutputFormat(type: type)
-  }
 
   private static func sorted(_ types: Set<UTType>) -> [OutputFormat] {
     types

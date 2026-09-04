@@ -11,8 +11,8 @@ struct HistoryView: View {
       } else {
         List(model.history) { entry in
           HStack(spacing: 12) {
-            Image(systemName: icon(for: entry.status))
-              .foregroundStyle(color(for: entry.status))
+            Image(systemName: entry.status.systemImage)
+              .foregroundStyle(entry.status.color)
               .font(.title3)
             VStack(alignment: .leading, spacing: 2) {
               Text(entry.fileURL.lastPathComponent)
@@ -25,11 +25,11 @@ struct HistoryView: View {
               Text(String(format: "%.1fs", entry.duration))
                 .font(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
-            Text(entry.status.rawValue.capitalized)
+            Text(entry.status.displayName)
               .font(.caption)
               .padding(.horizontal, 8).padding(.vertical, 3)
-              .background(Capsule().fill(color(for: entry.status).opacity(0.15)))
-              .foregroundStyle(color(for: entry.status))
+              .background(Capsule().fill(entry.status.color.opacity(0.15)))
+              .foregroundStyle(entry.status.color)
           }
           .padding(.vertical, 2)
         }
@@ -43,21 +43,5 @@ struct HistoryView: View {
       }
     }
     .task { await model.refreshHistory() }
-  }
-
-  private func color(for status: ProcessingStatus) -> Color {
-    switch status {
-    case .completed: return .green
-    case .failed: return .red
-    case .cancelled: return .orange
-    }
-  }
-
-  private func icon(for status: ProcessingStatus) -> String {
-    switch status {
-    case .completed: return "checkmark.circle.fill"
-    case .failed: return "xmark.circle.fill"
-    case .cancelled: return "minus.circle.fill"
-    }
   }
 }

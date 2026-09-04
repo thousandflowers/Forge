@@ -15,7 +15,7 @@ Thank you for your interest in contributing to Forge! This document provides gui
 ## 🏗️ Development Setup
 
 ### Prerequisites
-- macOS 12.0+ (required for some APIs)
+- macOS 13.0 Ventura or later
 - Xcode 15+ or Swift 5.9 toolchain
 - Command Line Tools: `xcode-select --install`
 
@@ -31,8 +31,8 @@ swift build -c release
 # Run tests
 swift test
 
-# Generate sample test files
-bash Scripts/generate_samples.sh
+# Build the app bundle (plain `swift build` gives a windowless executable)
+./Scripts/build_app.sh
 ```
 
 ### Xcode Project

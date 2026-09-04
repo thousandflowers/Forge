@@ -87,13 +87,6 @@ final class MonitoredFolderWatcher {
     }
   }
 
-  func stopWatching(folder: MonitoredFolder) {
-    queue.sync {
-      guard root?.standardizedFileURL == folder.url.standardizedFileURL else { return }
-      teardown()
-    }
-  }
-
   func stop() {
     queue.sync { teardown() }
   }

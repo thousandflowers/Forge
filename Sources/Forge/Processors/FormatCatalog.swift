@@ -14,7 +14,6 @@ import UniformTypeIdentifiers
 /// `"public.wav"` resolves to nil, so every WAV was rejected) and of claiming
 /// formats the host cannot write (WebP is readable but not writable).
 enum FormatCatalog {
-
   // MARK: - Images
 
   /// Image types ImageIO can decode on this machine.

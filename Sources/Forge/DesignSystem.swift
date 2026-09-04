@@ -26,20 +26,12 @@ enum AppSection: String, CaseIterable, Identifiable {
   }
 }
 
-/// Per-file status shown in the batch table.
-enum FileStatus: String {
-  case pending = "Pending"
-  case processing = "Processing"
-  case completed = "Completed"
-  case failed = "Failed"
-  case cancelled = "Cancelled"
-
+extension ProcessingStatus {
   var color: Color {
     switch self {
-    case .pending: return .secondary
+    case .pending, .cancelled: return .secondary
     case .processing: return .orange
     case .completed: return .green
-    case .cancelled: return .secondary
     case .failed: return .red
     }
   }
@@ -53,18 +45,12 @@ enum FileStatus: String {
     case .failed: return "xmark.circle.fill"
     }
   }
-}
 
-func statusLabel(_ status: FileStatus) -> some View {
-  Label(status.rawValue, systemImage: status.systemImage)
-    .foregroundStyle(status.color)
-    .font(.callout)
-}
-
-func formatBytes(_ bytes: Int64) -> String {
-  let f = ByteCountFormatter()
-  f.countStyle = .file
-  return f.string(fromByteCount: bytes)
+  var label: some View {
+    Label(displayName, systemImage: systemImage)
+      .foregroundStyle(color)
+      .font(.callout)
+  }
 }
 
 /// Reusable empty state (a light stand-in for ContentUnavailableView, macOS 13 compatible).

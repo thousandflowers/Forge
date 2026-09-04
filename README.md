@@ -107,7 +107,6 @@ SwiftUI  ──▶  ProcessingCoordinator  ──▶  ProcessorRegistry  ──�
 swift test                         # the unit suite
 ./Scripts/build_app.sh             # build build/Forge.app
 ./Scripts/make_dmg.sh              # package it as a DMG
-bash Scripts/generate_samples.sh   # sample files for manual testing
 ```
 
 Tests build their fixtures at runtime and store everything under a scratch

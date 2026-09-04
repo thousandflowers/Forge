@@ -1,38 +1,24 @@
 import Foundation
 
 struct ProcessingHistory: Identifiable, Codable, Sendable {
-  let id: UUID
-  let fileURL: URL
-  let ruleId: UUID?
-  let timestamp: Date
-  let status: ProcessingStatus
-  let errorMessage: String?
-  let duration: TimeInterval
-  let outputURL: URL?
-
-  init(
-    id: UUID = UUID(),
-    fileURL: URL,
-    ruleId: UUID?,
-    timestamp: Date = Date(),
-    status: ProcessingStatus,
-    errorMessage: String? = nil,
-    duration: TimeInterval,
-    outputURL: URL? = nil
-  ) {
-    self.id = id
-    self.fileURL = fileURL
-    self.ruleId = ruleId
-    self.timestamp = timestamp
-    self.status = status
-    self.errorMessage = errorMessage
-    self.duration = duration
-    self.outputURL = outputURL
-  }
+  var id = UUID()
+  var fileURL: URL
+  var ruleId: UUID?
+  var timestamp = Date()
+  var status: ProcessingStatus
+  var errorMessage: String?
+  var duration: TimeInterval
+  var outputURL: URL?
 }
 
-enum ProcessingStatus: String, Codable, Sendable {
-  case completed = "completed"
-  case failed = "failed"
-  case cancelled = "cancelled"
+/// Where a file has got to. The first two are only ever shown on screen; the
+/// rest are what gets written to history.
+enum ProcessingStatus: String, Codable, Sendable, CaseIterable {
+  case pending
+  case processing
+  case completed
+  case failed
+  case cancelled
+
+  var displayName: String { rawValue.capitalized }
 }

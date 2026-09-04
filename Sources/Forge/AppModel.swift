@@ -27,7 +27,7 @@ final class AppModel: ObservableObject {
   init() {
     let loaded = AppSettings.load()
     self.settings = loaded
-    self.coordinator = ProcessingCoordinator(registry: ProcessorRegistry(), settings: loaded)
+    self.coordinator = ProcessingCoordinator(settings: loaded)
   }
 
   /// Load persisted state on launch; seed default presets on first run.
@@ -169,7 +169,7 @@ final class AppModel: ObservableObject {
   }
 
   private func stopWatcher(_ folder: MonitoredFolder) {
-    watchers[folder.id]?.stopWatching(folder: folder)
+    watchers[folder.id]?.stop()
     watchers[folder.id] = nil
   }
 
