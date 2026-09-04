@@ -13,9 +13,10 @@ import UniformTypeIdentifiers
 final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
   let name = "Document Processor"
 
-  /// PDF plus whatever AppKit's document readers accept, so the list follows
-  /// the readers that exist rather than one written out by hand.
-  private let readableTypes: [UTType] = [.pdf] + NSAttributedString.textDocumentTypes.keys
+  /// PDF plus whatever the system's document readers accept.
+  private let readableTypes: [UTType] = [.pdf]
+    + DocumentText.readable.keys
+    + [DocumentText.markdown].compactMap { $0 }
 
   private let ciContext = CIContext(options: [.cacheIntermediates: false])
 
@@ -43,7 +44,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       }
       return try renderPDF(input, to: output, operations: operations, progress: progress)
     }
-    return try await convertText(input, from: inputType, to: output, progress: progress)
+    return try await convertText(input, from: inputType, to: outputType, at: output, progress: progress)
   }
 
   // MARK: - PDF
@@ -220,34 +221,29 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
 
   // MARK: - Text
 
-  /// Read the document with AppKit and write out its plain text. HTML and RTF
-  /// used to be copied byte for byte, so "convert to text" returned markup.
+  /// Read the document, then write it out in the format that was asked for.
+  ///
+  /// HTML, RTF, DOCX, Markdown and plain text all go through the same pair of
+  /// system readers and writers, so any of them converts to any other that can
+  /// be written - PDF included.
   @MainActor
   private func convertText(
     _ input: URL,
     from inputType: UTType,
-    to output: URL,
+    to outputType: UTType,
+    at output: URL,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
     let start = Date()
     progress(0.2)
 
-    let text: String
-    if inputType.conforms(to: .plainText) {
-      text = try String(contentsOf: input, encoding: .utf8)
-    } else {
-      guard let attributed = try? NSAttributedString(
-        url: input,
-        options: [.documentType: Self.documentType(for: inputType)],
-        documentAttributes: nil
-      ) else {
-        throw ProcessingError.conversionFailed(reason: "Cannot read \(input.lastPathComponent)")
-      }
-      text = attributed.string
+    guard DocumentText.canWrite(outputType) else {
+      throw ProcessingError.unsupportedConversion(from: inputType, to: outputType)
     }
 
-    progress(0.8)
-    try text.write(to: output, atomically: true, encoding: .utf8)
+    let document = try DocumentText.read(input, as: inputType)
+    progress(0.7)
+    try DocumentText.write(document, to: output, as: outputType)
     progress(1.0)
 
     let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
@@ -259,9 +255,6 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     )
   }
 
-  private static func documentType(for type: UTType) -> NSAttributedString.DocumentType {
-    NSAttributedString.textDocumentTypes.first { type.conforms(to: $0.key) }?.value ?? .plain
-  }
 
   // MARK: - Helpers
 
@@ -308,21 +301,3 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
   }
 }
 
-private extension NSAttributedString {
-  /// Text document types AppKit can read, paired with the UTType that names
-  /// them, so the supported list follows AppKit rather than a hand-written one.
-  static let textDocumentTypes: [UTType: NSAttributedString.DocumentType] = {
-    let candidates: [(UTType?, NSAttributedString.DocumentType)] = [
-      (.plainText, .plain),
-      (.html, .html),
-      (.rtf, .rtf),
-      (UTType("public.rtfd"), .rtfd),
-      (UTType("org.oasis-open.opendocument.text"), .officeOpenXML),
-      (UTType("org.openxmlformats.wordprocessingml.document"), .officeOpenXML),
-    ]
-    return candidates.reduce(into: [:]) { result, candidate in
-      guard let type = candidate.0 else { return }
-      result[type] = candidate.1
-    }
-  }()
-}

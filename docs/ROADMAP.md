@@ -38,8 +38,9 @@ Native, no new dependencies, in rough order of value.
       text and reads only the pages that carry none.
 - [x] **Video ↔ GIF** - both directions, plus multi-frame reading throughout, so
       an animation stays an animation and a still format gets one file per frame.
-- [ ] **Documents** - DOCX/RTF/ODT/HTML → PDF, and Markdown in both directions,
-      through `NSAttributedString` and PDFKit.
+- [x] **Documents** - HTML, RTF, DOCX, ODT, Markdown and plain text convert to
+      each other and to PDF, paginated with CoreText. Markdown is an input only:
+      Foundation parses it and nothing on the system writes it back.
 - [ ] **Image ↔ PDF** - both directions; the write half already exists.
 - [ ] **Codec choice** - ProRes and HEVC for video, and the container/codec split
       described below for audio.

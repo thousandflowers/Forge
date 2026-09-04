@@ -56,6 +56,9 @@ struct PresetEditorView: View {
             Section("Video") {
               ForEach(OutputFormat.video) { Text($0.label).tag($0) }
             }
+            Section("Documents") {
+              ForEach(OutputFormat.documents) { Text($0.label).tag($0) }
+            }
           }
           Toggle("Resize", isOn: $enableResize)
           if enableResize {
@@ -145,6 +148,9 @@ struct OutputFormat: Identifiable, Hashable {
   static var images: [OutputFormat] { Self.sorted(FormatCatalog.writableImageTypes) }
   static var audio: [OutputFormat] { Self.sorted(Set(FormatCatalog.writableAudioTypes.keys)) }
   static var video: [OutputFormat] { Self.sorted(FormatCatalog.writableVideoTypes) }
+  static var documents: [OutputFormat] {
+    Self.sorted(Set(DocumentText.writable.keys).union([.pdf]))
+  }
 
   private static func sorted(_ types: Set<UTType>) -> [OutputFormat] {
     types
