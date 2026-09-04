@@ -158,6 +158,12 @@ extension FilterType: ExpressibleByArgument {}
 @available(macOS 13, *)
 enum CLI {
   static func run(_ arguments: [String]) async {
+    // `forge watch` runs for hours and its output is usually redirected to a
+    // log, where a block-buffered stdout means the file stays empty until the
+    // buffer fills or the process exits - and a watcher killed with a signal
+    // never gets that far. A terminal line-buffers; a log should too.
+    setvbuf(stdout, nil, _IOLBF, 0)
+
     do {
       var command = try ForgeCommand.parseAsRoot(arguments)
       if var asynchronous = command as? AsyncParsableCommand {
