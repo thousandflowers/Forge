@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The app's top-level navigation destinations (sidebar).
 enum AppSection: String, CaseIterable, Identifiable {
-  case process, presets, folders, history, settings
+  case process, presets, folders, capabilities, history, settings
   var id: String { rawValue }
 
   var title: String {
@@ -10,6 +10,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case .process: return "Convert"
     case .presets: return "Presets"
     case .folders: return "Folders"
+    case .capabilities: return "Capabilities"
     case .history: return "History"
     case .settings: return "Settings"
     }
@@ -20,6 +21,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case .process: return "arrow.triangle.2.circlepath"
     case .presets: return "slider.horizontal.3"
     case .folders: return "folder"
+    case .capabilities: return "square.grid.2x2"
     case .history: return "clock.arrow.circlepath"
     case .settings: return "gearshape"
     }

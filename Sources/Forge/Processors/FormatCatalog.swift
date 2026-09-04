@@ -3,6 +3,7 @@ import AVFoundation
 import AudioToolbox
 import CoreGraphics
 import ImageIO
+import ModelIO
 import UniformTypeIdentifiers
 
 /// Single source of truth for the formats Forge can actually handle.
@@ -44,6 +45,13 @@ enum FormatCatalog {
   /// declared here — but each one is verified against the running system before
   /// it is offered, so a host that cannot encode FLAC simply never lists it.
   static let writableAudioTypes: [UTType: AudioFormatID] = Self.probeAudioTypes()
+
+  /// 3D model formats, asked of ModelIO. Notably absent: glTF, GLB and FBX.
+  static let readableModelTypes: Set<UTType> = Self.modelTypes { MDLAsset.canImportFileExtension($0) }
+  static let writableModelTypes: Set<UTType> = Self.modelTypes { MDLAsset.canExportFileExtension($0) }
+
+  static func isReadableModel(_ type: UTType) -> Bool { readableModelTypes.contains(type) }
+  static func isWritableModel(_ type: UTType) -> Bool { writableModelTypes.contains(type) }
 
   // MARK: - Queries
 
@@ -140,6 +148,13 @@ enum FormatCatalog {
       settings[AVLinearPCMIsBigEndianKey] = usesBigEndianPCM(type)
     }
     return (try? AVAudioFile(forWriting: probe, settings: settings)) != nil
+  }
+
+  /// ModelIO answers per extension, so the candidates are extensions and the
+  /// answer decides which survive.
+  private static func modelTypes(_ supported: (String) -> Bool) -> Set<UTType> {
+    let candidates = ["obj", "stl", "ply", "abc", "usd", "usda", "usdc", "usdz"]
+    return Set(candidates.filter(supported).compactMap { UTType(filenameExtension: $0) })
   }
 
   /// The movie containers AVFoundation exports to.

@@ -45,8 +45,6 @@ final class AppModel: ObservableObject {
       report(error, doing: "loading your presets and folders")
     }
 
-    warnAboutUnwritablePresets()
-
     await refreshHistory()
     for folder in folders where folder.isActive { startWatcher(folder) }
   }
@@ -109,6 +107,18 @@ final class AppModel: ObservableObject {
     for index in offsets { stopWatcher(folders[index]) }
     folders.remove(atOffsets: offsets)
     persistFolders()
+  }
+
+  /// Whether a preset targets something this machine cannot write - an
+  /// "Audio to MP3" preset saved by an older version, for one, since
+  /// AVFoundation has no MP3 encoder.
+  func canDeliver(_ preset: RulePreset) -> Bool {
+    guard let format = preset.targetFormat else { return true }
+    return FormatCatalog.isWritableImage(format)
+      || FormatCatalog.audioFormatID(for: format) != nil
+      || FormatCatalog.isWritableVideo(format)
+      || FormatCatalog.isWritableModel(format)
+      || DocumentText.canWrite(format)
   }
 
   func presetName(for id: UUID) -> String {
@@ -211,24 +221,6 @@ final class AppModel: ObservableObject {
     produced.insert(url.standardizedFileURL.path)
   }
 
-  /// Presets saved by an older version can target a format this machine cannot
-  /// write - an "Audio to MP3" preset, for one, since AVFoundation has no MP3
-  /// encoder. Saying so once beats letting every conversion fail.
-  private func warnAboutUnwritablePresets() {
-    let broken = presets.filter { preset in
-      guard let format = preset.targetFormat else { return false }
-      return !FormatCatalog.isWritableImage(format)
-        && FormatCatalog.audioFormatID(for: format) == nil
-        && !FormatCatalog.isWritableVideo(format)
-    }
-    // Never speak over a real failure: this is advice, not an error.
-    guard !broken.isEmpty, lastError == nil else { return }
-
-    let names = broken.map { "“\($0.name)”" }.joined(separator: ", ")
-    lastError = broken.count == 1
-      ? "The preset \(names) targets a format macOS cannot write. Edit or delete it in Presets."
-      : "These presets target formats macOS cannot write: \(names). Edit or delete them in Presets."
-  }
 
   // MARK: - Errors
 

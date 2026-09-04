@@ -27,6 +27,7 @@ supports, so they are live now and simply were not advertised.
 | **DOCX, RTF, ODT** | read, through AppKit's document readers |
 | **FLAC, CAF, AIFF, WAV, M4A** | read and write |
 | **Command line** | `forge`, sharing the engine and the presets with the app |
+| **3D models** | OBJ, STL, PLY, ABC and USD read and written, USDZ read, through ModelIO |
 | **Hot folders** | watched folders, with a guard against converting their own output |
 
 ## Planned
@@ -64,8 +65,8 @@ Native, no new dependencies, in rough order of value.
 
 ### Interface
 
-- [ ] **In-app format overview** - the app knows exactly what it can read and
-      write, and only the command line says so today (`forge formats`).
+- [x] **In-app format overview** - the Capabilities screen, computed from the
+      frameworks at run time, so it describes the machine it runs on.
 - [ ] **Quality and format controls in the convert screen** - currently they
       live only inside a preset.
 - [ ] **Estimated output size and a summary before converting** - worth having
@@ -142,8 +143,8 @@ installed.
 - **SubRip, SubViewer, MicroDVD** - no system parser for standalone subtitle
   files. Hand-writing one is possible but it is a parser to maintain, not a
   framework call.
-- **glTF, GLB, FBX** - ModelIO imports OBJ, STL, PLY, ABC and USDZ, and exports
-  the first four. These are not among them.
+- **glTF, GLB, FBX** - ModelIO reads and writes OBJ, STL, PLY, ABC and USD, and
+  reads USDZ. These are not among them, and the Capabilities screen says so.
 
 ### Vision does not have the language
 

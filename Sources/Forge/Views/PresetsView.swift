@@ -14,7 +14,7 @@ struct PresetsView: View {
         ScrollView {
           LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 16)], spacing: 16) {
             ForEach(model.presets) { preset in
-              PresetCard(preset: preset)
+              PresetCard(preset: preset, deliverable: model.canDeliver(preset))
                 .onTapGesture { editorItem = EditorItem(preset: preset) }
                 .contextMenu {
                   Button("Edit") { editorItem = EditorItem(preset: preset) }
@@ -47,6 +47,8 @@ struct PresetsView: View {
 
 struct PresetCard: View {
   let preset: RulePreset
+  /// False when the target format cannot be written on this Mac.
+  var deliverable = true
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -61,7 +63,14 @@ struct PresetCard: View {
           .padding(.horizontal, 8).padding(.vertical, 2)
           .background(Capsule().fill(Color.secondary.opacity(0.12)))
       }
-      Text(preset.name).font(.headline).lineLimit(1)
+      HStack(spacing: 6) {
+        Text(preset.name).font(.headline).lineLimit(1)
+        if !deliverable {
+          Image(systemName: "exclamationmark.triangle.fill")
+            .foregroundStyle(.orange)
+            .help("This Mac cannot write \(preset.targetFormat?.preferredFilenameExtension?.uppercased() ?? "that format"). Edit or delete this preset.")
+        }
+      }
       Text(preset.description)
         .font(.callout).foregroundStyle(.secondary).lineLimit(2)
         .frame(maxWidth: .infinity, alignment: .leading)

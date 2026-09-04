@@ -11,6 +11,7 @@ actor ProcessingCoordinator {
     ImageProcessor(),
     MediaProcessor(),
     SimpleDocProcessor(),
+    ModelProcessor(),
   ]
 
   private let persistence: PersistenceManager
