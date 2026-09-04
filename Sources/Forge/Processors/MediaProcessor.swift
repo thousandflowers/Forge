@@ -40,6 +40,13 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       )
     }
 
+    // Media asked for text is transcribed, whether the words are in a
+    // recording or in the soundtrack of a video.
+    let wanted = Self.outputType(for: output, operations: operations, fallback: .mpeg4Movie)
+    if wanted.conforms(to: .plainText), !audioTracks.isEmpty {
+      return try await transcribe(input, to: output, operations: operations, start: start, progress: progress)
+    }
+
     if videoTracks.isEmpty {
       // Audio asked for a movie container is wrapped rather than converted:
       // the export writes the track into the container as it stands.
@@ -61,6 +68,35 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     }
 
     return try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress)
+  }
+
+  // MARK: - Words out of a recording
+
+  private func transcribe(
+    _ input: URL,
+    to output: URL,
+    operations: [Operation],
+    start: Date,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> ProcessingResult {
+    // The recognition language doubles as the transcription one: both answer
+    // "which language is this in".
+    let locale = operations.compactMap { operation -> String? in
+      guard case .recognizeText(let languages) = operation else { return nil }
+      return languages.first
+    }.first
+
+    let text = try await Transcription.text(of: input, locale: locale, progress: progress)
+    try text.write(to: output, atomically: true, encoding: .utf8)
+    progress(1.0)
+
+    let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
+    return ProcessingResult(
+      outputURL: output,
+      outputSize: attributes[.size] as? Int64 ?? 0,
+      outputDimensions: nil,
+      duration: Date().timeIntervalSince(start)
+    )
   }
 
   // MARK: - Frames out of a video

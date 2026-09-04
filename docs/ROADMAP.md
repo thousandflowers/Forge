@@ -65,9 +65,8 @@ Native, no new dependencies, in rough order of value.
 - [ ] **Homebrew cask** - a cask, not a formula: Forge ships an app bundle.
 - [x] **Text to speech** - any document becomes spoken audio, with the voices
       already installed.
-- [ ] **Audio transcription** - the Speech framework covers 63 locales and runs
-      on device for the common ones, so a recording becomes text or subtitles
-      without anything leaving the Mac.
+- [x] **Audio transcription** - a recording, or a video's soundtrack, becomes
+      text on device. Permission is asked once; nothing is uploaded.
 - [ ] **Shortcuts integration**, **completion notifications**, **preset import/export**.
 
 ### Interface

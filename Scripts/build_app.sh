@@ -49,6 +49,8 @@ cat > "$CONTENTS/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Forge uses speech recognition on this Mac to turn recordings into text. Nothing is uploaded.</string>
   $ICON_ENTRY
 </dict>
 </plist>

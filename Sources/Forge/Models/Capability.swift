@@ -127,6 +127,13 @@ enum Capabilities {
         )
       ),
       Capability(
+        id: "transcription",
+        title: "Transcription",
+        summary: "Turn a recording, or a video's soundtrack, into text on device.",
+        symbol: "text.bubble",
+        status: .available(detail: "\(Transcription.supportedLocales.count) locales, permission asked once")
+      ),
+      Capability(
         id: "models",
         title: "3D models",
         summary: "Convert between the mesh formats ModelIO handles.",
@@ -141,13 +148,7 @@ enum Capabilities {
   private static var notYetBuilt: [Capability] {
     [
 
-      Capability(
-        id: "transcription",
-        title: "Transcription",
-        summary: "Turn a recording into text or subtitles, on device.",
-        symbol: "text.bubble",
-        status: .planned
-      ),
+
       Capability(
         id: "subtitles",
         title: "Subtitles",
