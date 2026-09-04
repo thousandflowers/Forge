@@ -22,6 +22,11 @@ struct PresetsView: View {
                   Button("Edit") { editorItem = EditorItem(preset: preset) }
                   Button("Duplicate") { model.duplicatePreset(preset) }
                   Divider()
+                  Button("Move Up") { model.movePreset(preset, by: -1) }
+                    .disabled(model.presets.first?.id == preset.id)
+                  Button("Move Down") { model.movePreset(preset, by: 1) }
+                    .disabled(model.presets.last?.id == preset.id)
+                  Divider()
                   Button("Delete", role: .destructive) { model.deletePreset(preset) }
                 }
             }

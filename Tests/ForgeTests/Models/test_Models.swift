@@ -621,3 +621,63 @@ final class PresetAdjustmentTests: BaseTestCase {
     XCTAssertNil(preset.removing("quality").quality)
   }
 }
+
+/// The order presets appear in, which is the order somebody put them in.
+final class PresetOrderTests: BaseTestCase {
+
+  private func presets(_ names: [String]) -> [RulePreset] {
+    names.enumerated().map { index, name in
+      RulePreset(name: name, description: "", category: .image, position: index)
+    }
+  }
+
+  func test_positionDecidesTheOrder() {
+    let out = AppModel.ordered([
+      RulePreset(name: "Zebra", description: "", category: .image, position: 0),
+      RulePreset(name: "Apple", description: "", category: .image, position: 1),
+    ])
+    XCTAssertEqual(out.map(\.name), ["Zebra", "Apple"], "position beats the alphabet")
+  }
+
+  /// Until somebody moves something, every preset shares position zero, and
+  /// the alphabet is the sensible tie-break.
+  func test_namesBreakTheTie() {
+    let out = AppModel.ordered([
+      RulePreset(name: "Zebra", description: "", category: .image),
+      RulePreset(name: "Apple", description: "", category: .image),
+    ])
+    XCTAssertEqual(out.map(\.name), ["Apple", "Zebra"])
+  }
+
+  @MainActor
+  func test_movingRewritesEveryPosition() {
+    let model = AppModel()
+    model.presets = presets(["One", "Two", "Three"])
+
+    model.movePreset(model.presets[2], by: -1)
+
+    XCTAssertEqual(model.presets.map(\.name), ["One", "Three", "Two"])
+    XCTAssertEqual(model.presets.map(\.position), [0, 1, 2], "positions must stay dense")
+  }
+
+  @MainActor
+  func test_movingPastTheEndDoesNothing() {
+    let model = AppModel()
+    model.presets = presets(["One", "Two"])
+
+    model.movePreset(model.presets[0], by: -1)
+    model.movePreset(model.presets[1], by: 1)
+
+    XCTAssertEqual(model.presets.map(\.name), ["One", "Two"])
+  }
+
+  /// A preset saved before order existed has no position, and must not be
+  /// stranded by one appearing.
+  func test_aPresetWithoutAPositionStillDecodes() throws {
+    let json = """
+    { "name": "Old", "category": "image", "actions": [] }
+    """
+    let preset = try JSONDecoder().decode(RulePreset.self, from: Data(json.utf8))
+    XCTAssertEqual(preset.position, 0)
+  }
+}

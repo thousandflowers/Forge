@@ -35,10 +35,14 @@ final class AppModel: ObservableObject {
     do {
       let loadedPresets = try await persistence.loadAllPresets()
       if loadedPresets.isEmpty {
-        presets = Self.defaultPresets
+        presets = Self.defaultPresets.enumerated().map { index, preset in
+          var seeded = preset
+          seeded.position = index
+          return seeded
+        }
         for preset in presets { try await persistence.savePreset(preset) }
       } else {
-        presets = loadedPresets.sorted { $0.name < $1.name }
+        presets = Self.ordered(loadedPresets)
       }
       folders = try await persistence.loadMonitoredFolders()
     } catch {
@@ -57,8 +61,30 @@ final class AppModel: ObservableObject {
     } else {
       presets.append(preset)
     }
-    presets.sort { $0.name < $1.name }
+    presets = Self.ordered(presets)
     persist({ try await $0.savePreset(preset) }, doing: "saving “\(preset.name)”")
+  }
+
+  /// Move a preset one place, and write the new order down.
+  func movePreset(_ preset: RulePreset, by offset: Int) {
+    guard let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
+    let target = index + offset
+    guard presets.indices.contains(target) else { return }
+
+    presets.swapAt(index, target)
+    for (position, var preset) in presets.enumerated() {
+      preset.position = position
+      presets[position] = preset
+      persist({ [preset] in try await $0.savePreset(preset) }, doing: "reordering your presets")
+    }
+  }
+
+  /// By position, then by name for the ones that share one - which is every
+  /// preset until somebody moves something.
+  nonisolated static func ordered(_ presets: [RulePreset]) -> [RulePreset] {
+    presets.sorted {
+      $0.position == $1.position ? $0.name < $1.name : $0.position < $1.position
+    }
   }
 
   func deletePreset(_ preset: RulePreset) {
@@ -152,6 +178,37 @@ final class AppModel: ObservableObject {
   private func persistFolders() {
     let snapshot = folders
     persist({ try await $0.saveMonitoredFolders(snapshot) }, doing: "saving your monitored folders")
+  }
+
+  /// Run a conversion started from the menu bar, where there is no progress to
+  /// show, so the notification is the whole report.
+  func convertFromMenuBar(_ urls: [URL], with preset: RulePreset, into folder: URL) {
+    let files = urls.compactMap { try? ProcessableFile(url: $0) }
+    guard !files.isEmpty else {
+      lastError = "None of those files is one Forge can open."
+      return
+    }
+
+    Task { [weak self] in
+      guard let self else { return }
+      let limit = await self.coordinator.maxConcurrentNative
+      let report = await Batch.run(
+        files,
+        preset: preset,
+        mode: .copyTo,
+        destination: folder,
+        limit: limit,
+        coordinator: self.coordinator
+      ) { event in
+        guard case .finished(_, _, let output, _) = event, let output else { return }
+        Task { @MainActor in self.remember(output) }
+      }
+
+      await self.refreshHistory()
+      if self.settings.notifyWhenFinished {
+        await Notifier.batchFinished(converted: report.converted, failed: report.failed)
+      }
+    }
   }
 
   // MARK: - History

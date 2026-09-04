@@ -14,6 +14,10 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   var description: String
   var category: PresetCategory
 
+  /// Where this sits in the list. Presets used to be sorted by name, which is
+  /// tidy and not the order anyone works in.
+  var position: Int = 0
+
   /// The actions, in the order they run.
   var actions: [Operation] = []
 
@@ -22,12 +26,14 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
     name: String,
     description: String,
     category: PresetCategory,
+    position: Int = 0,
     actions: [Operation] = []
   ) {
     self.id = id
     self.name = name
     self.description = description
     self.category = category
+    self.position = position
     self.actions = actions
   }
 
@@ -135,7 +141,7 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
 
 extension RulePreset {
   private enum CodingKeys: String, CodingKey {
-    case id, name, description, category, actions
+    case id, name, description, category, position, actions
     // The shape presets were saved in before they became a chain.
     case targetFormat, resize, quality, filters, ocrLanguages
   }
@@ -152,6 +158,7 @@ extension RulePreset {
     name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Untitled"
     description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
     category = try container.decodeIfPresent(PresetCategory.self, forKey: .category) ?? .custom
+    position = try container.decodeIfPresent(Int.self, forKey: .position) ?? 0
 
     if let actions = try container.decodeIfPresent([Operation].self, forKey: .actions) {
       self.actions = actions
@@ -173,6 +180,7 @@ extension RulePreset {
     try container.encode(name, forKey: .name)
     try container.encode(description, forKey: .description)
     try container.encode(category, forKey: .category)
+    try container.encode(position, forKey: .position)
     try container.encode(actions, forKey: .actions)
   }
 }

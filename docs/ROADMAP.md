@@ -88,15 +88,17 @@ Native, no new dependencies, in rough order of value.
       picture to three sizes used to give `photo.jpg`, `photo 2.jpg` and
       `photo 3.jpg`. Not applied when converting in place, where the file keeps
       the name it has.
-- [ ] **Reordering presets** - drag, or move up and down.
+- [x] **Reordering presets** - Move Up and Move Down. Presets were sorted by
+      name, which is tidy and not the order anyone works in.
 - [x] **A lower default image quality** - 80 rather than 85, measured: the step
       from 85 to 80 takes about a third off the file, and below 80 the curve
       flattens out.
 - [ ] **Localization** - the app is English-only.
 - [ ] **Finder action** - convert from the context menu, through a Finder
       extension. Needs a signed app extension, so it waits on notarization.
-- [ ] **Menu bar item** - Forge is a window app today. A menu bar presence is
-      additive, not a replacement.
+- [x] **Menu bar item** - pick a preset, pick files, pick a folder. A
+      conversion is usually a small errand and going to the window for it is
+      more ceremony than the errand deserves.
 
 ## Not planned, and why
 
