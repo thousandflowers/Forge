@@ -17,8 +17,20 @@ import UniformTypeIdentifiers
 enum FormatCatalog {
   // MARK: - Images
 
-  /// Image types ImageIO can decode on this machine.
+  /// Image types this machine can decode: what ImageIO reads, plus the vectors
+  /// QuickLook draws.
   static let readableImageTypes: Set<UTType> = Self.types(CGImageSourceCopyTypeIdentifiers())
+    .union(rasterizableVectorTypes)
+
+  /// Vectors ImageIO cannot read and QuickLook can draw - on the machine this
+  /// is running on, which is not every machine: the SVG generator answers on
+  /// macOS 26 and hands back a square that is not the artwork on macOS 14.
+  /// `VectorProcessor` settles it by drawing one and looking at it.
+  static let rasterizableVectorTypes: Set<UTType> = VectorProcessor.canDraw ? [.svg] : []
+
+  static func isRasterizableVector(_ type: UTType) -> Bool {
+    rasterizableVectorTypes.contains { type == $0 || type.conforms(to: $0) }
+  }
 
   /// Image types ImageIO can encode on this machine.
   ///
