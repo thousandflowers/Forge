@@ -494,6 +494,32 @@ final class IconTests: BaseTestCase {
     XCTAssertGreaterThan(CGImageSourceGetCount(icon), 1, "one picture in an .ico is not an icon")
   }
 
+  /// The encoder refuses anything that is not square, and most pictures are
+  /// not. A wide source used to fail outright.
+  func test_aWideSourceStillMakesAnIcon() async throws {
+    let source = try Fixture.image(at: path("wide.png"), width: 800, height: 600)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: try XCTUnwrap(UTType(filenameExtension: "ico")), category: .image),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+    let icon = try XCTUnwrap(CGImageSourceCreateWithURL(try XCTUnwrap(entry.outputURL) as CFURL, nil))
+    XCTAssertGreaterThan(CGImageSourceGetCount(icon), 1)
+
+    for index in 0..<CGImageSourceGetCount(icon) {
+      let properties = CGImageSourceCopyPropertiesAtIndex(icon, index, nil) as? [CFString: Any]
+      let width = properties?[kCGImagePropertyPixelWidth] as? Int ?? 0
+      let height = properties?[kCGImagePropertyPixelHeight] as? Int ?? 0
+      XCTAssertEqual(width, height, "an icon image has to be square")
+      XCTAssertLessThanOrEqual(width, 256, "the encoder refuses anything larger")
+    }
+  }
+
   /// A small source must not be enlarged to fill the ladder.
   func test_aSmallSourceIsNotBlownUp() async throws {
     let source = try Fixture.image(at: path("tiny.png"), width: 24, height: 24)

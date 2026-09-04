@@ -22,31 +22,48 @@ enum ImageFrames {
   /// The resolutions an icon file is expected to carry.
   static let iconSizes = [16, 32, 48, 64, 128, 256]
 
-  /// Scale one image down to the icon sizes it can fill without being enlarged.
+  /// Scale one image down to the icon sizes it can fill.
+  ///
+  /// The ICO encoder accepts square images of at most 256 points and refuses
+  /// anything else, so a wide photograph is placed on a square, transparent
+  /// canvas rather than stretched or cropped: an icon should still show the
+  /// whole picture.
   static func iconLadder(from image: CGImage) -> [ImageFrame] {
     let longest = max(image.width, image.height)
     let sizes = iconSizes.filter { $0 <= longest }
-    guard !sizes.isEmpty else { return [ImageFrame(image: image, duration: 0)] }
+    let ladder = sizes.isEmpty ? [min(longest, iconSizes[0])] : sizes
 
-    return sizes.reversed().compactMap { side in
-      let scale = Double(side) / Double(longest)
-      let width = max(1, Int((Double(image.width) * scale).rounded()))
-      let height = max(1, Int((Double(image.height) * scale).rounded()))
-
-      guard let context = CGContext(
-        data: nil,
-        width: width,
-        height: height,
-        bitsPerComponent: 8,
-        bytesPerRow: 0,
-        space: CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-      ) else { return nil }
-
-      context.interpolationQuality = .high
-      context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-      return context.makeImage().map { ImageFrame(image: $0, duration: 0) }
+    return ladder.reversed().compactMap { side in
+      square(image, side: side).map { ImageFrame(image: $0, duration: 0) }
     }
+  }
+
+  /// The image centred on a transparent square of `side` points.
+  private static func square(_ image: CGImage, side: Int) -> CGImage? {
+    guard let context = CGContext(
+      data: nil,
+      width: side,
+      height: side,
+      bitsPerComponent: 8,
+      bytesPerRow: 0,
+      space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else { return nil }
+
+    context.interpolationQuality = .high
+    let longest = max(image.width, image.height)
+    guard longest > 0 else { return nil }
+
+    let scale = Double(side) / Double(longest)
+    let width = max(1, Double(image.width) * scale)
+    let height = max(1, Double(image.height) * scale)
+    context.draw(image, in: CGRect(
+      x: (Double(side) - width) / 2,
+      y: (Double(side) - height) / 2,
+      width: width,
+      height: height
+    ))
+    return context.makeImage()
   }
 
   /// Read every frame, with the delay each one carries.
