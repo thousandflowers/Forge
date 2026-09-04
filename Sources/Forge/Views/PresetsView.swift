@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 struct PresetsView: View {
   @EnvironmentObject private var model: AppModel
@@ -30,13 +32,36 @@ struct PresetsView: View {
     }
     .navigationTitle("Presets")
     .toolbar {
-      ToolbarItem(placement: .primaryAction) {
+      ToolbarItemGroup(placement: .primaryAction) {
+        Menu {
+          Button("Import Presets…") { importPresets() }
+          Button("Export Presets…") { exportPresets() }
+            .disabled(model.presets.isEmpty)
+        } label: {
+          Label("Share", systemImage: "square.and.arrow.up.on.square")
+        }
         Button { editorItem = EditorItem(preset: nil) } label: { Label("New Preset", systemImage: "plus") }
       }
     }
     .sheet(item: $editorItem) { item in
       PresetEditorView(preset: item.preset) { model.savePreset($0) }
     }
+  }
+
+  private func exportPresets() {
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "Forge Presets.json"
+    panel.allowedContentTypes = [.json]
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    model.exportPresets(to: url)
+  }
+
+  private func importPresets() {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [.json]
+    panel.allowsMultipleSelection = false
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    model.importPresets(from: url)
   }
 
   struct EditorItem: Identifiable {

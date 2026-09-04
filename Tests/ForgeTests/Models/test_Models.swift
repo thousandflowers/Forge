@@ -514,3 +514,43 @@ final class IconTests: BaseTestCase {
     }
   }
 }
+
+/// Presets travel between machines.
+final class PresetSharingTests: BaseTestCase {
+
+  func test_presetsSurviveARoundTripThroughAFile() async throws {
+    let presets = [
+      RulePreset(name: "One", description: "", category: .image,
+                 actions: [.convertFormat(to: .jpeg), .quality(level: 64)]),
+      RulePreset(name: "Two", description: "", category: .audio,
+                 actions: [.encode(codec: .aac)]),
+    ]
+    let file = path("presets.json")
+
+    try await store.export(presets, to: file)
+    let read = try await store.importPresets(from: file)
+
+    XCTAssertEqual(read, presets)
+  }
+
+  /// People share one preset as often as a set, so both shapes are accepted.
+  func test_asinglePresetInAFileIsAccepted() async throws {
+    let file = path("one.json")
+    let json = """
+    { "name": "Solo", "description": "", "category": "image",
+      "actions": [ { "kind": "quality", "level": 50 } ] }
+    """
+    try json.write(to: file, atomically: true, encoding: .utf8)
+
+    let read = try await store.importPresets(from: file)
+    XCTAssertEqual(read.count, 1)
+    XCTAssertEqual(read.first?.name, "Solo")
+    XCTAssertEqual(read.first?.quality, 50)
+  }
+
+  func test_theFinishedMessageCountsBoth() {
+    XCTAssertEqual(Notifier.summary(converted: 1, failed: 0), "1 file converted.")
+    XCTAssertEqual(Notifier.summary(converted: 4, failed: 0), "4 files converted.")
+    XCTAssertEqual(Notifier.summary(converted: 3, failed: 1), "3 files converted, 1 failed.")
+  }
+}

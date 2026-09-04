@@ -233,6 +233,14 @@ final class BatchViewModel: ObservableObject {
     }
 
     await model.refreshHistory()
+
+    if model.settings.notifyWhenFinished, !cancellation.isSet {
+      let finished = statusMap.values
+      await Notifier.batchFinished(
+        converted: finished.filter { $0 == .completed }.count,
+        failed: finished.filter { $0 == .failed }.count
+      )
+    }
   }
 
   private func apply(_ event: Batch.Event, of total: Int, in model: AppModel) {

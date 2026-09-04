@@ -72,6 +72,21 @@ actor PersistenceManager {
     try fileManager.removeItem(at: fileURL)
   }
 
+  /// Write presets to a file the user chose, for sharing or keeping.
+  func export(_ presets: [RulePreset], to url: URL) async throws {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    try encoder.encode(presets).write(to: url, options: .atomic)
+  }
+
+  /// Read presets from a file. Accepts one preset or a list of them, since
+  /// people share both.
+  func importPresets(from url: URL) async throws -> [RulePreset] {
+    let data = try Data(contentsOf: url)
+    if let many = try? JSONDecoder().decode([RulePreset].self, from: data) { return many }
+    return [try JSONDecoder().decode(RulePreset.self, from: data)]
+  }
+
   // MARK: - Monitored Folders
 
   func saveMonitoredFolders(_ folders: [MonitoredFolder]) async throws {

@@ -80,6 +80,30 @@ final class AppModel: ObservableObject {
     )
   }
 
+  /// Write every preset to a file, so a set can be kept or handed on.
+  func exportPresets(to url: URL) {
+    let snapshot = presets
+    persist({ try await $0.export(snapshot, to: url) }, doing: "exporting your presets")
+  }
+
+  /// Read presets from a file, giving each a new identity so an import adds
+  /// rather than silently replacing what is already there.
+  func importPresets(from url: URL) {
+    Task { [weak self] in
+      do {
+        let imported = try await PersistenceManager.shared.importPresets(from: url)
+        guard let self else { return }
+        for preset in imported {
+          var copy = preset
+          copy.id = UUID()
+          self.savePreset(copy)
+        }
+      } catch {
+        self?.report(error, doing: "importing presets")
+      }
+    }
+  }
+
   // MARK: - Folders
 
   func addFolder(url: URL, presetID: UUID, mode: DestinationMode, destination: URL?, includeSubfolders: Bool) {
@@ -238,7 +262,7 @@ final class AppModel: ObservableObject {
     }
   }
 
-  private func report(_ error: Error, doing action: String) {
+  func report(_ error: Error, doing action: String) {
     lastError = "Something went wrong \(action): \(error.localizedDescription)"
   }
 

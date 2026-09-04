@@ -142,7 +142,7 @@ enum ActionKind: String, CaseIterable, Identifiable {
     switch self {
     case .convertFormat: return .convertFormat(to: .jpeg)
     case .resize: return .resize(width: 1280, height: 720, fitMode: .proportional)
-    case .quality: return .quality(level: 85)
+    case .quality: return .quality(level: ImageProcessor.defaultQuality)
     case .filter: return .filter(type: .grayscale)
     case .recognizeText: return .recognizeText(languages: [])
     case .encode: return .encode(codec: Codec.available.first ?? .h264)

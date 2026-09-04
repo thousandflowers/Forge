@@ -321,7 +321,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       guard case .quality(let level) = operation else { return nil }
       return level
     }.first
-    return Float(level ?? 85) / 100.0
+    return Float(level ?? ImageProcessor.defaultQuality) / 100.0
   }
 
   private static func apply(_ operation: Operation, to image: CIImage) -> CIImage {

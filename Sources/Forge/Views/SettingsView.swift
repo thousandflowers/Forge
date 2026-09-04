@@ -16,6 +16,9 @@ struct SettingsView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
+      Section("When a batch finishes") {
+        Toggle("Notify me", isOn: $model.settings.notifyWhenFinished)
+      }
       Section("About") {
         LabeledContent("Version", value: Bundle.main.shortVersion)
         LabeledContent("Frameworks", value: "Core Image · AVFoundation · PDFKit")

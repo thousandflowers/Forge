@@ -183,7 +183,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   ) throws -> [URL] {
     var options: [CFString: Any] = [:]
     if type.conforms(to: .jpeg) || type.conforms(to: .heic) {
-      let level = operations.compactMap(qualityLevel).first ?? 85
+      let level = operations.compactMap(qualityLevel).first ?? ImageProcessor.defaultQuality
       options[kCGImageDestinationLossyCompressionQuality] = Float(level) / 100
     }
 

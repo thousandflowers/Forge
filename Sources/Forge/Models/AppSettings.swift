@@ -12,6 +12,9 @@ struct AppSettings: Codable, Sendable, Equatable {
   /// Keep a copy of the original before an in-place conversion replaces it.
   var createBackupBeforeOverwrite: Bool = true
 
+  /// Post a notification when a batch finishes.
+  var notifyWhenFinished: Bool = true
+
   // MARK: - Persistence
 
   private static let settingsKey = "ForgeSettings"

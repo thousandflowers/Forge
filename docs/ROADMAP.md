@@ -58,8 +58,10 @@ Native, no new dependencies, in rough order of value.
       with the awkward parts of separated values handled: quoted fields,
       separators and newlines inside them.
 - [x] **Audio → video** - a recording asked for a movie container gets one.
-- [ ] **Embedded subtitle extraction** - subtitle tracks inside a movie are
-      reachable through AVFoundation.
+- [ ] **Embedded subtitle extraction** - the tracks are reachable, but the text
+      is not: AVFoundation exposes no high-level reader for subtitle samples, so
+      this means parsing sample buffers per format. Possible, and more work than
+      it looks.
 - [ ] **Signing and notarization** - needs a Developer ID. Until then the DMG is
       ad-hoc signed and Gatekeeper warns on first launch.
 - [ ] **Homebrew cask** - a cask, not a formula: Forge ships an app bundle.
@@ -67,7 +69,11 @@ Native, no new dependencies, in rough order of value.
       already installed.
 - [x] **Audio transcription** - a recording, or a video's soundtrack, becomes
       text on device. Permission is asked once; nothing is uploaded.
-- [ ] **Shortcuts integration**, **completion notifications**, **preset import/export**.
+- [x] **Completion notifications** - permission asked when the first batch
+      finishes rather than at launch.
+- [x] **Preset import/export** - one file or a set, with new identities on the
+      way in so an import adds rather than replaces.
+- [ ] **Shortcuts integration**.
 
 ### Interface
 
@@ -82,8 +88,9 @@ Native, no new dependencies, in rough order of value.
       `photo 3.jpg`. Not applied when converting in place, where the file keeps
       the name it has.
 - [ ] **Reordering presets** - drag, or move up and down.
-- [ ] **A lower default image quality** - the default is 85; smaller files by
-      default is a reasonable argument, and it is one constant.
+- [x] **A lower default image quality** - 80 rather than 85, measured: the step
+      from 85 to 80 takes about a third off the file, and below 80 the curve
+      flattens out.
 - [ ] **Localization** - the app is English-only.
 - [ ] **Finder action** - convert from the context menu, through a Finder
       extension. Needs a signed app extension, so it waits on notarization.
