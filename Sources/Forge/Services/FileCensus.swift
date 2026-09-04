@@ -53,7 +53,9 @@ enum FileCensus {
           options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { continue }
 
-        for case let url as URL in walker {
+        // nextObject rather than for-in: NSEnumerator's iterator is not
+        // available from an async context.
+        while let url = walker.nextObject() as? URL {
           if seen >= limit { return counts }
           if walker.level > depth {
             walker.skipDescendants()

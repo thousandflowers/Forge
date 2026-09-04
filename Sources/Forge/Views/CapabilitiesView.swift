@@ -432,15 +432,18 @@ final class ToolInstaller: ObservableObject {
     states[tool.binary] = .running("")
 
     Task { [weak self] in
+      // Bound once, strongly: a weak capture is a mutable reference, and one
+      // cannot be read again from inside the progress closure's own task.
+      guard let self else { return }
       do {
-        try await ExternalTools.install(tool) { line in
-          Task { @MainActor [weak self] in
-            self?.states[tool.binary] = .running(line)
+        try await ExternalTools.install(tool) { [self] line in
+          Task { @MainActor in
+            self.states[tool.binary] = .running(line)
           }
         }
-        self?.states[tool.binary] = .installed
+        self.states[tool.binary] = .installed
       } catch {
-        self?.states[tool.binary] = .failed(error.localizedDescription)
+        self.states[tool.binary] = .failed(error.localizedDescription)
       }
     }
   }
