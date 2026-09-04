@@ -170,3 +170,157 @@ final class GeneralPreferenceTests: XCTestCase {
     XCTAssertEqual(quality, [91])
   }
 }
+
+/// A preset that names more than one format wants both, not the last one.
+final class MultipleFormatTests: BaseTestCase {
+
+  func test_twoFormatsWriteTwoFiles() async throws {
+    let source = try Fixture.image(at: path("shot.png"), width: 600, height: 400)
+    let destination = try folder("out")
+
+    var preset = RulePreset(name: "Both", description: "", category: .image)
+    preset.actions = [
+      .convertFormat(to: .jpeg),
+      .convertFormat(to: .tiff),
+      .resize(width: 300, height: nil, fitMode: .proportional),
+    ]
+
+    _ = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: preset,
+      destinationMode: .copyTo,
+      destinationURL: destination,
+      progress: { _ in }
+    )
+
+    let written = contents(of: destination)
+    XCTAssertEqual(written.count, 2, "one file per format: \(written)")
+    XCTAssertTrue(written.contains { $0.hasSuffix(".jpeg") })
+    XCTAssertTrue(written.contains { $0.hasSuffix(".tiff") })
+  }
+
+  /// Every copy still gets the rest of the chain.
+  func test_bothCopiesAreResized() async throws {
+    let source = try Fixture.image(at: path("wide.png"), width: 800, height: 400)
+    let destination = try folder("out")
+
+    var preset = RulePreset(name: "Both", description: "", category: .image)
+    preset.actions = [
+      .convertFormat(to: .jpeg),
+      .convertFormat(to: .png),
+      .resize(width: 200, height: nil, fitMode: .proportional),
+    ]
+
+    _ = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: preset,
+      destinationMode: .copyTo,
+      destinationURL: destination,
+      progress: { _ in }
+    )
+
+    for name in contents(of: destination) {
+      let url = destination.appendingPathComponent(name)
+      let file = try ProcessableFile(url: url)
+      XCTAssertEqual(file.dimensions?.width, 200, "\(name) should have been resized too")
+    }
+  }
+
+  /// Two files cannot both replace one original, and saying so beats writing
+  /// one over the other.
+  func test_twoFormatsRefuseToOverwrite() async throws {
+    let source = try Fixture.image(at: path("only.png"), width: 200, height: 200)
+
+    var preset = RulePreset(name: "Both", description: "", category: .image)
+    preset.actions = [.convertFormat(to: .jpeg), .convertFormat(to: .tiff)]
+
+    do {
+      _ = try await coordinator().processFile(
+        try ProcessableFile(url: source),
+        with: preset,
+        destinationMode: .overwrite,
+        progress: { _ in }
+      )
+      XCTFail("replacing one original with two files should be refused")
+    } catch {
+      XCTAssertTrue(
+        error.localizedDescription.contains("cannot replace the original"),
+        "the message has to say why: \(error.localizedDescription)"
+      )
+    }
+
+    // And the original is untouched.
+    XCTAssertEqual(try ProcessableFile(url: source).fileType, .png)
+  }
+
+  /// One format is the ordinary case and must stay ordinary.
+  func test_oneFormatStillWritesOneFile() async throws {
+    let source = try Fixture.image(at: path("single.png"), width: 200, height: 200)
+    let destination = try folder("out")
+
+    var preset = RulePreset(name: "One", description: "", category: .image)
+    preset.actions = [.convertFormat(to: .jpeg)]
+
+    _ = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: preset,
+      destinationMode: .copyTo,
+      destinationURL: destination,
+      progress: { _ in }
+    )
+
+    XCTAssertEqual(contents(of: destination), ["single.jpeg"])
+  }
+}
+
+/// A size written into a file's own name is an instruction.
+final class SizeInNameTests: BaseTestCase {
+
+  func test_theNameIsRead() {
+    XCTAssertEqual(SizeInName.ceiling(in: "holiday_10MB.jpg"), 10_000_000)
+    XCTAssertEqual(SizeInName.ceiling(in: "holiday_2024_5MB.jpg"), 5_000_000)
+    XCTAssertEqual(SizeInName.ceiling(in: "scan_500kb.png"), 500_000)
+    XCTAssertEqual(SizeInName.ceiling(in: "clip_1.5MB.mp4"), 1_500_000)
+    XCTAssertEqual(SizeInName.ceiling(in: "clip_1,5mb.mp4"), 1_500_000)
+  }
+
+  /// A name that is not asking for anything must not be read as if it were.
+  func test_anOrdinaryNameAsksForNothing() {
+    XCTAssertNil(SizeInName.ceiling(in: "holiday.jpg"))
+    XCTAssertNil(SizeInName.ceiling(in: "10MB.jpg"), "the size is the subject here, not an instruction")
+    XCTAssertNil(SizeInName.ceiling(in: "report_final.pdf"))
+    XCTAssertNil(SizeInName.ceiling(in: "photo_0MB.jpg"))
+  }
+
+  /// The name is the more specific answer, so it replaces a preset's ceiling.
+  func test_theNameBeatsThePreset() {
+    let chain = SizeInName.applying(
+      to: [.convertFormat(to: .jpeg), .limitSize(bytes: 99_000_000)],
+      from: "holiday_2MB.jpg"
+    )
+    let ceilings = chain.compactMap { if case .limitSize(let bytes) = $0 { return bytes } else { return nil } }
+    XCTAssertEqual(ceilings, [2_000_000])
+  }
+
+  /// The whole point: rename the file, convert it, and it fits.
+  func test_renamingTheFileIsEnoughToCompressIt() async throws {
+    let source = try Fixture.image(at: path("holiday_15kb.png"), width: 1600, height: 1200)
+    let destination = try folder("out")
+    XCTAssertGreaterThan(size(of: source), 15_000, "the source has to start too big for this to prove anything")
+
+    var preset = RulePreset(name: "Just JPEG", description: "", category: .image)
+    preset.actions = [.convertFormat(to: .jpeg)]
+
+    let history = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: preset,
+      destinationMode: .copyTo,
+      destinationURL: destination,
+      progress: { _ in }
+    )
+
+    let output = try XCTUnwrap(history.outputURL)
+    XCTAssertLessThanOrEqual(size(of: output), 15_000)
+    XCTAssertGreaterThan(size(of: output), 0)
+  }
+}

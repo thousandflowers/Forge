@@ -52,7 +52,7 @@ actor ProcessingCoordinator {
 
     let task = Task {
       do {
-        let result = try await self.executeProcessing(
+        let result = try await self.run(
           file: file,
           preset: preset,
           destinationMode: destinationMode,
@@ -97,6 +97,82 @@ actor ProcessingCoordinator {
   }
 
   // MARK: - Private
+
+  /// Run the preset once per format it asks for.
+  ///
+  /// A preset naming two formats is not a preset that changed its mind: it is
+  /// one that wants both, so the same file goes through twice and two files
+  /// come out. One format is the ordinary case and takes the ordinary path.
+  private func run(
+    file: ProcessableFile,
+    preset: RulePreset,
+    destinationMode: DestinationMode,
+    destinationURL: URL?,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> ProcessingResult {
+    let formats = Self.formats(of: preset)
+    guard formats.count > 1 else {
+      return try await executeProcessing(
+        file: file,
+        preset: preset,
+        destinationMode: destinationMode,
+        destinationURL: destinationURL,
+        progress: progress
+      )
+    }
+
+    // Two files cannot both replace one original. Saying so beats writing one
+    // of them over the other and calling it converted.
+    guard destinationMode != .overwrite else {
+      throw ProcessingError.validationFailed(
+        message: "“\(preset.name)” writes \(formats.count) files per input, "
+          + "so it cannot replace the original. Choose a destination folder."
+      )
+    }
+
+    var results: [ProcessingResult] = []
+    for (index, format) in formats.enumerated() {
+      try Task.checkCancellation()
+      let step = 1.0 / Double(formats.count)
+      results.append(
+        try await executeProcessing(
+          file: file,
+          preset: Self.preset(preset, writingOnly: format),
+          destinationMode: destinationMode,
+          destinationURL: destinationURL,
+          progress: { fraction in progress(Double(index) * step + fraction * step) }
+        )
+      )
+    }
+
+    guard let first = results.first else {
+      throw ProcessingError.conversionFailed(reason: "Nothing was written")
+    }
+
+    return ProcessingResult(
+      outputURL: first.outputURL,
+      outputSize: results.reduce(0) { $0 + $1.outputSize },
+      outputDimensions: first.outputDimensions,
+      duration: results.reduce(0) { $0 + $1.duration },
+      additionalOutputs: first.additionalOutputs + results.dropFirst().map(\.outputURL)
+    )
+  }
+
+  /// Every format the preset asks for, in the order it asks.
+  static func formats(of preset: RulePreset) -> [UTType] {
+    preset.actions.compactMap {
+      if case .convertFormat(let to) = $0 { return to } else { return nil }
+    }
+  }
+
+  /// The same preset with one of its formats and none of the others.
+  private static func preset(_ preset: RulePreset, writingOnly format: UTType) -> RulePreset {
+    var copy = preset
+    let position = copy.actions.firstIndex { if case .convertFormat = $0 { return true } else { return false } } ?? 0
+    copy.actions.removeAll { if case .convertFormat = $0 { return true } else { return false } }
+    copy.actions.insert(.convertFormat(to: format), at: min(position, copy.actions.count))
+    return copy
+  }
 
   private func executeProcessing(
     file: ProcessableFile,
@@ -144,9 +220,11 @@ actor ProcessingCoordinator {
     let result = try await processor.process(
       file.url,
       to: plan.workURL,
-      // A preset says what it cares about; Settings says the rest.
+      // A preset says what it cares about; Settings says the rest; and a size
+      // written into the file's own name beats both, because somebody typed it
+      // onto that file for this conversion.
       with: settings.applyingDefaults(
-        to: preset.toOperations(),
+        to: SizeInName.applying(to: preset.toOperations(), from: file.fileName),
         writing: preset.targetFormat ?? file.fileType
       ),
       progress: progress
@@ -158,7 +236,14 @@ actor ProcessingCoordinator {
       try backUp(file.url)
     }
 
-    let extras = try commit(plan, extras: result.additionalOutputs)
+    // A video taken apart into a hundred stills is a hundred loose files in
+    // somebody's Downloads. They belong together, in a folder named after what
+    // they came from.
+    let committed = try commit(
+      plan,
+      extras: result.additionalOutputs,
+      gatherIntoAFolder: Self.isFrameExport(from: file, to: plan.finalURL, extras: result.additionalOutputs)
+    )
 
     if plan.removesSource, plan.finalURL != file.url,
        FileManager.default.fileExists(atPath: file.url.path) {
@@ -168,11 +253,11 @@ actor ProcessingCoordinator {
     succeeded = true
 
     return ProcessingResult(
-      outputURL: plan.finalURL,
+      outputURL: committed.primary,
       outputSize: result.outputSize,
       outputDimensions: result.outputDimensions,
       duration: result.duration,
-      additionalOutputs: extras
+      additionalOutputs: committed.extras
     )
   }
 
@@ -181,7 +266,22 @@ actor ProcessingCoordinator {
   ///
   /// Extra outputs keep the suffix the processor gave them (`-002`, `-003`)
   /// but hang off the destination's name rather than the scratch name.
-  private func commit(_ plan: OutputPlan, extras: [URL]) throws -> [URL] {
+  /// Whether this was a video taken apart into stills — the one case where the
+  /// extra files are a set rather than a sequel.
+  static func isFrameExport(from file: ProcessableFile, to output: URL, extras: [URL]) -> Bool {
+    guard !extras.isEmpty else { return false }
+    guard FormatCatalog.isReadableMedia(file.fileType), !file.fileType.conforms(to: .audio) else {
+      return false
+    }
+    guard let type = UTType(filenameExtension: output.pathExtension) else { return false }
+    return FormatCatalog.isWritableImage(type)
+  }
+
+  private func commit(
+    _ plan: OutputPlan,
+    extras: [URL],
+    gatherIntoAFolder: Bool = false
+  ) throws -> (primary: URL, extras: [URL]) {
     let fileManager = FileManager.default
     if fileManager.fileExists(atPath: plan.finalURL.path) {
       _ = try fileManager.replaceItemAt(plan.finalURL, withItemAt: plan.workURL)
@@ -191,9 +291,27 @@ actor ProcessingCoordinator {
 
     let workBase = plan.workURL.deletingPathExtension().lastPathComponent
     let finalBase = plan.finalURL.deletingPathExtension().lastPathComponent
-    let folder = plan.finalURL.deletingLastPathComponent()
+    var folder = plan.finalURL.deletingLastPathComponent()
+    var primary = plan.finalURL
 
-    return try extras.map { extra in
+    if gatherIntoAFolder {
+      // Not `reserveUniqueURL`: that claims a name by putting an empty file
+      // there, and a folder cannot be created on top of a file.
+      var home = folder.appendingPathComponent(finalBase)
+      var attempt = 2
+      while fileManager.fileExists(atPath: home.path) {
+        home = folder.appendingPathComponent("\(finalBase) \(attempt)")
+        attempt += 1
+      }
+      try fileManager.createDirectory(at: home, withIntermediateDirectories: true)
+      // The first frame went out under the plan's own name; it belongs with
+      // the rest of them.
+      primary = home.appendingPathComponent(plan.finalURL.lastPathComponent)
+      try fileManager.moveItem(at: plan.finalURL, to: primary)
+      folder = home
+    }
+
+    let moved = try extras.map { extra -> URL in
       let suffix = extra.deletingPathExtension().lastPathComponent.replacingOccurrences(of: workBase, with: "")
       let ext = extra.pathExtension
       let name = ext.isEmpty ? "\(finalBase)\(suffix)" : "\(finalBase)\(suffix).\(ext)"
@@ -201,6 +319,8 @@ actor ProcessingCoordinator {
       _ = try fileManager.replaceItemAt(destination, withItemAt: extra)
       return destination
     }
+
+    return (primary, moved)
   }
 
   private func backUp(_ url: URL) throws {

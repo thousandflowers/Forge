@@ -24,7 +24,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
   var title: String {
     switch self {
     case .convertFormat: return "Convert format"
-    case .resize: return "Resize"
+    case .resize(_, _, let mode): return mode == .cropCenter ? "Crop" : "Resize"
     case .quality: return "Set quality"
     case .filter: return "Apply filter"
     case .recognizeText: return "Read text"
@@ -36,7 +36,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
   var symbol: String {
     switch self {
     case .convertFormat: return "arrow.triangle.2.circlepath"
-    case .resize: return "aspectratio"
+    case .resize(_, _, let mode): return mode == .cropCenter ? "crop" : "aspectratio"
     case .quality: return "dial.medium"
     case .filter: return "camera.filters"
     case .recognizeText: return "text.viewfinder"

@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import AVFoundation
 import AudioToolbox
 import UniformTypeIdentifiers
@@ -43,8 +44,13 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // Media asked for text is transcribed, whether the words are in a
     // recording or in the soundtrack of a video.
     let wanted = Self.outputType(for: output, operations: operations, fallback: .mpeg4Movie)
-    if wanted.conforms(to: .plainText), !audioTracks.isEmpty {
-      return try await transcribe(input, to: output, operations: operations, start: start, progress: progress)
+    // Anything with a soundtrack asked for words becomes words. Which words
+    // file it becomes is up to the extension: a recording renamed .rtf comes
+    // out as RTF, .docx as DOCX, .pdf as a PDF of the transcript.
+    if Self.isWords(wanted), !audioTracks.isEmpty {
+      return try await transcribe(
+        input, to: output, as: wanted, operations: operations, start: start, progress: progress
+      )
     }
 
     if videoTracks.isEmpty {
@@ -72,9 +78,16 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
 
   // MARK: - Words out of a recording
 
+  /// Whether a type is somewhere words can be written: plain text, or any of
+  /// the document formats AppKit writes.
+  static func isWords(_ type: UTType) -> Bool {
+    type.conforms(to: .plainText) || DocumentText.canWrite(type)
+  }
+
   private func transcribe(
     _ input: URL,
     to output: URL,
+    as wanted: UTType,
     operations: [Operation],
     start: Date,
     progress: @escaping @Sendable (Double) -> Void
@@ -87,7 +100,14 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     }.first
 
     let text = try await Transcription.text(of: input, locale: locale, progress: progress)
-    try text.write(to: output, atomically: true, encoding: .utf8)
+
+    if wanted.conforms(to: .plainText) {
+      try text.write(to: output, atomically: true, encoding: .utf8)
+    } else {
+      // AppKit's document writer belongs to the main actor.
+      let words = NSAttributedString(string: text)
+      try await MainActor.run { try DocumentText.write(words, to: output, as: wanted) }
+    }
     progress(1.0)
 
     let attributes = try FileManager.default.attributesOfItem(atPath: output.path)

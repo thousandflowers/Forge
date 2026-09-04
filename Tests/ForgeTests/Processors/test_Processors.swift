@@ -441,9 +441,13 @@ final class VideoToImagesTests: BaseTestCase {
       destinationURL: destination
     ) { _ in }
 
-    XCTAssertGreaterThan(contents(of: destination).count, 8)
-    XCTAssertTrue(contents(of: destination).contains("clip.png"))
-    XCTAssertTrue(contents(of: destination).contains("clip-002.png"))
+    // A video taken apart is a set, not a sequel: the frames go into a folder
+    // named after the clip rather than loose in the destination.
+    XCTAssertEqual(contents(of: destination), ["clip"])
+    let frames = contents(of: destination.appendingPathComponent("clip"))
+    XCTAssertGreaterThan(frames.count, 8)
+    XCTAssertTrue(frames.contains("clip.png"))
+    XCTAssertTrue(frames.contains("clip-002.png"))
   }
 
   /// A GIF at the source resolution is unusable at any length, so frames are

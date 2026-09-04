@@ -128,53 +128,148 @@ struct PresetEditorView: View {
 
   @ViewBuilder
   private var actionList: some View {
-    if actions.isEmpty {
-      VStack(spacing: 10) {
-        Image(systemName: "square.stack.3d.up")
-          .font(.system(size: 34, weight: .light))
-          .foregroundStyle(.secondary)
-        Text("No actions yet").font(.headline)
-        Text("Add one below. They run top to bottom.")
-          .font(.callout).foregroundStyle(.secondary)
-      }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-    } else {
-      List(selection: $selection) {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 14) {
+        formatsBlock
+
         ForEach($actions) { $action in
-          ActionRow(action: $action)
-            .padding(.vertical, 2)
+          if !$action.wrappedValue.isFormat {
+            stepBlock($action)
+          }
         }
-        .onMove { actions.move(fromOffsets: $0, toOffset: $1) }
-        .onDelete { actions.remove(atOffsets: $0) }
+
+        // The + belongs under the steps, where the next one would go, not in a
+        // corner of the window that has nothing to do with the list.
+        Menu {
+          ForEach(offeredKinds) { kind in
+            Button {
+              actions.append(Action(kind.blank(for: category)))
+            } label: {
+              Label(kind.title, systemImage: kind.symbol)
+            }
+          }
+        } label: {
+          Label("Add a step", systemImage: "plus")
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+        }
+        .menuStyle(.borderlessButton)
+        .background(
+          RoundedRectangle(cornerRadius: 8)
+            .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5]))
+            .foregroundStyle(Color.secondary.opacity(0.3))
+        )
       }
-      .listStyle(.inset)
+      .padding(16)
     }
+  }
+
+  /// What the files come out as. One or several: picking a second format does
+  /// not replace the first, it makes a second copy — which is how one photo
+  /// becomes a JPEG for the web and a PNG to keep.
+  private var formatsBlock: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Label("Comes out as", systemImage: "arrow.triangle.2.circlepath")
+        .font(.callout.weight(.medium))
+
+      FlowLayout(spacing: 6) {
+        chip("Same format", selected: chosenFormats.isEmpty) {
+          actions.removeAll { $0.isFormat }
+        }
+        ForEach(offeredFormats) { format in
+          chip(format.label, selected: chosenFormats.contains(format)) { toggle(format) }
+        }
+      }
+
+      if chosenFormats.count > 1 {
+        Text("\(chosenFormats.count) copies of every file, one per format.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    }
+    .padding(12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
+    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
+  }
+
+  private func stepBlock(_ action: Binding<Action>) -> some View {
+    HStack(alignment: .top, spacing: 8) {
+      ActionRow(action: action)
+      Spacer(minLength: 0)
+      Button {
+        actions.removeAll { $0.id == action.wrappedValue.id }
+      } label: {
+        Image(systemName: "minus.circle")
+      }
+      .buttonStyle(.borderless)
+      .foregroundStyle(.secondary)
+      .accessibilityLabel(Text("Remove \(action.wrappedValue.operation.title)"))
+    }
+    .padding(12)
+    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
+    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
+  }
+
+  private var chosenFormats: [OutputFormat] {
+    actions.compactMap { action in
+      guard case .convertFormat(let to) = action.operation else { return nil }
+      return OutputFormat(type: to)
+    }
+  }
+
+  /// The formats worth offering for what this preset is about. An audio preset
+  /// has no business listing TIFF.
+  private var offeredFormats: [OutputFormat] {
+    switch category {
+    case .image: return OutputFormat.imagesWithTools + OutputFormat.text
+    case .video: return OutputFormat.video + OutputFormat.images + OutputFormat.text
+    case .audio: return OutputFormat.audio + OutputFormat.text
+    case .document: return OutputFormat.documents + OutputFormat.images + OutputFormat.audio
+    case .custom:
+      return OutputFormat.images + OutputFormat.audio + OutputFormat.video + OutputFormat.documents
+    }
+  }
+
+  /// The steps that mean something for this kind of file, so an audio preset
+  /// is never offered a crop.
+  private var offeredKinds: [ActionKind] {
+    ActionKind.allCases.filter { $0.suits(category) }
+  }
+
+  private func toggle(_ format: OutputFormat) {
+    guard let type = format.type else { return }
+    if let index = actions.firstIndex(where: {
+      if case .convertFormat(let to) = $0.operation { return to == type } else { return false }
+    }) {
+      actions.remove(at: index)
+    } else {
+      actions.insert(Action(.convertFormat(to: type)), at: 0)
+    }
+  }
+
+  private func chip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      Text(title)
+        .font(.callout)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 5)
+        .background(
+          RoundedRectangle(cornerRadius: 7)
+            .fill(selected ? Color.accentColor : Color.secondary.opacity(0.14))
+        )
+        .foregroundStyle(selected ? Color.white : Color.primary)
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(Text(title))
+    .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
   }
 
   private var footer: some View {
     HStack {
-      Menu {
-        ForEach(ActionKind.allCases) { kind in
-          Button {
-            actions.append(Action(kind.blank))
-          } label: {
-            Label(kind.blank.title, systemImage: kind.blank.symbol)
-          }
-        }
-      } label: {
-        Label("Add Action", systemImage: "plus")
-      }
-      .menuStyle(.borderlessButton)
-      .fixedSize()
-
-      if let selection, let index = actions.firstIndex(where: { $0.id == selection }) {
-        Button {
-          actions.remove(at: index)
-          self.selection = nil
-        } label: {
-          Label("Remove", systemImage: "minus")
-        }
-      }
+      Text(actions.isEmpty ? "Does nothing yet" : "Steps run top to bottom")
+        .font(.caption)
+        .foregroundStyle(.secondary)
 
       Spacer()
       Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -212,21 +307,80 @@ struct Action: Identifiable, Hashable {
   init(_ operation: Operation) { self.operation = operation }
 }
 
-/// The kinds of action that can be added, and a blank of each.
+/// The steps that can be added, what each one starts as, and which kinds of
+/// file it means anything for.
+///
+/// The format is not here: what a preset comes out as is its own block at the
+/// top, because it is the one thing every preset answers and the one thing that
+/// can be answered more than once.
 enum ActionKind: String, CaseIterable, Identifiable {
-  case convertFormat, resize, quality, filter, recognizeText, encode, limitSize
+  case crop, resize, quality, limitSize, filter, recognizeText, encode
   var id: String { rawValue }
 
-  var blank: Operation {
+  var title: String {
     switch self {
-    case .convertFormat: return .convertFormat(to: .jpeg)
-    case .resize: return .resize(width: 1280, height: 720, fitMode: .proportional)
+    case .crop: return "Crop"
+    case .resize: return "Resize"
+    case .quality: return "Quality"
+    case .limitSize: return "Fit within a size"
+    case .filter: return "Filter"
+    case .recognizeText: return "Read the text"
+    case .encode: return "Codec"
+    }
+  }
+
+  var symbol: String {
+    switch self {
+    case .crop: return "crop"
+    case .resize: return "aspectratio"
+    case .quality: return "dial.medium"
+    case .limitSize: return "arrow.down.right.and.arrow.up.left"
+    case .filter: return "camera.filters"
+    case .recognizeText: return "text.viewfinder"
+    case .encode: return "cpu"
+    }
+  }
+
+  /// What the step starts as. A crop starts square and cropping, because a
+  /// crop that fits inside is a resize by another name.
+  func blank(for category: PresetCategory) -> Operation {
+    switch self {
+    case .crop: return .resize(width: 1080, height: 1080, fitMode: .cropCenter)
+    case .resize: return .resize(width: 1920, height: nil, fitMode: .proportional)
     case .quality: return .quality(level: ImageProcessor.defaultQuality)
+    case .limitSize: return .limitSize(bytes: 10_000_000)
     case .filter: return .filter(type: .grayscale)
     case .recognizeText: return .recognizeText(languages: [])
-    case .encode: return .encode(codec: Codec.available.first ?? .h264)
-    case .limitSize: return .limitSize(bytes: 10_000_000)
+    case .encode:
+      let codecs = category == .audio ? Codec.audioCodecs : Codec.videoCodecs
+      return .encode(codec: codecs.first ?? .h264)
     }
+  }
+
+  /// Which kinds of file this step does anything for, taken from what the
+  /// processors honour. Offering a crop on an audio preset would be a step
+  /// that runs and changes nothing.
+  func suits(_ category: PresetCategory) -> Bool {
+    switch self {
+    case .crop, .resize:
+      return [.image, .video, .document, .custom].contains(category)
+    case .quality, .filter:
+      return [.image, .video, .document, .custom].contains(category)
+    case .limitSize:
+      return [.image, .custom].contains(category)
+    case .recognizeText:
+      return category != .audio || category == .custom
+    case .encode:
+      return [.video, .audio, .custom].contains(category)
+    }
+  }
+}
+
+extension Action {
+  /// Format steps live in their own block, so the step list skips them.
+  var isFormat: Bool {
+    if case .convertFormat = operation { return true }
+    return false
   }
 }
 
@@ -246,18 +400,10 @@ private struct ActionRow: View {
   @ViewBuilder
   private var settings: some View {
     switch action.operation {
-    case .convertFormat(let to):
-      Picker("", selection: Binding(
-        get: { OutputFormat(type: to) },
-        set: { action.operation = .convertFormat(to: $0.type ?? to) }
-      )) {
-        Section("Images") { ForEach(OutputFormat.images) { Text($0.label).tag($0) } }
-        Section("Audio") { ForEach(OutputFormat.audio) { Text($0.label).tag($0) } }
-        Section("Video") { ForEach(OutputFormat.video) { Text($0.label).tag($0) } }
-        Section("Documents") { ForEach(OutputFormat.documents) { Text($0.label).tag($0) } }
-      }
-      .labelsHidden()
-      .frame(maxWidth: 200, alignment: .leading)
+    case .convertFormat:
+      // Handled by the block at the top of the editor, which owns every one
+      // of them at once.
+      EmptyView()
 
     case .resize(let width, let height, let mode):
       HStack(spacing: 6) {
@@ -272,7 +418,7 @@ private struct ActionRow: View {
           get: { mode },
           set: { action.operation = .resize(width: width, height: height, fitMode: $0) }
         )) {
-          ForEach(ResizeFitMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+          ForEach(ResizeFitMode.allCases, id: \.self) { Text($0.title).tag($0) }
         }
         .labelsHidden()
         .frame(maxWidth: 130)
