@@ -16,6 +16,13 @@ struct ConvertChoice: Equatable {
   var quality: Int?
   var filter: FilterType?
   var codec: Codec?
+  /// What resizing means. Starts from the general preference in Settings and
+  /// can be changed for this batch alone.
+  var fitMode: ResizeFitMode = .proportional
+  /// A ceiling on the finished file, in bytes.
+  var maxBytes: Int?
+  /// Answers to the chosen preset's questions, by the parameter's key.
+  var answers: [String: Double] = [:]
   /// The language for OCR and transcription. `nil` means let the system decide.
   var language: String?
   var destinationMode: DestinationMode = .copyTo
@@ -29,10 +36,11 @@ struct ConvertChoice: Equatable {
   var customActions: [Operation] {
     var actions: [Operation] = []
     if let type = format.type { actions.append(.convertFormat(to: type)) }
-    if let width { actions.append(.resize(width: width, height: nil, fitMode: .proportional)) }
+    if let width { actions.append(.resize(width: width, height: nil, fitMode: fitMode)) }
     if let quality { actions.append(.quality(level: quality)) }
     if let filter { actions.append(.filter(type: filter)) }
     if let codec { actions.append(.encode(codec: codec)) }
+    if let maxBytes { actions.append(.limitSize(bytes: maxBytes)) }
     if wantsText { actions.append(.recognizeText(languages: language.map { [$0] } ?? [])) }
     return actions
   }
@@ -40,7 +48,19 @@ struct ConvertChoice: Equatable {
   /// The preset to hand the coordinator: the chosen one as it stands, or one
   /// assembled from the fields for this batch alone.
   func resolved(against presets: [RulePreset]) -> RulePreset? {
-    if let presetID, let preset = presets.first(where: { $0.id == presetID }) { return preset }
+    if let presetID, let preset = presets.first(where: { $0.id == presetID }) {
+      guard !preset.parameters.isEmpty else { return preset }
+      // A preset that asks questions is finished by the answers: each one
+      // becomes the action it stands for, and the answers travel along so the
+      // filename can say what was asked for.
+      var answered = preset
+      for parameter in preset.parameters {
+        let value = answers[parameter.key] ?? parameter.defaultValue
+        answered = answered.replacing(parameter.operation(for: value))
+        answered.parameterValues[parameter.key] = value
+      }
+      return answered
+    }
     let actions = customActions
     guard !actions.isEmpty else { return nil }
     return RulePreset(name: "This batch", description: "", category: .custom, actions: actions)
@@ -125,10 +145,16 @@ struct ConvertOptionsSheet: View {
     VStack(alignment: .leading, spacing: 22) {
       if !offeredPresets.isEmpty { presetField }
 
+      if let preset = chosenPreset, !preset.parameters.isEmpty {
+        parameterFields(preset)
+      }
+
       if let kind {
         formatField(for: kind)
         if kind.supportsResize, !choice.wantsText { widthField }
+        if kind.supportsResize, !choice.wantsText { fitField }
         if kind.supportsQuality, !choice.wantsText { qualityField }
+        if kind.supportsSizeLimit, !choice.wantsText { ceilingField }
         if kind.supportsCodec, !choice.wantsText { codecField(for: kind) }
         if kind.supportsFilter, !choice.wantsText { filterField }
         if kind.supportsTextExtraction, choice.wantsText { languageField }
@@ -204,6 +230,85 @@ struct ConvertOptionsSheet: View {
           ))
           .frame(width: 72)
           Text("px").foregroundStyle(.secondary).font(.callout)
+        }
+      }
+    }
+  }
+
+  private var chosenPreset: RulePreset? {
+    guard let id = choice.presetID else { return nil }
+    return presets.first { $0.id == id }
+  }
+
+  /// What a preset asks for, asked here. A preset that wants a size ceiling is
+  /// a shape rather than a setting, and this is where it is filled in.
+  private func parameterFields(_ preset: RulePreset) -> some View {
+    field("\(preset.name) asks") {
+      VStack(alignment: .leading, spacing: 12) {
+        ForEach(preset.parameters) { parameter in
+          HStack(spacing: 10) {
+            Text(parameter.label.isEmpty ? parameter.kind.title : parameter.label)
+              .frame(width: 150, alignment: .leading)
+              .foregroundStyle(.secondary)
+
+            TextField(parameter.kind.title, text: Binding(
+              get: {
+                let value = choice.answers[parameter.key] ?? parameter.defaultValue
+                return String(format: "%g", value)
+              },
+              set: { text in
+                let typed = Double(text.replacingOccurrences(of: ",", with: ".")) ?? parameter.defaultValue
+                choice.answers[parameter.key] = min(max(typed, parameter.kind.range.lowerBound), parameter.kind.range.upperBound)
+              }
+            ))
+            .frame(width: 90)
+
+            if !parameter.kind.unit.isEmpty {
+              Text(parameter.kind.unit).foregroundStyle(.secondary)
+            }
+
+            Text("{\(parameter.key)}")
+              .font(.caption.monospaced())
+              .foregroundStyle(.tertiary)
+              .help("Use this in a name template to spend the answer in the filename")
+          }
+        }
+      }
+    }
+  }
+
+  /// What resizing means. Starts from the general preference and is overridden
+  /// here for this batch alone.
+  private var fitField: some View {
+    field("Fit") {
+      chips {
+        ForEach(ResizeFitMode.allCases, id: \.self) { mode in
+          chip(mode.title, selected: choice.fitMode == mode) { edit { $0.fitMode = mode } }
+        }
+      }
+    }
+  }
+
+  /// A promise about the finished file rather than a setting for the encoder.
+  private var ceilingField: some View {
+    field("Fit within a size") {
+      HStack(spacing: 10) {
+        Toggle("No ceiling", isOn: Binding(
+          get: { choice.maxBytes == nil },
+          set: { none in edit { $0.maxBytes = none ? nil : 10_000_000 } }
+        ))
+        .toggleStyle(.checkbox)
+
+        if let maxBytes = choice.maxBytes {
+          TextField("Megabytes", text: Binding(
+            get: { String(format: "%g", Double(maxBytes) / 1_000_000) },
+            set: { text in
+              let megabytes = Double(text.replacingOccurrences(of: ",", with: ".")) ?? 0
+              edit { $0.maxBytes = megabytes > 0 ? Int(megabytes * 1_000_000) : nil }
+            }
+          ))
+          .frame(width: 80)
+          Text("MB").foregroundStyle(.secondary)
         }
       }
     }
@@ -389,6 +494,7 @@ struct ConvertOptionsSheet: View {
       case .filter(let type): updated.filter = type
       case .encode(let codec): updated.codec = codec
       case .recognizeText(let languages): updated.language = languages.first
+      case .limitSize(let bytes): updated.maxBytes = bytes
       }
     }
 

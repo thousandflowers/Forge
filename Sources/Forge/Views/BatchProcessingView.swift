@@ -165,7 +165,12 @@ struct BatchProcessingView: View {
   private func add(_ urls: [URL]) {
     let wasEmpty = vm.files.isEmpty
     vm.add(urls)
-    if wasEmpty, !vm.files.isEmpty { showingOptions = true }
+    if wasEmpty, !vm.files.isEmpty {
+      // A batch starts from the general preference and can then disagree with
+      // it, which is what makes the preference a default rather than a law.
+      choice.fitMode = model.settings.defaultFitMode
+      showingOptions = true
+    }
   }
 
   private func clear() {

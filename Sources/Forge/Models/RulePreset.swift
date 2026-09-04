@@ -26,6 +26,23 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   /// The actions, in the order they run.
   var actions: [Operation] = []
 
+  /// What this preset asks for before it runs.
+  ///
+  /// A preset with no parameters is fixed: it does the same thing every time.
+  /// One with parameters is a shape rather than a setting — "make it fit under
+  /// a size you choose" — and the answer is asked for at conversion time and
+  /// can be spent in the file's name.
+  var parameters: [PresetParameter] = []
+
+  /// Overrides the general name template for the files this preset writes.
+  var nameTemplate: String? = nil
+
+  /// What the parameters were answered with, for this run only.
+  ///
+  /// Deliberately outside `CodingKeys`: an answer belongs to one conversion,
+  /// not to the preset, and saving it would turn a question into a setting.
+  var parameterValues: [String: Double] = [:]
+
   init(
     id: UUID = UUID(),
     name: String,
@@ -149,6 +166,7 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
 extension RulePreset {
   private enum CodingKeys: String, CodingKey {
     case id, name, description, category, position, isEnabled, actions
+    case parameters, nameTemplate
     // The shape presets were saved in before they became a chain.
     case targetFormat, resize, quality, filters, ocrLanguages
   }
@@ -167,6 +185,11 @@ extension RulePreset {
     category = try container.decodeIfPresent(PresetCategory.self, forKey: .category) ?? .custom
     position = try container.decodeIfPresent(Int.self, forKey: .position) ?? 0
     isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+
+    // Both are newer than the presets already on disk, so absence is normal
+    // and means "asks for nothing" and "use the general name template".
+    parameters = try container.decodeIfPresent([PresetParameter].self, forKey: .parameters) ?? []
+    nameTemplate = try container.decodeIfPresent(String.self, forKey: .nameTemplate)
 
     if let actions = try container.decodeIfPresent([Operation].self, forKey: .actions) {
       self.actions = actions
@@ -191,6 +214,8 @@ extension RulePreset {
     try container.encode(position, forKey: .position)
     try container.encode(isEnabled, forKey: .isEnabled)
     try container.encode(actions, forKey: .actions)
+    if !parameters.isEmpty { try container.encode(parameters, forKey: .parameters) }
+    try container.encodeIfPresent(nameTemplate, forKey: .nameTemplate)
   }
 }
 

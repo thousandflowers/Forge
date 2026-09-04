@@ -14,6 +14,10 @@ struct Capability: Identifiable, Hashable {
   let summary: String
   let symbol: String
   let status: Status
+  /// File extensions that mean somebody would want this. Used to put what
+  /// would help *this* Mac first, rather than listing everything in the same
+  /// flat order for everybody.
+  var evidence: [String] = []
 
   enum Status: Hashable {
     /// Works now, with nothing to install.
@@ -57,6 +61,14 @@ struct Capability: Identifiable, Hashable {
     let requires: String
     /// Roughly how large it would be.
     let approximateSize: String
+    /// The tool that does this job, if one exists to be installed. Forge does
+    /// not ship or download it: the Mac either has it or is told the one
+    /// command that gets it.
+    var tool: ExternalTool? = nil
+    /// Whether Forge actually calls that tool yet. Having the tool installed
+    /// and having Forge use it are different facts, and a screen about what
+    /// this Mac can do has no business blurring them.
+    var isWired: Bool = false
   }
 }
 
@@ -195,8 +207,11 @@ enum Capabilities {
         status: .needsPack(.init(
           name: "Extra image encoders",
           requires: "an encoder macOS does not ship",
-          approximateSize: "a few megabytes"
-        ))
+          approximateSize: "a few megabytes",
+          tool: ExternalTool(binary: "cwebp", formula: "webp", adds: "writing WebP"),
+          isWired: true
+        )),
+        evidence: ["webp", "jxl"]
       ),
       Capability(
         id: "broadcast-video",
@@ -206,8 +221,10 @@ enum Capabilities {
         status: .needsPack(.init(
           name: "Extra video codecs",
           requires: "a codec library the size of FFmpeg",
-          approximateSize: "tens of megabytes"
-        ))
+          approximateSize: "tens of megabytes",
+          tool: ExternalTool(binary: "ffmpeg", formula: "ffmpeg", adds: "WMV, MXF, FLV, AV1 and VP9")
+        )),
+        evidence: ["wmv", "mxf", "flv", "avi", "mkv", "webm"]
       ),
       Capability(
         id: "office",
@@ -217,8 +234,10 @@ enum Capabilities {
         status: .needsPack(.init(
           name: "Office and ebook formats",
           requires: "a document engine of its own",
-          approximateSize: "hundreds of megabytes"
-        ))
+          approximateSize: "hundreds of megabytes",
+          tool: ExternalTool(binary: "pandoc", formula: "pandoc", adds: "XLSX, PPTX, EPUB and friends")
+        )),
+        evidence: ["xlsx", "pptx", "epub", "mobi", "azw3", "odt", "ods"]
       ),
       Capability(
         id: "fonts",
@@ -228,8 +247,10 @@ enum Capabilities {
         status: .needsPack(.init(
           name: "Font tools",
           requires: "a font writer - CoreText reads font tables but cannot write one",
-          approximateSize: "a few megabytes"
-        ))
+          approximateSize: "a few megabytes",
+          tool: ExternalTool(binary: "ttx", formula: "fonttools", adds: "writing TrueType, OpenType, WOFF")
+        )),
+        evidence: ["ttf", "otf", "woff", "woff2"]
       ),
       Capability(
         id: "ocr-more-languages",
@@ -239,8 +260,10 @@ enum Capabilities {
         status: .needsPack(.init(
           name: "Extra recognition languages",
           requires: "a second recognition engine and its language data",
-          approximateSize: "tens of megabytes per language"
-        ))
+          approximateSize: "tens of megabytes per language",
+          tool: ExternalTool(binary: "tesseract", formula: "tesseract-lang", adds: "the languages Vision does not read")
+        )),
+        evidence: []
       ),
     ]
   }

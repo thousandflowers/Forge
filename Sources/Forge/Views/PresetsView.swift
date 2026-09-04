@@ -23,12 +23,14 @@ struct PresetsView: View {
                   get: { preset.isEnabled },
                   set: { model.setPreset(preset, enabled: $0) }
                 ),
+                onShare: { share(preset) },
                 onDelete: { model.deletePreset(preset) }
               )
                 .onTapGesture { editorItem = EditorItem(preset: preset) }
                 .contextMenu {
                   Button("Edit") { editorItem = EditorItem(preset: preset) }
                   Button("Duplicate") { model.duplicatePreset(preset) }
+                  Button("Share…") { share(preset) }
                   Divider()
                   Button("Move Up") { model.movePreset(preset, by: -1) }
                     .disabled(model.presets.first?.id == preset.id)
@@ -46,13 +48,10 @@ struct PresetsView: View {
     .navigationTitle("Presets")
     .toolbar {
       ToolbarItemGroup(placement: .primaryAction) {
-        Menu {
-          Button("Import Presets…") { importPresets() }
-          Button("Export Presets…") { exportPresets() }
-            .disabled(model.presets.isEmpty)
-        } label: {
-          Label("Share", systemImage: "square.and.arrow.up.on.square")
-        }
+        // Sharing hangs off each card: a single button up here could only
+        // ever mean "all of them", which is never what somebody handing a
+        // preset to a friend wants.
+        Button { importPresets() } label: { Label("Import Presets…", systemImage: "square.and.arrow.down") }
         Button { editorItem = EditorItem(preset: nil) } label: { Label("New Preset", systemImage: "plus") }
       }
     }
@@ -61,12 +60,14 @@ struct PresetsView: View {
     }
   }
 
-  private func exportPresets() {
+  /// One preset to one file, named after it, so what lands in somebody's
+  /// Downloads says which preset it is.
+  private func share(_ preset: RulePreset) {
     let panel = NSSavePanel()
-    panel.nameFieldStringValue = "Forge Presets.json"
+    panel.nameFieldStringValue = "\(preset.name).json"
     panel.allowedContentTypes = [.json]
     guard panel.runModal() == .OK, let url = panel.url else { return }
-    model.exportPresets(to: url)
+    model.export([preset], to: url)
   }
 
   private func importPresets() {
@@ -89,6 +90,8 @@ struct PresetCard: View {
   var deliverable = true
   /// Off presets stay in the list and are offered nowhere.
   @Binding var isEnabled: Bool
+  /// Hand this one preset to somebody. Its own button, on its own card.
+  var onShare: (() -> Void)? = nil
   let onDelete: () -> Void
 
   var body: some View {
@@ -103,13 +106,24 @@ struct PresetCard: View {
           .controlSize(.mini)
           .labelsHidden()
           .help(isEnabled ? "Turn this preset off" : "Turn this preset on")
+        if let onShare {
+          Button(action: onShare) {
+            Image(systemName: "square.and.arrow.up")
+              .font(.caption.weight(.semibold))
+          }
+          .buttonStyle(.borderless)
+          .foregroundStyle(.secondary)
+          .help("Share “\(preset.name)”")
+          .accessibilityLabel(Text("Share \(preset.name)"))
+        }
         Button(role: .destructive, action: onDelete) {
           Image(systemName: "xmark")
             .font(.caption.weight(.semibold))
         }
         .buttonStyle(.borderless)
         .foregroundStyle(.secondary)
-        .help("Delete this preset")
+        .help("Delete “\(preset.name)”")
+        .accessibilityLabel(Text("Delete \(preset.name)"))
       }
       HStack(spacing: 6) {
         Text(preset.name).font(.headline).lineLimit(1)
@@ -167,6 +181,8 @@ struct PresetCard: View {
       return languages.isEmpty ? "OCR" : "OCR \(languages.joined(separator: "/"))"
     case .encode(let codec):
       return codec.title
+    case .limitSize(let bytes):
+      return "≤\(Int64(bytes).formatted(.byteCount(style: .file)))"
     }
   }
 }

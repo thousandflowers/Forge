@@ -22,6 +22,10 @@ actor PresetGallery {
     /// A sentence on what it is for.
     let summary: String
     let preset: RulePreset
+    /// What it is about, in a word or two: the shelf somebody browsing would
+    /// look on. Optional, because the published list predates it and every
+    /// entry already out there has to keep decoding.
+    let tags: [String]?
   }
 
   private let source: URL

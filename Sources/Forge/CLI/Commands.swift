@@ -121,6 +121,8 @@ struct Presets: AsyncParsableCommand {
         return languages.isEmpty ? "read text" : "read text (\(languages.joined(separator: ", ")))"
       case .encode(let codec):
         return codec.title
+      case .limitSize(let bytes):
+        return "under \(Int64(bytes).formatted(.byteCount(style: .file)))"
       }
     }
   }

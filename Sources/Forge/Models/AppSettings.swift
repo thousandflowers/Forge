@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 /// User-configurable settings.
 ///
@@ -14,6 +15,42 @@ struct AppSettings: Codable, Sendable, Equatable {
 
   /// Post a notification when a batch finishes.
   var notifyWhenFinished: Bool = true
+
+  // MARK: - What everything starts from
+  //
+  // A preference here is what Forge does when a preset does not say otherwise.
+  // Every one of them can be overridden on the preset, and again on the batch:
+  // general, then specific, then this once.
+
+  /// What resizing means when nobody says: fit inside, fill and crop, stretch,
+  /// or pad out to the exact box.
+  var defaultFitMode: ResizeFitMode = .proportional
+
+  /// The quality used when a preset names none. 1-100.
+  var defaultQuality: Int = 80
+
+  /// How an output file is named. `{name}` is the original's name without its
+  /// extension; a preset's parameters are available by their own keys, so a
+  /// preset asking for a size ceiling under the key `maxsize` can be named
+  /// `{name}_{maxsize}` and produce `holiday_10MB.jpg`.
+  var nameTemplate: String = "{name}"
+
+  /// The chain a preset asked for, with the general preferences filled in
+  /// wherever it did not say. A preference is only a preference if something
+  /// actually reads it when nobody overrides it.
+  ///
+  /// - Parameter writing: what the chain ends up writing. Quality is only put
+  ///   in for images: an audio encoder reads a quality as a bitrate, and Apple
+  ///   Lossless refuses a bitrate outright — a general preference must not turn
+  ///   a working conversion into a failure.
+  func applyingDefaults(to operations: [Operation], writing target: UTType?) -> [Operation] {
+    guard let target, FormatCatalog.isWritableImage(target) else { return operations }
+
+    let saysQuality = operations.contains { if case .quality = $0 { return true } else { return false } }
+    guard !saysQuality else { return operations }
+
+    return operations + [.quality(level: defaultQuality)]
+  }
 
   // MARK: - Persistence
 

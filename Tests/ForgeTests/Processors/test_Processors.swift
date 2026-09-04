@@ -249,15 +249,25 @@ final class ConversionTests: BaseTestCase {
     let webp = try XCTUnwrap(UTType("org.webmproject.webp"))
     let destination = try folder("out")
 
+    // macOS reads WebP and cannot write it, so Forge uses cwebp when the Mac
+    // has one. Which of the two is true here depends on the machine, and the
+    // test asserts whichever it is rather than assuming.
     do {
-      _ = try await coordinator().processFile(
+      let history = try await coordinator().processFile(
         try ProcessableFile(url: source),
         with: .make(format: webp, category: .image),
         destinationMode: .copyTo,
         destinationURL: destination
       ) { _ in }
-      XCTFail("writing WebP should fail")
+
+      guard ExternalTools.locate("cwebp") != nil else {
+        return XCTFail("writing WebP should fail on a Mac with no cwebp")
+      }
+      let output = try XCTUnwrap(history.outputURL)
+      XCTAssertEqual(output.pathExtension, "webp")
+      XCTAssertGreaterThan(size(of: output), 0, "cwebp is installed, so the file has to be real")
     } catch {
+      XCTAssertNil(ExternalTools.locate("cwebp"), "cwebp is installed, so this should have worked")
       XCTAssertEqual(
         error.localizedDescription,
         "Forge cannot convert PNG to WEBP.",

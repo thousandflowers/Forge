@@ -17,6 +17,10 @@ struct PresetEditorView: View {
   @State private var category: PresetCategory
   @State private var actions: [Action]
   @State private var selection: Action.ID?
+  /// What this preset asks for instead of deciding.
+  @State private var parameters: [PresetParameter]
+  /// Empty means "use the general one from Settings".
+  @State private var nameTemplate: String
 
   init(preset: RulePreset?, onSave: @escaping (RulePreset) -> Void) {
     self.existing = preset
@@ -25,17 +29,21 @@ struct PresetEditorView: View {
     _description = State(initialValue: preset?.description ?? "")
     _category = State(initialValue: preset?.category ?? .image)
     _actions = State(initialValue: (preset?.actions ?? []).map(Action.init))
+    _parameters = State(initialValue: preset?.parameters ?? [])
+    _nameTemplate = State(initialValue: preset?.nameTemplate ?? "")
   }
 
   var body: some View {
     VStack(spacing: 0) {
       details
       Divider()
+      questions
+      Divider()
       actionList
       Divider()
       footer
     }
-    .frame(width: 520, height: 620)
+    .frame(width: 560, height: 700)
   }
 
   private var details: some View {
@@ -48,6 +56,74 @@ struct PresetEditorView: View {
     }
     .formStyle(.grouped)
     .frame(height: 130)
+  }
+
+  /// What the preset asks before it runs, and what it calls what it writes.
+  ///
+  /// A preset with no questions is a setting: the same thing every time. One
+  /// with questions is a shape — "fit under a size you choose" — and the answer
+  /// can be spent in the filename.
+  private var questions: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        Text("Asks for").font(.headline)
+        Spacer()
+        Menu {
+          ForEach(PresetParameter.Kind.allCases, id: \.self) { kind in
+            Button(kind.title) { add(kind) }
+          }
+        } label: {
+          Label("Add Question", systemImage: "plus")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+      }
+
+      if parameters.isEmpty {
+        Text("Nothing. This preset does the same thing every time.")
+          .font(.callout)
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach($parameters) { $parameter in
+          HStack(spacing: 8) {
+            TextField("Question", text: $parameter.label)
+            Text("{").foregroundStyle(.tertiary)
+            TextField("key", text: $parameter.key)
+              .frame(width: 80)
+              .font(.callout.monospaced())
+            Text("}").foregroundStyle(.tertiary)
+            Text(parameter.kind.unit).foregroundStyle(.secondary).frame(width: 26)
+            Button {
+              parameters.removeAll { $0.id == parameter.id }
+            } label: {
+              Image(systemName: "minus.circle")
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(Text("Remove \(parameter.label)"))
+          }
+        }
+      }
+
+      HStack(spacing: 8) {
+        Text("Names files").foregroundStyle(.secondary)
+        TextField("{name}", text: $nameTemplate)
+      }
+      .padding(.top, 4)
+    }
+    .padding(.horizontal, 16)
+    .padding(.vertical, 12)
+  }
+
+  /// A question needs a key nothing else is using, since the key is what a
+  /// name template spends.
+  private func add(_ kind: PresetParameter.Kind) {
+    var key = kind.rawValue.lowercased()
+    var attempt = 2
+    while parameters.contains(where: { $0.key == key }) {
+      key = "\(kind.rawValue.lowercased())\(attempt)"
+      attempt += 1
+    }
+    parameters.append(PresetParameter(key: key, label: kind.title, kind: kind))
   }
 
   @ViewBuilder
@@ -111,15 +187,18 @@ struct PresetEditorView: View {
   }
 
   private func save() {
-    onSave(
-      RulePreset(
-        id: existing?.id ?? UUID(),
-        name: name.trimmingCharacters(in: .whitespaces),
-        description: description,
-        category: category,
-        actions: actions.map(\.operation)
-      )
+    var preset = RulePreset(
+      id: existing?.id ?? UUID(),
+      name: name.trimmingCharacters(in: .whitespaces),
+      description: description,
+      category: category,
+      actions: actions.map(\.operation)
     )
+    preset.parameters = parameters.filter { !$0.key.trimmingCharacters(in: .whitespaces).isEmpty }
+    let template = nameTemplate.trimmingCharacters(in: .whitespaces)
+    preset.nameTemplate = template.isEmpty ? nil : template
+
+    onSave(preset)
     dismiss()
   }
 }
@@ -135,7 +214,7 @@ struct Action: Identifiable, Hashable {
 
 /// The kinds of action that can be added, and a blank of each.
 enum ActionKind: String, CaseIterable, Identifiable {
-  case convertFormat, resize, quality, filter, recognizeText, encode
+  case convertFormat, resize, quality, filter, recognizeText, encode, limitSize
   var id: String { rawValue }
 
   var blank: Operation {
@@ -146,6 +225,7 @@ enum ActionKind: String, CaseIterable, Identifiable {
     case .filter: return .filter(type: .grayscale)
     case .recognizeText: return .recognizeText(languages: [])
     case .encode: return .encode(codec: Codec.available.first ?? .h264)
+    case .limitSize: return .limitSize(bytes: 10_000_000)
     }
   }
 }
@@ -232,6 +312,19 @@ private struct ActionRow: View {
       .labelsHidden()
       .frame(maxWidth: 200, alignment: .leading)
 
+    case .limitSize(let bytes):
+      HStack(spacing: 6) {
+        TextField("Megabytes", text: Binding(
+          get: { String(format: "%g", Double(bytes) / 1_000_000) },
+          set: { text in
+            let megabytes = Double(text.replacingOccurrences(of: ",", with: ".")) ?? 0
+            action.operation = .limitSize(bytes: Int(max(megabytes, 0) * 1_000_000))
+          }
+        ))
+        .frame(width: 80)
+        Text("MB").foregroundStyle(.secondary)
+      }
+
     case .recognizeText(let languages):
       Picker("", selection: Binding(
         get: { languages.first ?? "" },
@@ -274,6 +367,17 @@ struct OutputFormat: Identifiable, Hashable {
   static var video: [OutputFormat] { Self.sorted(FormatCatalog.writableVideoTypes) }
   static var documents: [OutputFormat] {
     Self.sorted(Set(DocumentText.writable.keys).union([.pdf]))
+  }
+
+  /// The image formats, plus the ones a tool on this Mac adds. Offered only
+  /// where an image processor will do the writing: a PDF asked for WebP goes
+  /// to the document processor, which has no idea what cwebp is.
+  static var imagesWithTools: [OutputFormat] {
+    var types = FormatCatalog.writableImageTypes
+    if ExternalTools.locate("cwebp") != nil, let webp = UTType("org.webmproject.webp") {
+      types.insert(webp)
+    }
+    return Self.sorted(types)
   }
 
   /// Words out of a file: OCR for anything with pixels, transcription for

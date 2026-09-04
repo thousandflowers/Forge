@@ -144,7 +144,11 @@ actor ProcessingCoordinator {
     let result = try await processor.process(
       file.url,
       to: plan.workURL,
-      with: preset.toOperations(),
+      // A preset says what it cares about; Settings says the rest.
+      with: settings.applyingDefaults(
+        to: preset.toOperations(),
+        writing: preset.targetFormat ?? file.fileType
+      ),
       progress: progress
     )
 
@@ -230,7 +234,9 @@ actor ProcessingCoordinator {
         .deletingLastPathComponent()
         // No size in the name here: converting in place means the file stays
         // where it is, under the name it has.
-        .appendingPathComponent(outputName(for: file, extension: outputExtension, suffix: ""))
+        .appendingPathComponent(
+          outputName(for: file, preset: preset, extension: outputExtension, fallbackSuffix: "")
+        )
       return OutputPlan(
         finalURL: final,
         workURL: scratchURL(besides: final),
@@ -246,7 +252,7 @@ actor ProcessingCoordinator {
         )
       }
       let desired = folder.appendingPathComponent(
-        outputName(for: file, extension: outputExtension, suffix: suffix)
+        outputName(for: file, preset: preset, extension: outputExtension, fallbackSuffix: suffix)
       )
       // Claim the name straight away: two files converging on one output name
       // used to leave a single file behind, with both reported as converted.
@@ -313,9 +319,39 @@ actor ProcessingCoordinator {
     return final.deletingLastPathComponent().appendingPathComponent(name)
   }
 
-  private func outputName(for file: ProcessableFile, extension ext: String, suffix: String) -> String {
-    let base = (file.fileName as NSString).deletingPathExtension + suffix
-    return ext.isEmpty ? base : "\(base).\(ext)"
+  /// What the finished file is called.
+  ///
+  /// The template is the preset's own if it has one, otherwise the general one
+  /// from Settings. `{name}` is the original's name without its extension, and
+  /// every question the preset asked is available by its key — which is what
+  /// turns `holiday.png` into `holiday_10MB.jpg`.
+  private func outputName(
+    for file: ProcessableFile,
+    preset: RulePreset,
+    extension ext: String,
+    fallbackSuffix: String
+  ) -> String {
+    let stem = (file.fileName as NSString).deletingPathExtension
+    let template = preset.nameTemplate ?? settings.nameTemplate
+
+    var name = template.replacingOccurrences(of: "{name}", with: stem)
+    for parameter in preset.parameters {
+      let value = preset.parameterValues[parameter.key] ?? parameter.defaultValue
+      name = name.replacingOccurrences(of: "{\(parameter.key)}", with: parameter.token(for: value))
+    }
+    // A token nobody answered is dropped rather than printed as itself: a file
+    // called `holiday_{maxsize}.jpg` is worse than one called `holiday_.jpg`.
+    name = name.replacingOccurrences(
+      of: "\\{[A-Za-z0-9_.-]+\\}", with: "", options: .regularExpression
+    )
+    name = name.trimmingCharacters(in: .whitespaces)
+
+    // A template that said nothing keeps the old behaviour, where a resize
+    // puts its size in the name.
+    if name == stem { name += fallbackSuffix }
+    if name.isEmpty { name = stem }
+
+    return ext.isEmpty ? name : "\(name).\(ext)"
   }
 
   /// A resize puts its size in the name. Converting one picture to three sizes

@@ -132,10 +132,14 @@ final class AppModel: ObservableObject {
     )
   }
 
-  /// Write every preset to a file, so a set can be kept or handed on.
-  func exportPresets(to url: URL) {
-    let snapshot = presets
-    persist({ try await $0.export(snapshot, to: url) }, doing: "exporting your presets")
+  /// Write presets to a file, so one of them — or the lot — can be kept or
+  /// handed on. Sharing belongs to a preset rather than to the screen it sits
+  /// on, so this takes whichever ones were asked for.
+  func export(_ chosen: [RulePreset], to url: URL) {
+    let doing = chosen.count == 1
+      ? "exporting “\(chosen[0].name)”"
+      : "exporting your presets"
+    persist({ try await $0.export(chosen, to: url) }, doing: doing)
   }
 
   /// Read presets from a file, giving each a new identity so an import adds

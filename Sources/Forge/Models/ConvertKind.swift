@@ -125,6 +125,15 @@ enum ConvertKind: String, CaseIterable, Sendable {
     }
   }
 
+  /// A ceiling on the finished file. Only `ImageProcessor` writes, measures
+  /// and rewrites; offering it for a video would be a promise nothing keeps.
+  var supportsSizeLimit: Bool {
+    switch self {
+    case .image: return true
+    case .video, .audio, .document, .data, .model: return false
+    }
+  }
+
   /// Words out of the file: OCR for anything with pixels, transcription for
   /// anything with a soundtrack.
   var supportsTextExtraction: Bool {
@@ -144,7 +153,7 @@ enum ConvertKind: String, CaseIterable, Sendable {
     switch self {
     case .image:
       return [
-        OutputGroup("Images", OutputFormat.images),
+        OutputGroup("Images", OutputFormat.imagesWithTools),
         OutputGroup("Text", OutputFormat.text),
       ]
     case .video:

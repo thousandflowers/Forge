@@ -64,6 +64,25 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       )
     }
 
+    // WebP is one macOS reads but cannot write. If this Mac has cwebp, use it
+    // rather than refusing a conversion the machine can plainly do. Forge does
+    // not ship or download the encoder; it only notices one that is there.
+    if Self.isWebP(outputUTI), let cwebp = ExternalTools.locate("cwebp") {
+      let image = try transform(frames[0].image, with: operations)
+      progress(0.9)
+      try Self.writeWebP(image, to: output, using: cwebp, quality: quality(from: operations))
+      progress(1.0)
+
+      let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
+      return ProcessingResult(
+        outputURL: output,
+        outputSize: attributes[.size] as? Int64 ?? 0,
+        outputDimensions: (image.width, image.height),
+        duration: Date().timeIntervalSince(start),
+        additionalOutputs: []
+      )
+    }
+
     guard FormatCatalog.isWritableImage(outputUTI) || FormatCatalog.isWritableVideo(outputUTI) else {
       throw ProcessingError.unsupportedConversion(from: inputType, to: outputUTI)
     }
@@ -84,6 +103,13 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     } else {
       let options = destinationOptions(for: outputUTI, operations: operations, source: source)
       extras = try writeFrames(rendered, to: output, as: outputUTI, options: options)
+
+      // A size ceiling is a promise about the result rather than a setting for
+      // the encoder, so it is kept the only way a promise about a result can
+      // be: write it, measure it, and write it again lower until it fits.
+      if let ceiling = Self.sizeCeiling(from: operations) {
+        try squeeze(rendered, to: output, as: outputUTI, options: options, ceiling: ceiling)
+      }
     }
     progress(1.0)
 
@@ -206,6 +232,104 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     return options
   }
 
+  static func isWebP(_ uti: UTType) -> Bool {
+    guard let webp = UTType("org.webmproject.webp") else { return false }
+    return uti.conforms(to: webp)
+  }
+
+  /// Hand the image to cwebp as a lossless PNG, so the only lossy step is the
+  /// one that was asked for.
+  private static func writeWebP(_ image: CGImage, to output: URL, using cwebp: URL, quality: Float) throws {
+    let scratch = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("forge-\(UUID().uuidString).png")
+    defer { try? FileManager.default.removeItem(at: scratch) }
+
+    guard let destination = CGImageDestinationCreateWithURL(
+      scratch as CFURL, UTType.png.identifier as CFString, 1, nil
+    ) else {
+      throw ProcessingError.conversionFailed(reason: "Cannot stage the image for cwebp")
+    }
+    CGImageDestinationAddImage(destination, image, nil)
+    guard CGImageDestinationFinalize(destination) else {
+      throw ProcessingError.conversionFailed(reason: "Cannot stage the image for cwebp")
+    }
+
+    try ExternalTools.run(cwebp, [
+      "-quiet",
+      "-q", String(Int((quality * 100).rounded())),
+      scratch.path,
+      "-o", output.path,
+    ])
+  }
+
+  static func sizeCeiling(from operations: [Operation]) -> Int? {
+    operations.compactMap { if case .limitSize(let bytes) = $0 { return bytes } else { return nil } }
+      .filter { $0 > 0 }
+      .min()
+  }
+
+  /// Write the image again, smaller, until it is under the ceiling.
+  ///
+  /// Quality goes first because it costs the least visibly; once there is no
+  /// quality left to give, the pixels go. Both have a floor: past it the file
+  /// is not the file anybody asked for, and saying so beats handing back
+  /// something unrecognisable that happens to be small.
+  private func squeeze(
+    _ frames: [ImageFrame],
+    to output: URL,
+    as uti: UTType,
+    options: [CFString: Any],
+    ceiling: Int
+  ) throws {
+    let lowestQuality: Float = 0.2
+    let smallestScale: CGFloat = 0.15
+    let attemptsAllowed = 12
+
+    var quality = (options[kCGImageDestinationLossyCompressionQuality] as? Float) ?? 0.8
+    var scale: CGFloat = 1
+    var current = frames
+    var attempts = 0
+
+    while try Self.fileSize(of: output) > ceiling {
+      try Task.checkCancellation()
+      attempts += 1
+      guard attempts <= attemptsAllowed else { break }
+
+      var next = options
+      if isLossy(uti), quality > lowestQuality {
+        quality = max(lowestQuality, quality - 0.12)
+        next[kCGImageDestinationLossyCompressionQuality] = quality
+      } else {
+        scale *= 0.82
+        guard scale >= smallestScale else { break }
+        let width = max(16, Int(CGFloat(frames[0].image.width) * scale))
+        current = try frames.map { frame in
+          ImageFrame(
+            image: try transform(frame.image, with: [.resize(width: width, height: nil, fitMode: .proportional)]),
+            duration: frame.duration
+          )
+        }
+        if isLossy(uti) { next[kCGImageDestinationLossyCompressionQuality] = quality }
+      }
+
+      _ = try writeFrames(current, to: output, as: uti, options: next)
+    }
+
+    let finalSize = try Self.fileSize(of: output)
+    guard finalSize <= ceiling else {
+      throw ProcessingError.conversionFailed(
+        reason: "Cannot get \(output.lastPathComponent) under "
+          + "\(Int64(ceiling).formatted(.byteCount(style: .file))); the smallest it goes is "
+          + "\(Int64(finalSize).formatted(.byteCount(style: .file)))."
+      )
+    }
+  }
+
+  private static func fileSize(of url: URL) throws -> Int {
+    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+    return (attributes[.size] as? NSNumber)?.intValue ?? 0
+  }
+
   /// Quality only means something for formats that throw information away.
   private func isLossy(_ uti: UTType) -> Bool {
     [UTType.jpeg, .heic, UTType("public.avif"), UTType("public.jpeg-2000")]
@@ -225,7 +349,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
 
   private func applyOperation(_ operation: Operation, to image: CIImage) throws -> CIImage {
     switch operation {
-    case .convertFormat, .quality, .recognizeText, .encode:
+    case .convertFormat, .quality, .recognizeText, .encode, .limitSize:
       return image // settled when the file is written
     case .resize(let width, let height, let mode):
       return applyResize(image, targetWidth: width, targetHeight: height, mode: mode)

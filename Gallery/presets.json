@@ -7,11 +7,28 @@
       "description": "1600 px JPEG at quality 70.",
       "category": "image",
       "actions": [
-        { "kind": "convertFormat", "format": { "identifier": "public.jpeg" } },
-        { "kind": "resize", "width": 1600, "height": 1600, "fitMode": "proportional" },
-        { "kind": "quality", "level": 70 }
+        {
+          "kind": "convertFormat",
+          "format": {
+            "identifier": "public.jpeg"
+          }
+        },
+        {
+          "kind": "resize",
+          "width": 1600,
+          "height": 1600,
+          "fitMode": "proportional"
+        },
+        {
+          "kind": "quality",
+          "level": 70
+        }
       ]
-    }
+    },
+    "tags": [
+      "photos",
+      "sharing"
+    ]
   },
   {
     "author": "thousandflowers",
@@ -21,11 +38,28 @@
       "description": "720p MP4, H.264.",
       "category": "video",
       "actions": [
-        { "kind": "convertFormat", "format": { "identifier": "public.mpeg-4" } },
-        { "kind": "resize", "width": 1280, "height": 720, "fitMode": "proportional" },
-        { "kind": "encode", "codec": "h264" }
+        {
+          "kind": "convertFormat",
+          "format": {
+            "identifier": "public.mpeg-4"
+          }
+        },
+        {
+          "kind": "resize",
+          "width": 1280,
+          "height": 720,
+          "fitMode": "proportional"
+        },
+        {
+          "kind": "encode",
+          "codec": "h264"
+        }
       ]
-    }
+    },
+    "tags": [
+      "screen recording",
+      "sharing"
+    ]
   },
   {
     "author": "thousandflowers",
@@ -35,10 +69,22 @@
       "description": "Reads the page, writes plain text.",
       "category": "document",
       "actions": [
-        { "kind": "convertFormat", "format": { "identifier": "public.plain-text" } },
-        { "kind": "recognizeText", "languages": [] }
+        {
+          "kind": "convertFormat",
+          "format": {
+            "identifier": "public.plain-text"
+          }
+        },
+        {
+          "kind": "recognizeText",
+          "languages": []
+        }
       ]
-    }
+    },
+    "tags": [
+      "ocr",
+      "archiving"
+    ]
   },
   {
     "author": "thousandflowers",
@@ -48,9 +94,21 @@
       "description": "Apple Lossless in an M4A.",
       "category": "audio",
       "actions": [
-        { "kind": "convertFormat", "format": { "identifier": "com.apple.m4a-audio" } },
-        { "kind": "encode", "codec": "appleLossless" }
+        {
+          "kind": "convertFormat",
+          "format": {
+            "identifier": "com.apple.m4a-audio"
+          }
+        },
+        {
+          "kind": "encode",
+          "codec": "appleLossless"
+        }
       ]
-    }
+    },
+    "tags": [
+      "music",
+      "archiving"
+    ]
   }
 ]

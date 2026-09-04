@@ -13,6 +13,12 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
   case recognizeText(languages: [String])
   /// Encode with a specific codec, where the container allows more than one.
   case encode(codec: Codec)
+  /// Come out no larger than this many bytes, whatever it takes.
+  ///
+  /// Unlike quality, this is a promise about the result rather than a setting
+  /// handed to the encoder: the file is written, measured, and written again
+  /// lower until it fits.
+  case limitSize(bytes: Int)
 
   /// A short name for the action, as the editor lists it.
   var title: String {
@@ -23,6 +29,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .filter: return "Apply filter"
     case .recognizeText: return "Read text"
     case .encode: return "Choose codec"
+    case .limitSize: return "Fit within a size"
     }
   }
 
@@ -34,6 +41,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .filter: return "camera.filters"
     case .recognizeText: return "text.viewfinder"
     case .encode: return "cpu"
+    case .limitSize: return "arrow.down.right.and.arrow.up.left"
     }
   }
 
@@ -45,6 +53,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .filter: return "filter"
     case .recognizeText: return "ocr"
     case .encode: return "codec"
+    case .limitSize: return "limitSize"
     }
   }
 }
@@ -53,11 +62,11 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
 
 extension Operation {
   private enum CodingKeys: String, CodingKey {
-    case kind, format, width, height, fitMode, level, filter, languages, codec
+    case kind, format, width, height, fitMode, level, filter, languages, codec, bytes
   }
 
   private enum Kind: String, Codable {
-    case convertFormat, resize, quality, filter, recognizeText, encode
+    case convertFormat, resize, quality, filter, recognizeText, encode, limitSize
   }
 
   init(from decoder: Decoder) throws {
@@ -79,6 +88,8 @@ extension Operation {
       self = .recognizeText(languages: try container.decodeIfPresent([String].self, forKey: .languages) ?? [])
     case .encode:
       self = .encode(codec: try container.decode(Codec.self, forKey: .codec))
+    case .limitSize:
+      self = .limitSize(bytes: try container.decode(Int.self, forKey: .bytes))
     }
   }
 
@@ -105,6 +116,9 @@ extension Operation {
     case .encode(let codec):
       try container.encode(Kind.encode, forKey: .kind)
       try container.encode(codec, forKey: .codec)
+    case .limitSize(let bytes):
+      try container.encode(Kind.limitSize, forKey: .kind)
+      try container.encode(bytes, forKey: .bytes)
     }
   }
 }
@@ -116,6 +130,16 @@ enum ResizeFitMode: String, Codable, Hashable, CaseIterable, Sendable {
   case cropCenter      // Scale to fill, then crop center
   case stretch         // Stretch to exact dimensions (distorts)
   case pad             // Scale to fit, pad with background
+
+  /// What each one does, said the way somebody choosing would say it.
+  var title: String {
+    switch self {
+    case .proportional: return "Fit inside"
+    case .cropCenter: return "Fill and crop"
+    case .stretch: return "Stretch"
+    case .pad: return "Pad out"
+    }
+  }
 }
 
 enum FilterType: String, Codable, Hashable, CaseIterable, Sendable {

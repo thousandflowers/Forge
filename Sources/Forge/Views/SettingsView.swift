@@ -16,6 +16,18 @@ struct SettingsView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
+      Section("What everything starts from") {
+        Picker("Resizing means", selection: $model.settings.defaultFitMode) {
+          ForEach(ResizeFitMode.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        Stepper(value: $model.settings.defaultQuality, in: 1...100) {
+          LabeledContent("Quality when a preset says none", value: "\(model.settings.defaultQuality)")
+        }
+        TextField("Name new files", text: $model.settings.nameTemplate)
+        Text("{name} is the original's name. A preset that asks a question adds its own token, so {name}_{maxsize} writes holiday_10MB.jpg. Any preset can override all of this.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
       Section("When a batch finishes") {
         Toggle("Notify me", isOn: $model.settings.notifyWhenFinished)
       }
