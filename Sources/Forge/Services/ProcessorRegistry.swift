@@ -5,8 +5,7 @@ import UniformTypeIdentifiers
 actor ProcessorRegistry {
   private let nativeProcessors: [FileProcessor] = [
     ImageProcessor(),
-    VideoProcessor(),
-    AudioProcessor(),
+    MediaProcessor(),
     SimpleDocProcessor()
   ]
 

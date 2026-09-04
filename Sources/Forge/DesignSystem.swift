@@ -32,12 +32,14 @@ enum FileStatus: String {
   case processing = "Processing"
   case completed = "Completed"
   case failed = "Failed"
+  case cancelled = "Cancelled"
 
   var color: Color {
     switch self {
     case .pending: return .secondary
     case .processing: return .orange
     case .completed: return .green
+    case .cancelled: return .secondary
     case .failed: return .red
     }
   }
@@ -47,6 +49,7 @@ enum FileStatus: String {
     case .pending: return "circle"
     case .processing: return "arrow.triangle.2.circlepath"
     case .completed: return "checkmark.circle.fill"
+    case .cancelled: return "slash.circle"
     case .failed: return "xmark.circle.fill"
     }
   }

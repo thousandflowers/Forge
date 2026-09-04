@@ -10,7 +10,6 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   var targetFormat: UTType?
   var resize: ResizeSpec?
   var quality: Int?        // 1-100
-  var targetSize: Int64?   // bytes (max size)
   var filters: [FilterType]
 
   var icon: String?
@@ -24,7 +23,6 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
     targetFormat: UTType? = nil,
     resize: ResizeSpec? = nil,
     quality: Int? = nil,
-    targetSize: Int64? = nil,
     filters: [FilterType] = [],
     icon: String? = nil,
     category: PresetCategory,
@@ -36,7 +34,6 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
     self.targetFormat = targetFormat
     self.resize = resize
     self.quality = quality
-    self.targetSize = targetSize
     self.filters = filters
     self.icon = icon
     self.category = category
@@ -59,9 +56,6 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
     }
     if let quality = quality {
       ops.append(.quality(level: quality))
-    }
-    if let size = targetSize {
-      ops.append(.compress(targetSize: size))
     }
     ops.append(contentsOf: filters.map { .filter(type: $0) })
 

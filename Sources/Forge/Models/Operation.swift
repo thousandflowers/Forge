@@ -8,29 +8,25 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
   case convertFormat(to: UTType)
   case resize(width: Int?, height: Int?, fitMode: ResizeFitMode)
   case quality(level: Int)           // 1-100
-  case compress(targetSize: Int64)   // bytes (max file size)
   case filter(type: FilterType)
-  case rename(pattern: String)       // Template: "processed_{name}"
 
   var id: String {
     switch self {
     case .convertFormat: return "convert"
     case .resize: return "resize"
     case .quality: return "quality"
-    case .compress: return "compress"
     case .filter: return "filter"
-    case .rename: return "rename"
     }
   }
 
   // MARK: - Codable
 
   private enum CodingKeys: String, CodingKey {
-    case type, to, width, height, fitMode, level, targetSize, filter, pattern
+    case type, to, width, height, fitMode, level, filter
   }
 
   private enum OperationType: String, Codable {
-    case convertFormat, resize, quality, compress, filter, rename
+    case convertFormat, resize, quality, filter
   }
 
   init(from decoder: Decoder) throws {
@@ -49,15 +45,9 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .quality:
       let level = try container.decode(Int.self, forKey: .level)
       self = .quality(level: level)
-    case .compress:
-      let size = try container.decode(Int64.self, forKey: .targetSize)
-      self = .compress(targetSize: size)
     case .filter:
       let filter = try container.decode(FilterType.self, forKey: .filter)
       self = .filter(type: filter)
-    case .rename:
-      let pattern = try container.decode(String.self, forKey: .pattern)
-      self = .rename(pattern: pattern)
     }
   }
 
@@ -75,15 +65,9 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .quality(let level):
       try container.encode(OperationType.quality, forKey: .type)
       try container.encode(level, forKey: .level)
-    case .compress(let size):
-      try container.encode(OperationType.compress, forKey: .type)
-      try container.encode(size, forKey: .targetSize)
     case .filter(let filter):
       try container.encode(OperationType.filter, forKey: .type)
       try container.encode(filter, forKey: .filter)
-    case .rename(let pattern):
-      try container.encode(OperationType.rename, forKey: .type)
-      try container.encode(pattern, forKey: .pattern)
     }
   }
 }

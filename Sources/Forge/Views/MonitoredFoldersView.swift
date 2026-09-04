@@ -54,6 +54,7 @@ private struct AddFolderSheet: View {
   @State private var presetID: UUID?
   @State private var mode: DestinationMode = .copyTo
   @State private var destinationURL: URL?
+  @State private var includeSubfolders = false
 
   private var canAdd: Bool {
     folderURL != nil && presetID != nil && (mode == .overwrite || destinationURL != nil)
@@ -66,6 +67,7 @@ private struct AddFolderSheet: View {
           Button { pick(source: true) } label: {
             Label(folderURL?.path ?? "Choose folder…", systemImage: "folder").lineLimit(1)
           }
+          Toggle("Include subfolders", isOn: $includeSubfolders)
         }
         Section("Apply") {
           Picker("Preset", selection: $presetID) {
@@ -89,7 +91,13 @@ private struct AddFolderSheet: View {
         Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
         Button("Add") {
           if let folderURL, let presetID {
-            model.addFolder(url: folderURL, presetID: presetID, mode: mode, destination: destinationURL)
+            model.addFolder(
+              url: folderURL,
+              presetID: presetID,
+              mode: mode,
+              destination: destinationURL,
+              includeSubfolders: includeSubfolders
+            )
           }
           dismiss()
         }

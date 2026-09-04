@@ -103,7 +103,6 @@ struct PresetEditorView: View {
       targetFormat: formatChoice.utType,
       resize: resize,
       quality: enableQuality ? Int(quality) : nil,
-      targetSize: existing?.targetSize,
       filters: Array(filters),
       icon: existing?.icon,
       category: category,

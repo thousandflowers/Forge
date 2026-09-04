@@ -1,41 +1,44 @@
 import Foundation
 import CoreServices
 
-/// Watches a folder for file system events using FSEvents
+/// Watches one folder and reports files that have finished arriving.
+///
+/// The previous version reacted to every event flag, including the ones raised
+/// by its own output, and called a fixed one-second delay a debounce, so a file
+/// still being copied was handed over half-written.
 final class MonitoredFolderWatcher {
-  typealias FileAddedHandler = (URL) async -> Void
+  typealias FileAddedHandler = @Sendable (URL) async -> Void
 
+  /// How long a file must stay unchanged before it counts as finished.
+  private static let settleInterval: TimeInterval = 1.0
+  /// How often to re-check a file that is still growing.
+  private static let pollInterval: TimeInterval = 0.5
+
+  private let queue = DispatchQueue(label: "com.eugeniozamengo.Forge.watcher", qos: .utility)
   private var stream: FSEventStreamRef?
-  private let queue = DispatchQueue(label: "com.fileforge.watcher", qos: .utility)
-  private var watchedPaths: Set<String> = []
-  private var handlers: [String: FileAddedHandler] = [:] // path → handler
+  private var root: URL?
+  private var includeSubfolders = false
+  private var handler: FileAddedHandler?
 
-  deinit {
-    stop()
-  }
+  /// Files seen but not yet settled, with the size they were last seen at.
+  private var pending: [String: (size: Int64, since: Date)] = [:]
+  private var timer: DispatchSourceTimer?
 
-  /// Start watching a folder
+  deinit { stop() }
+
   func startWatching(folder: MonitoredFolder, handler: @escaping FileAddedHandler) throws {
-    let path = folder.url.path
+    stop()
 
-    // Watch the folder (and subfolders if requested)
-    var pathsToWatch = [path]
-    if folder.includeSubfolders {
-      // For recursive watching, we need to add subdirectories.
-      // FSEvents can watch recursively with a flag, but we'll keep simple: just the root
-      // Recursive implementation can be added later
-    }
+    self.root = folder.url
+    self.includeSubfolders = folder.includeSubfolders
+    self.handler = handler
 
-    // Create event stream. A @convention(c) callback cannot capture context,
-    // so we pass `self` through clientCallBackInfo and recover it inside.
-    var streamRef: FSEventStreamRef?
-
-    let callback: FSEventStreamCallback = { (_, clientCallBackInfo, numEvents, eventPaths, _, _) in
-      guard let info = clientCallBackInfo else { return }
+    let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
+      guard let info else { return }
       let watcher = Unmanaged<MonitoredFolderWatcher>.fromOpaque(info).takeUnretainedValue()
-      let paths = eventPaths.assumingMemoryBound(to: UnsafePointer<CChar>.self)
-      for i in 0..<numEvents {
-        watcher.handleEvent(path: String(cString: paths[i]))
+      let paths = paths.assumingMemoryBound(to: UnsafePointer<CChar>.self)
+      for index in 0..<count {
+        watcher.handleEvent(path: String(cString: paths[index]), flags: flags[index])
       }
     }
 
@@ -47,61 +50,127 @@ final class MonitoredFolderWatcher {
       copyDescription: nil
     )
 
-    streamRef = FSEventStreamCreate(
+    guard let stream = FSEventStreamCreate(
       kCFAllocatorDefault,
       callback,
       &context,
-      pathsToWatch as CFArray,
+      [folder.url.path] as CFArray,
       FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-      1.0, // latency in seconds
-      UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagWatchRoot)
-    )
-
-    guard let stream = streamRef else {
-      throw ProcessingError.conversionFailed(reason: "Failed to create FSEventStream")
+      Self.pollInterval,
+      UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer)
+    ) else {
+      throw ProcessingError.conversionFailed(
+        reason: "Cannot watch \(folder.url.lastPathComponent)"
+      )
     }
 
-    FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-    FSEventStreamStart(stream)
-
+    FSEventStreamSetDispatchQueue(stream, queue)
+    guard FSEventStreamStart(stream) else {
+      FSEventStreamInvalidate(stream)
+      FSEventStreamRelease(stream)
+      throw ProcessingError.conversionFailed(
+        reason: "Cannot start watching \(folder.url.lastPathComponent)"
+      )
+    }
     self.stream = stream
-    self.watchedPaths.insert(path)
-    self.handlers[path] = handler
   }
 
-  /// Dispatch a file-system event to the matching folder handler (debounced).
-  /// Called from the FSEvents callback thread.
-  private func handleEvent(path: String) {
-    for (root, handler) in handlers where path.hasPrefix(root) {
-      // Debounce - wait for the file to be fully written before handling.
-      DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-        Task { await handler(URL(fileURLWithPath: path)) }
+  func stopWatching(folder: MonitoredFolder) {
+    guard root?.path == folder.url.path else { return }
+    stop()
+  }
+
+  func stop() {
+    if let stream {
+      FSEventStreamStop(stream)
+      FSEventStreamInvalidate(stream)
+      FSEventStreamRelease(stream)
+    }
+    stream = nil
+    timer?.cancel()
+    timer = nil
+    queue.async { [weak self] in self?.pending.removeAll() }
+    root = nil
+    handler = nil
+  }
+
+  // MARK: - Events
+
+  /// Called on `queue`, which also owns `pending`.
+  private func handleEvent(path: String, flags: FSEventStreamEventFlags) {
+    guard Self.isFileArrival(flags) else { return }
+
+    let url = URL(fileURLWithPath: path)
+    guard let root, Self.isWithin(url, root: root, includeSubfolders: includeSubfolders) else { return }
+
+    // Forge's own scratch files start with a dot; so do the system's.
+    guard !url.lastPathComponent.hasPrefix(".") else { return }
+    guard let size = Self.fileSize(url) else { return }
+
+    pending[path] = (size: size, since: Date())
+    startTimerIfNeeded()
+  }
+
+  /// Only creations and renames bring a new file in. Modifications, removals
+  /// and permission changes used to trigger conversions of their own.
+  private static func isFileArrival(_ flags: FSEventStreamEventFlags) -> Bool {
+    let flags = Int(flags)
+    guard flags & kFSEventStreamEventFlagItemIsFile != 0 else { return false }
+    guard flags & kFSEventStreamEventFlagItemRemoved == 0 else { return false }
+    return flags & kFSEventStreamEventFlagItemCreated != 0
+      || flags & kFSEventStreamEventFlagItemRenamed != 0
+  }
+
+  private static func isWithin(_ url: URL, root: URL, includeSubfolders: Bool) -> Bool {
+    let rootPath = root.standardizedFileURL.path
+    let path = url.standardizedFileURL.path
+    guard path.hasPrefix(rootPath + "/") else { return false }
+    if includeSubfolders { return true }
+    return url.deletingLastPathComponent().standardizedFileURL.path == rootPath
+  }
+
+  private static func fileSize(_ url: URL) -> Int64? {
+    let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+    return attributes?[.size] as? Int64
+  }
+
+  private func startTimerIfNeeded() {
+    guard timer == nil else { return }
+    let timer = DispatchSource.makeTimerSource(queue: queue)
+    timer.schedule(deadline: .now() + Self.pollInterval, repeating: Self.pollInterval)
+    timer.setEventHandler { [weak self] in self?.drainSettled() }
+    timer.resume()
+    self.timer = timer
+  }
+
+  /// Hand over the files whose size has stopped changing. A file still being
+  /// copied grows between ticks, so it simply waits another round.
+  private func drainSettled() {
+    let now = Date()
+    var ready: [URL] = []
+
+    for (path, seen) in pending {
+      let url = URL(fileURLWithPath: path)
+      guard let size = Self.fileSize(url) else {
+        pending.removeValue(forKey: path)
+        continue
+      }
+      if size != seen.size {
+        pending[path] = (size: size, since: now)
+      } else if now.timeIntervalSince(seen.since) >= Self.settleInterval {
+        pending.removeValue(forKey: path)
+        ready.append(url)
       }
     }
-  }
 
-  /// Stop watching a specific folder
-  func stopWatching(folder: MonitoredFolder) {
-    let path = folder.url.path
-    if let stream = stream, watchedPaths.contains(path) {
-      FSEventStreamStop(stream)
-      FSEventStreamInvalidate(stream)
-      FSEventStreamRelease(stream)
-      self.stream = nil
-      watchedPaths.remove(path)
-      handlers.removeValue(forKey: path)
+    if pending.isEmpty {
+      timer?.cancel()
+      timer = nil
     }
-  }
 
-  /// Stop all watches
-  func stop() {
-    if let stream = stream {
-      FSEventStreamStop(stream)
-      FSEventStreamInvalidate(stream)
-      FSEventStreamRelease(stream)
-      self.stream = nil
+    guard let handler, !ready.isEmpty else { return }
+    for url in ready {
+      Task { await handler(url) }
     }
-    watchedPaths.removeAll()
-    handlers.removeAll()
   }
 }

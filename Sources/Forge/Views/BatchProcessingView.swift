@@ -77,7 +77,14 @@ struct BatchProcessingView: View {
       TableColumn("Dimensions") { f in
         Text(f.dimensions.map { "\($0.width) × \($0.height)" } ?? "—").foregroundStyle(.secondary)
       }
-      TableColumn("Status") { f in statusLabel(vm.statusMap[f.id] ?? .pending) }
+      TableColumn("Status") { f in
+        let status = vm.statusMap[f.id] ?? .pending
+        if status == .processing, let fraction = vm.fileProgress[f.id] {
+          ProgressView(value: fraction).progressViewStyle(.linear).frame(maxWidth: 120)
+        } else {
+          statusLabel(status)
+        }
+      }
     }
   }
 
@@ -149,8 +156,11 @@ struct BatchProcessingView: View {
 final class BatchViewModel: ObservableObject {
   @Published var files: [ProcessableFile] = []
   @Published var statusMap: [UUID: FileStatus] = [:]
+  @Published var fileProgress: [UUID: Double] = [:]
   @Published var isProcessing = false
   @Published var progress: Double = 0
+
+  private let cancellation = CancellationFlag()
 
   func add(_ urls: [URL]) {
     let existing = Set(files.map(\.url))
@@ -159,52 +169,135 @@ final class BatchViewModel: ObservableObject {
   }
 
   func clear() {
-    files.removeAll(); statusMap.removeAll(); progress = 0
+    files.removeAll()
+    statusMap.removeAll()
+    fileProgress.removeAll()
+    progress = 0
   }
 
   func cancel(model: AppModel) {
+    // The flag stops new files from being started; cancelling the coordinator
+    // stops the ones already running. Doing only the second let the loop keep
+    // queueing work after the user asked it to stop.
+    cancellation.set()
     let coordinator = model.coordinator
     Task { await coordinator.cancelAll() }
-    isProcessing = false
   }
 
   func convert(model: AppModel, preset: RulePreset, mode: DestinationMode, destination: URL?) async {
     guard !files.isEmpty else { return }
+
+    cancellation.reset()
     isProcessing = true
     progress = 0
+    fileProgress.removeAll()
+    defer { isProcessing = false }
+
     let coordinator = model.coordinator
-    let total = files.count
-    var done = 0
     let limit = max(1, await coordinator.maxConcurrentNative)
+    let total = files.count
+    let cancellation = self.cancellation
 
-    for start in stride(from: 0, to: files.count, by: limit) {
-      let wave = Array(files[start..<min(start + limit, files.count)])
-      for f in wave { statusMap[f.id] = .processing }
-
-      let results = await withTaskGroup(of: (UUID, FileStatus).self) { group -> [(UUID, FileStatus)] in
-        for f in wave {
-          group.addTask {
-            do {
-              _ = try await coordinator.processFile(
-                f, with: preset, destinationMode: mode, destinationURL: destination
-              ) { _ in }
-              return (f.id, .completed)
-            } catch {
-              return (f.id, .failed)
-            }
-          }
+    // Each file is packaged up here, on the main actor, so the group below
+    // only ever touches values it is allowed to touch.
+    let jobs: [Job] = files.map { file in
+      let onProgress = progressHandler(for: file.id)
+      return Job(id: file.id) {
+        do {
+          let entry = try await coordinator.processFile(
+            file, with: preset, destinationMode: mode, destinationURL: destination,
+            progress: onProgress
+          )
+          return Outcome(id: file.id, status: .completed, output: entry.outputURL)
+        } catch is CancellationError {
+          return Outcome(id: file.id, status: .cancelled, output: nil)
+        } catch {
+          return Outcome(id: file.id, status: .failed, output: nil)
         }
-        var out: [(UUID, FileStatus)] = []
-        for await result in group { out.append(result) }
-        return out
       }
-      for (id, status) in results { statusMap[id] = status }
-
-      done += wave.count
-      progress = Double(done) / Double(total)
     }
 
-    isProcessing = false
+    var completed = 0
+
+    // A new file starts the moment a slot frees up, instead of waiting for a
+    // whole batch to drain: one long video no longer holds up everything queued
+    // behind it.
+    await withTaskGroup(of: Outcome.self) { group in
+      var next = 0
+
+      func spawn() async -> Bool {
+        guard !cancellation.isSet, next < jobs.count else { return false }
+        let job = jobs[next]
+        next += 1
+        await MainActor.run { self.statusMap[job.id] = .processing }
+        group.addTask { await job.run() }
+        return true
+      }
+
+      for _ in 0..<limit where await spawn() {}
+
+      while let outcome = await group.next() {
+        completed += 1
+        let done = completed
+        await MainActor.run {
+          self.statusMap[outcome.id] = outcome.status
+          self.fileProgress[outcome.id] = outcome.status == .completed ? 1 : 0
+          self.progress = Double(done) / Double(total)
+          if let output = outcome.output { model.remember(output) }
+        }
+        _ = await spawn()
+      }
+    }
+
     await model.refreshHistory()
+  }
+
+  /// Progress arrives off the main actor and far more often than the screen
+  /// can use, so it is coalesced to whole percentage points.
+  private func progressHandler(for id: UUID) -> @Sendable (Double) -> Void {
+    { [weak self] fraction in
+      Task { @MainActor in
+        guard let self else { return }
+        let rounded = (fraction * 100).rounded() / 100
+        guard self.fileProgress[id] != rounded else { return }
+        self.fileProgress[id] = rounded
+      }
+    }
+  }
+}
+
+/// One queued conversion, ready to run away from the main actor.
+private struct Job: Sendable {
+  let id: UUID
+  let run: @Sendable () async -> Outcome
+}
+
+private struct Outcome: Sendable {
+  let id: UUID
+  let status: FileStatus
+  let output: URL?
+}
+
+/// A cancel flag both the main actor and the conversion tasks can see.
+private final class CancellationFlag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value = false
+
+  var isSet: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return value
+  }
+
+  func set() {
+    lock.lock()
+    value = true
+    lock.unlock()
+  }
+
+  func reset() {
+    lock.lock()
+    value = false
+    lock.unlock()
   }
 }

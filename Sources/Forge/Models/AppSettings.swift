@@ -1,38 +1,27 @@
 import Foundation
 
-/// User-configurable application settings
+/// User-configurable settings.
+///
+/// Only settings that change what Forge does live here. The screen used to
+/// offer a memory threshold, a metadata toggle, a notifications switch and a
+/// processor switch, none of which were read anywhere.
 struct AppSettings: Codable, Sendable, Equatable {
-  var nativeProcessorsEnabled: Bool = true
+  /// How many files convert at once. Range 1-8.
+  var maxConcurrentNative: Int = 2
 
-  var maxConcurrentNative: Int = 2  // Range 1-8
-
-  var memoryWarningThresholdMB: Int = 1024
-
-  var preserveOriginalMetadata: Bool = true
+  /// Keep a copy of the original before an in-place conversion replaces it.
   var createBackupBeforeOverwrite: Bool = true
-  var backupFolderPath: String?  // Default: ~/Library/Application Support/Forge/Backups
-
-  var showNotifications: Bool = true
-
-  var tempFolderPath: String = {
-    FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
-      .first!.appendingPathComponent("Forge").path
-  }()
-
-  var tempFolderURL: URL {
-    URL(fileURLWithPath: tempFolderPath)
-  }
 
   // MARK: - Persistence
 
   private static let settingsKey = "ForgeSettings"
 
   static func load() -> AppSettings {
-    if let data = UserDefaults.standard.data(forKey: settingsKey),
-       let settings = try? JSONDecoder().decode(AppSettings.self, from: data) {
-      return settings
+    guard let data = UserDefaults.standard.data(forKey: settingsKey),
+          let settings = try? JSONDecoder().decode(AppSettings.self, from: data) else {
+      return AppSettings()
     }
-    return AppSettings()
+    return settings
   }
 
   func save() throws {

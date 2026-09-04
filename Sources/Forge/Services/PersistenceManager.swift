@@ -9,21 +9,34 @@ actor PersistenceManager {
   private let presetsDir: URL
   private let foldersFile: URL
   private let historyFile: URL
-  private let settingsFile: URL
 
-  private init() {
-    let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-      .first!.appendingPathComponent("Forge")
+  /// Root of everything Forge stores for the user.
+  static var supportDirectory: URL {
+    let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+      ?? FileManager.default.temporaryDirectory
+    return base.appendingPathComponent("Forge")
+  }
 
-    try? fileManager.createDirectory(at: appSupport, withIntermediateDirectories: true, attributes: nil)
 
-    self.presetsDir = appSupport.appendingPathComponent("Presets")
-    self.foldersFile = appSupport.appendingPathComponent("MonitoredFolders.json")
-    self.historyFile = appSupport.appendingPathComponent("History.json")
-    self.settingsFile = appSupport.appendingPathComponent("Settings.json")
+  /// The root this instance stores under. Tests point it at a scratch
+  /// directory so a test run cannot touch the files the app is keeping for the
+  /// person using it.
+  nonisolated let root: URL
+
+  init(root: URL = PersistenceManager.supportDirectory) {
+    self.root = root
+
+    try? fileManager.createDirectory(at: root, withIntermediateDirectories: true, attributes: nil)
+
+    self.presetsDir = root.appendingPathComponent("Presets")
+    self.foldersFile = root.appendingPathComponent("MonitoredFolders.json")
+    self.historyFile = root.appendingPathComponent("History.json")
 
     try? fileManager.createDirectory(at: presetsDir, withIntermediateDirectories: true, attributes: nil)
   }
+
+  /// Copies of files taken before an in-place conversion replaces them.
+  nonisolated var backupsDirectory: URL { root.appendingPathComponent("Backups") }
 
   // MARK: - Presets
 
@@ -92,20 +105,6 @@ actor PersistenceManager {
     }
   }
 
-  // MARK: - Settings
-
-  func loadSettings() async throws -> AppSettings {
-    guard fileManager.fileExists(atPath: settingsFile.path) else {
-      return AppSettings()
-    }
-    let data = try Data(contentsOf: settingsFile)
-    return try JSONDecoder().decode(AppSettings.self, from: data)
-  }
-
-  func saveSettings(_ settings: AppSettings) async throws {
-    let data = try JSONEncoder().encode(settings)
-    try data.write(to: settingsFile, options: .atomic)
-  }
 }
 
 // URL and UTType already conform to Codable via Foundation
