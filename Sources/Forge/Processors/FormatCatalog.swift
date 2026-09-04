@@ -96,6 +96,10 @@ enum FormatCatalog {
       (UTType("com.apple.m4a-audio"), kAudioFormatMPEG4AAC),
       (UTType("org.xiph.flac"), kAudioFormatFLAC),
     ]
+    // Apple Lossless and Opus are both encodable on macOS but deliberately
+    // absent: ALAC shares the .m4a container with AAC and Opus is written into
+    // CAF, and this table maps one container to one codec. Offering them needs
+    // a way to choose the codec, not another row here.
 
     return candidates.reduce(into: [:]) { result, candidate in
       guard let type = candidate.0,

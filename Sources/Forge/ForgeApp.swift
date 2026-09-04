@@ -1,6 +1,5 @@
 import SwiftUI
 
-@main
 struct ForgeApp: App {
   @StateObject private var model = AppModel()
 
