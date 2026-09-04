@@ -84,23 +84,29 @@ struct PresetCard: View {
     .contentShape(Rectangle())
   }
 
-  /// "1080×1080", or "1080 wide" when only one side is pinned. It used to
-  /// render the missing side as 0.
-  private static func sizeChip(_ resize: ResizeSpec) -> String? {
-    switch (resize.width, resize.height) {
-    case let (width?, height?): return "\(width)×\(height)"
-    case let (width?, nil): return "\(width) wide"
-    case let (nil, height?): return "\(height) tall"
-    case (nil, nil): return nil
-    }
+  /// One chip per action, in the order they run, so the card shows the chain
+  /// rather than a summary of fields that no longer exist.
+  private var chips: [String] {
+    preset.actions.map(Self.chip)
   }
 
-  private var chips: [String] {
-    var c: [String] = []
-    if let f = preset.targetFormat { c.append((f.preferredFilenameExtension ?? "fmt").uppercased()) }
-    if let r = preset.resize, let chip = Self.sizeChip(r) { c.append(chip) }
-    if let q = preset.quality { c.append("Q\(q)") }
-    if !preset.filters.isEmpty { c.append("\(preset.filters.count) filter\(preset.filters.count == 1 ? "" : "s")") }
-    return c
+  private static func chip(_ action: Operation) -> String {
+    switch action {
+    case .convertFormat(let to):
+      return (to.preferredFilenameExtension ?? "fmt").uppercased()
+    case .resize(let width, let height, _):
+      switch (width, height) {
+      case let (width?, height?): return "\(width)×\(height)"
+      case let (width?, nil): return "\(width) wide"
+      case let (nil, height?): return "\(height) tall"
+      case (nil, nil): return "resize"
+      }
+    case .quality(let level):
+      return "Q\(level)"
+    case .filter(let type):
+      return type.rawValue
+    case .recognizeText(let languages):
+      return languages.isEmpty ? "OCR" : "OCR \(languages.joined(separator: "/"))"
+    }
   }
 }

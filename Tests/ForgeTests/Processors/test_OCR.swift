@@ -46,8 +46,10 @@ final class TextRecognitionTests: BaseTestCase {
     let source = try Fixture.textImage(at: path("sign.png"), text: "HELLO")
     let destination = try folder("out")
 
-    var preset = RulePreset.make(format: .plainText, category: .image)
-    preset.ocrLanguages = ["el-GR"]
+    let preset = RulePreset(
+      name: "Greek", description: "", targetFormat: .plainText,
+      category: .image, ocrLanguages: ["el-GR"]
+    )
 
     do {
       _ = try await coordinator().processFile(
@@ -66,8 +68,10 @@ final class TextRecognitionTests: BaseTestCase {
     let source = try Fixture.textImage(at: path("sign.png"), text: "BUONGIORNO")
     let destination = try folder("out")
 
-    var preset = RulePreset.make(format: .plainText, category: .image)
-    preset.ocrLanguages = ["it-IT"]
+    let preset = RulePreset(
+      name: "Italian", description: "", targetFormat: .plainText,
+      category: .image, ocrLanguages: ["it-IT"]
+    )
 
     let entry = try await coordinator().processFile(
       try ProcessableFile(url: source),

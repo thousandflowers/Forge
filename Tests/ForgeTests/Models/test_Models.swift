@@ -333,3 +333,88 @@ final class StoredDataCompatibilityTests: BaseTestCase {
     XCTAssertEqual(loaded[0], preset)
   }
 }
+
+/// A preset is a chain of actions now, and the ones already saved have to
+/// become one without anybody noticing.
+final class ActionChainTests: BaseTestCase {
+
+  func test_theChainRunsInTheOrderItIsWritten() {
+    let preset = RulePreset(
+      name: "Chain",
+      description: "",
+      category: .image,
+      actions: [
+        .filter(type: .sepia),
+        .resize(width: 100, height: 100, fitMode: .pad),
+        .convertFormat(to: .png),
+      ]
+    )
+    XCTAssertEqual(preset.toOperations().map(\.id), ["filter", "resize", "convert"])
+  }
+
+  /// Two filters were impossible when a preset was a form with one slot each.
+  func test_aChainCanRepeatAnAction() {
+    let preset = RulePreset(
+      name: "Twice",
+      description: "",
+      category: .image,
+      actions: [.filter(type: .grayscale), .filter(type: .blur)]
+    )
+    XCTAssertEqual(preset.filters, [.grayscale, .blur])
+  }
+
+  func test_theFormConvenienceBuildsASensibleOrder() {
+    let preset = RulePreset.make(
+      format: .jpeg,
+      resize: ResizeSpec(width: 800, height: 600, fitMode: .proportional),
+      quality: 70,
+      filters: [.sepia]
+    )
+    XCTAssertEqual(preset.toOperations().map(\.id), ["convert", "resize", "quality", "filter"])
+  }
+
+  /// A preset written before actions existed carries separate fields; it has
+  /// to arrive as the equivalent chain.
+  func test_aPresetSavedBeforeActionsBecomesAChain() throws {
+    let json = """
+    {
+      "id": "3E47AB3D-74A6-4B5D-9AE1-1A47C25CFDC2",
+      "name": "Instagram Square",
+      "description": "1080x1080 JPEG, center-cropped.",
+      "category": "image",
+      "quality": 85,
+      "filters": ["sepia"],
+      "resize": { "width": 1080, "height": 1080, "fitMode": "cropCenter" },
+      "targetFormat": { "identifier": "public.jpeg", "constantIndex": 57 }
+    }
+    """
+    let preset = try JSONDecoder().decode(RulePreset.self, from: Data(json.utf8))
+
+    XCTAssertEqual(preset.name, "Instagram Square")
+    XCTAssertEqual(preset.toOperations().map(\.id), ["convert", "resize", "quality", "filter"])
+    XCTAssertEqual(preset.targetFormat, .jpeg)
+    XCTAssertEqual(preset.resize?.width, 1080)
+    XCTAssertEqual(preset.resize?.fitMode, .cropCenter)
+    XCTAssertEqual(preset.quality, 85)
+    XCTAssertEqual(preset.filters, [.sepia])
+  }
+
+  func test_aChainSurvivesASaveAndLoad() async throws {
+    let preset = RulePreset(
+      name: "Round trip",
+      description: "",
+      category: .custom,
+      actions: [
+        .convertFormat(to: .plainText),
+        .recognizeText(languages: ["it-IT"]),
+        .quality(level: 42),
+      ]
+    )
+    try await store.savePreset(preset)
+
+    let reopened = PersistenceManager(root: store.root)
+    let loaded = try await reopened.loadAllPresets()
+    XCTAssertEqual(loaded, [preset])
+    XCTAssertEqual(loaded.first?.ocrLanguages, ["it-IT"])
+  }
+}
