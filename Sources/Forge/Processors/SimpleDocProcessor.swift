@@ -44,6 +44,11 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       }
       return try renderPDF(input, to: output, operations: operations, progress: progress)
     }
+    // Text asked for audio is spoken, not converted.
+    if FormatCatalog.audioFormatID(for: outputType) != nil {
+      return try await speak(input, from: inputType, to: outputType, at: output, operations: operations, progress: progress)
+    }
+
     return try await convertText(input, from: inputType, to: outputType, at: output, progress: progress)
   }
 
@@ -151,6 +156,47 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       throw ProcessingError.conversionFailed(reason: "Cannot write \(destination.lastPathComponent)")
     }
     return (rendered.width, rendered.height)
+  }
+
+  // MARK: - Speaking
+
+  @MainActor
+  private func speak(
+    _ input: URL,
+    from inputType: UTType,
+    to outputType: UTType,
+    at output: URL,
+    operations: [Operation],
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> ProcessingResult {
+    let start = Date()
+
+    let text: String
+    if inputType.conforms(to: .pdf) {
+      guard let pdf = PDFDocument(url: input) else {
+        throw ProcessingError.conversionFailed(reason: "Cannot open \(input.lastPathComponent)")
+      }
+      text = pdf.string ?? ""
+    } else {
+      text = try DocumentText.read(input, as: inputType).string
+    }
+
+    // The recognition language doubles as the speaking one: both answer "which
+    // language is this document in".
+    let language = operations.compactMap { operation -> String? in
+      guard case .recognizeText(let languages) = operation else { return nil }
+      return languages.first
+    }.first
+
+    try await SpeechSynthesis.write(text, to: output, as: outputType, language: language, progress: progress)
+
+    let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
+    return ProcessingResult(
+      outputURL: output,
+      outputSize: attributes[.size] as? Int64 ?? 0,
+      outputDimensions: nil,
+      duration: Date().timeIntervalSince(start)
+    )
   }
 
   // MARK: - Reading a PDF

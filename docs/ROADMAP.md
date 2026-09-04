@@ -49,15 +49,14 @@ Native, no new dependencies, in rough order of value.
 - [ ] **Multi-size ICO** - encoding several resolutions into one file.
 - [ ] **M4B** - the audiobook variant of the M4A container.
 - [ ] **Config files** - CSV ↔ JSON and JSON ↔ Property List, both Foundation.
-- [ ] **Fonts** - TTF and OTF through CoreText.
 - [ ] **Audio → video** - wrapping an audio file in an MP4 container.
 - [ ] **Embedded subtitle extraction** - subtitle tracks inside a movie are
       reachable through AVFoundation.
 - [ ] **Signing and notarization** - needs a Developer ID. Until then the DMG is
       ad-hoc signed and Gatekeeper warns on first launch.
 - [ ] **Homebrew cask** - a cask, not a formula: Forge ships an app bundle.
-- [ ] **Text to speech** - `AVSpeechSynthesizer` writes to a file, with 180
-      voices across 49 languages already installed.
+- [x] **Text to speech** - any document becomes spoken audio, with the voices
+      already installed.
 - [ ] **Audio transcription** - the Speech framework covers 63 locales and runs
       on device for the common ones, so a recording becomes text or subtitles
       without anything leaving the Mac.
@@ -103,7 +102,9 @@ ImageIO and AVFoundation ship no encoder. Adding one means shipping a library.
   a whole is not.
 - **EPS** - neither read nor write.
 - **WMA**, **Sun Audio (AU)**, **True Audio (TTA)**, **WavPack**.
-- **WOFF, WOFF2** - no system type; CoreText handles TTF and OTF only.
+- **Fonts, in any direction** - CoreText reads a font's tables but has no
+  public API to write one, so TTF to OTF is not a framework call. WOFF and
+  WOFF2 do not even have a system type.
 
 ### No encoder for the codec
 

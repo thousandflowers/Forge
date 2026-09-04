@@ -111,6 +111,15 @@ enum Capabilities {
         status: .available(detail: "\(TextRecognizer.supportedLanguages.count) languages")
       ),
       Capability(
+        id: "speech",
+        title: "Text to speech",
+        summary: "Turn a document into spoken audio.",
+        symbol: "speaker.wave.2",
+        status: .available(
+          detail: "\(SpeechSynthesis.voices.count) voices in \(SpeechSynthesis.languages.count) languages"
+        )
+      ),
+      Capability(
         id: "models",
         title: "3D models",
         summary: "Convert between the mesh formats ModelIO handles.",
@@ -124,13 +133,7 @@ enum Capabilities {
 
   private static var notYetBuilt: [Capability] {
     [
-      Capability(
-        id: "speech",
-        title: "Text to speech",
-        summary: "Turn a document into spoken audio.",
-        symbol: "speaker.wave.2",
-        status: .planned
-      ),
+
       Capability(
         id: "transcription",
         title: "Transcription",
@@ -143,13 +146,6 @@ enum Capabilities {
         title: "Subtitles",
         summary: "Pull the subtitle tracks out of a video.",
         symbol: "captions.bubble",
-        status: .planned
-      ),
-      Capability(
-        id: "fonts",
-        title: "Fonts",
-        summary: "Convert between TrueType and OpenType.",
-        symbol: "textformat",
         status: .planned
       ),
     ]
@@ -190,6 +186,17 @@ enum Capabilities {
           name: "Office and ebook formats",
           requires: "a document engine of its own",
           approximateSize: "hundreds of megabytes"
+        ))
+      ),
+      Capability(
+        id: "fonts",
+        title: "Fonts",
+        summary: "Convert between TrueType, OpenType and the web formats.",
+        symbol: "textformat",
+        status: .needsPack(.init(
+          name: "Font tools",
+          requires: "a font writer - CoreText reads font tables but cannot write one",
+          approximateSize: "a few megabytes"
         ))
       ),
       Capability(
