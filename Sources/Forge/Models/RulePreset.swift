@@ -14,6 +14,10 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
 
   var category: PresetCategory
 
+  /// Languages to look for when reading text out of images, as BCP-47 tags.
+  /// Empty lets Vision work it out, which is right for most documents.
+  var ocrLanguages: [String] = []
+
   /// Convert preset to an ordered list of operations
   func toOperations() -> [Operation] {
     var ops: [Operation] = []
@@ -32,6 +36,9 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
       ops.append(.quality(level: quality))
     }
     ops.append(contentsOf: filters.map { .filter(type: $0) })
+    if targetFormat?.conforms(to: .plainText) == true {
+      ops.append(.recognizeText(languages: ocrLanguages))
+    }
 
     return ops
   }

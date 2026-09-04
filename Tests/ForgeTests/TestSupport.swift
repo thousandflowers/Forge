@@ -102,6 +102,61 @@ enum Fixture {
     return url
   }
 
+  /// An image of some text, drawn large and plain so a reader can be expected
+  /// to get it right.
+  @discardableResult
+  static func textImage(at url: URL, text: String, width: Int = 900, height: Int = 260) throws -> URL {
+    let image = NSImage(size: NSSize(width: width, height: height))
+    image.lockFocus()
+    NSColor.white.setFill()
+    NSRect(x: 0, y: 0, width: width, height: height).fill()
+    (text as NSString).draw(
+      in: NSRect(x: 40, y: 40, width: width - 80, height: height - 80),
+      withAttributes: [
+        .font: NSFont.systemFont(ofSize: 64, weight: .medium),
+        .foregroundColor: NSColor.black,
+      ]
+    )
+    image.unlockFocus()
+
+    guard let tiff = image.tiffRepresentation,
+          let bitmap = NSBitmapImageRep(data: tiff),
+          let png = bitmap.representation(using: .png, properties: [:]) else {
+      throw Failure("Cannot render the text image")
+    }
+    try png.write(to: url)
+    return url
+  }
+
+  /// A PDF whose pages are pictures of text, with no text layer - what a scan
+  /// looks like, and the only way to make a reader do the work.
+  @discardableResult
+  static func scannedPDF(at url: URL, pages: [String]) throws -> URL {
+    var mediaBox = CGRect(x: 0, y: 0, width: 612, height: 300)
+    guard let context = CGContext(url as CFURL, mediaBox: &mediaBox, nil) else {
+      throw Failure("Cannot create a PDF context")
+    }
+
+    for page in pages {
+      let imageURL = url.deletingLastPathComponent()
+        .appendingPathComponent("scan-\(UUID().uuidString).png")
+      try textImage(at: imageURL, text: page, width: 1224, height: 600)
+      defer { try? FileManager.default.removeItem(at: imageURL) }
+
+      guard let source = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+        throw Failure("Cannot read back the page image")
+      }
+
+      context.beginPDFPage(nil)
+      context.draw(image, in: mediaBox)
+      context.endPDFPage()
+    }
+
+    context.closePDF()
+    return url
+  }
+
   /// An animated GIF with the requested number of frames.
   @discardableResult
   static func animatedGIF(

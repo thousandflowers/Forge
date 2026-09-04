@@ -47,6 +47,18 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
 
     let outputUTI = determineOutputUTI(from: output, operations: operations)
     let inputType = UTType(filenameExtension: input.pathExtension) ?? .image
+
+    // An image asked for text is a reading job, not a conversion.
+    if outputUTI.conforms(to: .plainText) {
+      return try Self.recognizeText(
+        in: frames[0].image,
+        languages: languages(from: operations),
+        to: output,
+        start: start,
+        progress: progress
+      )
+    }
+
     guard FormatCatalog.isWritableImage(outputUTI) || FormatCatalog.isWritableVideo(outputUTI) else {
       throw ProcessingError.unsupportedConversion(from: inputType, to: outputUTI)
     }
@@ -114,6 +126,37 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     return rendered
   }
 
+  // MARK: - Text
+
+  static func recognizeText(
+    in image: CGImage,
+    languages: [String],
+    to output: URL,
+    start: Date,
+    progress: @escaping @Sendable (Double) -> Void
+  ) throws -> ProcessingResult {
+    progress(0.3)
+    let text = try TextRecognizer.text(in: image, languages: languages)
+    progress(0.9)
+    try text.write(to: output, atomically: true, encoding: .utf8)
+    progress(1.0)
+
+    let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
+    return ProcessingResult(
+      outputURL: output,
+      outputSize: attributes[.size] as? Int64 ?? 0,
+      outputDimensions: nil,
+      duration: Date().timeIntervalSince(start)
+    )
+  }
+
+  private func languages(from operations: [Operation]) -> [String] {
+    operations.compactMap { operation -> [String]? in
+      guard case .recognizeText(let languages) = operation else { return nil }
+      return languages
+    }.first ?? []
+  }
+
   // MARK: - Output
 
   private func determineOutputUTI(from outputURL: URL, operations: [Operation]) -> UTType {
@@ -167,8 +210,8 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
 
   private func applyOperation(_ operation: Operation, to image: CIImage) throws -> CIImage {
     switch operation {
-    case .convertFormat, .quality:
-      return image // both are settled when the file is encoded
+    case .convertFormat, .quality, .recognizeText:
+      return image // settled when the file is written
     case .resize(let width, let height, let mode):
       return applyResize(image, targetWidth: width, targetHeight: height, mode: mode)
     case .filter(let type):

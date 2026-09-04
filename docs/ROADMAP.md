@@ -33,11 +33,11 @@ supports, so they are live now and simply were not advertised.
 
 Native, no new dependencies, in rough order of value.
 
-- [ ] **OCR** - Vision reads text from images and scanned PDFs on device, in 30
-      languages, with the language selectable. Nothing else here comes close on
-      value per line of code.
-- [ ] **Video ↔ GIF** - frames out with `AVAssetImageGenerator`, animated GIF in
-      with a multi-frame `CGImageDestination`. Animated GIF decoding comes with it.
+- [x] **OCR** - Vision reads text from images and scanned PDFs on device, in 30
+      languages, selectable with `--ocr-language`. A PDF hands back its embedded
+      text and reads only the pages that carry none.
+- [x] **Video ↔ GIF** - both directions, plus multi-frame reading throughout, so
+      an animation stays an animation and a still format gets one file per frame.
 - [ ] **Documents** - DOCX/RTF/ODT/HTML → PDF, and Markdown in both directions,
       through `NSAttributedString` and PDFKit.
 - [ ] **Image ↔ PDF** - both directions; the write half already exists.

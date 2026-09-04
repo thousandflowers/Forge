@@ -71,6 +71,13 @@ struct RecipeOptions: ParsableArguments {
   @Option(help: "Filter to apply: grayscale, sepia, blur, sharpen, invert.")
   var filter: FilterType?
 
+  @Option(
+    name: .customLong("ocr-language"),
+    parsing: .upToNextOption,
+    help: "Languages to look for when reading text, e.g. it-IT. Omit to detect automatically."
+  )
+  var ocrLanguages: [String] = []
+
   /// Build the preset this run should use, from a saved one or from the flags.
   func resolve(saved: [RulePreset]) throws -> RulePreset {
     if let preset {
@@ -81,7 +88,7 @@ struct RecipeOptions: ParsableArguments {
       return match
     }
 
-    guard format != nil || resize != nil || quality != nil || filter != nil else {
+    guard format != nil || resize != nil || quality != nil || filter != nil || !ocrLanguages.isEmpty else {
       throw ValidationError("Nothing to do: pass --preset, or one of --to, --resize, --quality, --filter.")
     }
 
@@ -92,7 +99,8 @@ struct RecipeOptions: ParsableArguments {
       resize: try resizeSpec(),
       quality: try validatedQuality(),
       filters: filter.map { [$0] } ?? [],
-      category: .custom
+      category: .custom,
+      ocrLanguages: ocrLanguages
     )
   }
 

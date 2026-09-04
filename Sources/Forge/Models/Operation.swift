@@ -9,6 +9,8 @@ enum Operation: Hashable, Identifiable, Sendable {
   case resize(width: Int?, height: Int?, fitMode: ResizeFitMode)
   case quality(level: Int)           // 1-100
   case filter(type: FilterType)
+  /// Read the text out of an image. Empty languages lets Vision decide.
+  case recognizeText(languages: [String])
 
   var id: String {
     switch self {
@@ -16,6 +18,7 @@ enum Operation: Hashable, Identifiable, Sendable {
     case .resize: return "resize"
     case .quality: return "quality"
     case .filter: return "filter"
+    case .recognizeText: return "ocr"
     }
   }
 }
