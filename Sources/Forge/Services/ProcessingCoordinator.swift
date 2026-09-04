@@ -18,6 +18,9 @@ actor ProcessingCoordinator {
     DataProcessor(),
     SimpleDocProcessor(),
     ModelProcessor(),
+    // Last: a conversion macOS can do itself is still done by macOS, and a
+    // tool the user installed is only asked about what is left over.
+    ExternalProcessor(),
   ]
 
   private let persistence: PersistenceManager
@@ -184,7 +187,7 @@ actor ProcessingCoordinator {
     destinationURL: URL?,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
-    guard let processor = processors.first(where: { $0.canProcess(file) }) else {
+    guard processors.contains(where: { $0.canProcess(file) }) else {
       throw ProcessingError.unreadableFormat(file.fileType)
     }
 
@@ -217,21 +220,46 @@ actor ProcessingCoordinator {
 
     try Task.checkCancellation()
 
+    // A preset says what it cares about; Settings says the rest; and a size
+    // written into the file's own name beats both, because somebody typed it
+    // onto that file for this conversion.
+    let operations = settings.applyingDefaults(
+      to: SizeInName.applying(to: preset.toOperations(), from: file.fileName),
+      writing: preset.targetFormat ?? file.fileType
+    )
+
+    // Which processor can open the file is not the whole question: the media
+    // path reads an MP4 and cannot write a WMV, and saying so is not the same
+    // as the conversion being impossible. So a processor that turns the pair
+    // down hands the file to the next one that can read it - which is how a
+    // tool the user installed gets asked about what macOS declined.
+    //
     // The conversion always writes to a scratch file, never to a path the user
     // already has data at. Converting in place used to read and write the same
     // URL, which truncated the source mid-read and destroyed the original.
-    let result = try await processor.process(
-      file.url,
-      to: plan.workURL,
-      // A preset says what it cares about; Settings says the rest; and a size
-      // written into the file's own name beats both, because somebody typed it
-      // onto that file for this conversion.
-      with: settings.applyingDefaults(
-        to: SizeInName.applying(to: preset.toOperations(), from: file.fileName),
-        writing: preset.targetFormat ?? file.fileType
-      ),
-      progress: progress
-    )
+    var attempt: ProcessingResult?
+    var declined: Error?
+    for candidate in processors where candidate.canProcess(file) {
+      do {
+        attempt = try await candidate.process(
+          file.url,
+          to: plan.workURL,
+          with: operations,
+          progress: progress
+        )
+        break
+      } catch let error as ProcessingError {
+        guard case .unsupportedConversion = error else { throw error }
+        // Nothing has been written yet, but a processor that turned the pair
+        // down after starting must not leave its scratch for the next one.
+        try? FileManager.default.removeItem(at: plan.workURL)
+        declined = error
+      }
+    }
+
+    guard let result = attempt else {
+      throw declined ?? ProcessingError.unreadableFormat(file.fileType)
+    }
 
     try Task.checkCancellation()
 

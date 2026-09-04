@@ -222,7 +222,8 @@ enum Capabilities {
           name: "Extra video codecs",
           requires: "a codec library the size of FFmpeg",
           approximateSize: "tens of megabytes",
-          tool: ExternalTool(binary: "ffmpeg", formula: "ffmpeg", adds: "WMV, MXF, FLV, AV1 and VP9")
+          tool: ExternalTool(binary: "ffmpeg", formula: "ffmpeg", adds: "WMV, MXF, FLV, AV1 and VP9"),
+          isWired: true
         )),
         evidence: ["wmv", "mxf", "flv", "avi", "mkv", "webm"]
       ),
@@ -235,7 +236,8 @@ enum Capabilities {
           name: "Office and ebook formats",
           requires: "a document engine of its own",
           approximateSize: "hundreds of megabytes",
-          tool: ExternalTool(binary: "pandoc", formula: "pandoc", adds: "XLSX, PPTX, EPUB and friends")
+          tool: ExternalTool(binary: "pandoc", formula: "pandoc", adds: "XLSX, PPTX, EPUB and friends"),
+          isWired: true
         )),
         evidence: ["xlsx", "pptx", "epub", "mobi", "azw3", "odt", "ods"]
       ),

@@ -35,6 +35,12 @@ enum ConvertKind: String, CaseIterable, Sendable {
       self = .document
     } else if FormatCatalog.isReadableModel(fileType) {
       self = .model
+    } else if ExternalBridge.canHandle(fileType) {
+      // Nothing on the machine reads this, but a tool the user installed does.
+      // It is filed by what it is, so the sheet offers the right controls.
+      self = fileType.conforms(to: .audiovisualContent) && !fileType.conforms(to: .audio)
+        ? .video
+        : fileType.conforms(to: .audio) ? .audio : .document
     } else {
       return nil
     }
