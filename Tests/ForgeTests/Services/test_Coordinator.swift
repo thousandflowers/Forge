@@ -41,6 +41,31 @@ final class CoordinatorTests: BaseTestCase {
     XCTAssertTrue(exists(source), "the source must survive a cancel")
   }
 
+  /// Overwrite replaces the file it was handed. Another file that happens to
+  /// hold the converted name is not part of that promise: it used to be
+  /// replaced without a word, and without a backup, since the backup is taken
+  /// of the source.
+  func test_overwrite_leavesADifferentFileHoldingTheTargetNameAlone() async throws {
+    let source = try Fixture.image(at: path("doc.png"), width: 64, height: 64)
+    let bystander = try Fixture.image(at: path("doc.jpeg"), width: 400, height: 250)
+    let before = try Data(contentsOf: bystander)
+
+    let result = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .jpeg, category: .image),
+      destinationMode: .overwrite,
+      destinationURL: nil
+    ) { _ in }
+
+    XCTAssertEqual(
+      try Data(contentsOf: bystander), before,
+      "a file nobody asked about was overwritten"
+    )
+    let output = try XCTUnwrap(result.outputURL)
+    XCTAssertNotEqual(output, bystander)
+    XCTAssertTrue(exists(output), "the conversion still has to land somewhere")
+  }
+
   /// History is held in memory now; a reload has to agree with what was written.
   func test_history_survivesAppendAndReload() async throws {
     let source = try Fixture.image(at: path("photo.png"), width: 64, height: 64)
