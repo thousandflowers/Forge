@@ -148,15 +148,18 @@ directory, so running them never touches the data the app keeps for you.
 
 ## Roadmap
 
+See [docs/ROADMAP.md](docs/ROADMAP.md) for what is planned, what already works
+without anyone noticing, and - with a reason for each - what Forge will not do.
+
 - [x] Native image / video / audio / PDF conversion
 - [x] Bounded-concurrency batch processing with live per-file progress
 - [x] Presets, processing history, JSON persistence
 - [x] Watched folders with loop protection
-- [ ] Completion notifications
-- [ ] Preset import/export
-- [ ] Signing and notarization
 - [x] CLI (`forge`) with shell completions
-- [ ] Shortcuts integration
+- [ ] On-device OCR (Vision, 30 languages)
+- [ ] Video ↔ animated GIF
+- [ ] Documents to PDF, and Markdown both ways
+- [ ] Signing and notarization
 
 ## Contributing
 
