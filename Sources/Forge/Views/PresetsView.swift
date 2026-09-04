@@ -16,7 +16,15 @@ struct PresetsView: View {
         ScrollView {
           LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 16)], spacing: 16) {
             ForEach(model.presets) { preset in
-              PresetCard(preset: preset, deliverable: model.canDeliver(preset))
+              PresetCard(
+                preset: preset,
+                deliverable: model.canDeliver(preset),
+                isEnabled: Binding(
+                  get: { preset.isEnabled },
+                  set: { model.setPreset(preset, enabled: $0) }
+                ),
+                onDelete: { model.deletePreset(preset) }
+              )
                 .onTapGesture { editorItem = EditorItem(preset: preset) }
                 .contextMenu {
                   Button("Edit") { editorItem = EditorItem(preset: preset) }
@@ -79,19 +87,29 @@ struct PresetCard: View {
   let preset: RulePreset
   /// False when the target format cannot be written on this Mac.
   var deliverable = true
+  /// Off presets stay in the list and are offered nowhere.
+  @Binding var isEnabled: Bool
+  let onDelete: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      HStack {
+      HStack(spacing: 8) {
         Image(systemName: preset.category.icon)
-          .foregroundStyle(.tint)
+          .foregroundStyle(isEnabled ? Color.accentColor : .secondary)
           .font(.title3)
         Spacer()
-        Text(preset.category.rawValue.capitalized)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .padding(.horizontal, 8).padding(.vertical, 2)
-          .background(Capsule().fill(Color.secondary.opacity(0.12)))
+        Toggle("", isOn: $isEnabled)
+          .toggleStyle(.switch)
+          .controlSize(.mini)
+          .labelsHidden()
+          .help(isEnabled ? "Turn this preset off" : "Turn this preset on")
+        Button(role: .destructive, action: onDelete) {
+          Image(systemName: "xmark")
+            .font(.caption.weight(.semibold))
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        .help("Delete this preset")
       }
       HStack(spacing: 6) {
         Text(preset.name).font(.headline).lineLimit(1)
@@ -121,6 +139,7 @@ struct PresetCard: View {
     .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
     .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
     .contentShape(Rectangle())
+    .opacity(isEnabled ? 1 : 0.5)
   }
 
   /// One chip per action, in the order they run, so the card shows the chain

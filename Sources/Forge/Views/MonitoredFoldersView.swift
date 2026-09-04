@@ -10,8 +10,8 @@ struct MonitoredFoldersView: View {
       if model.folders.isEmpty {
         EmptyStateView(icon: "folder.badge.gearshape", title: "No monitored folders",
                        message: "Add a folder and Forge converts new files dropped into it automatically.",
-                       actionTitle: model.presets.isEmpty ? nil : "Add Folder",
-                       action: model.presets.isEmpty ? nil : { showAdd = true })
+                       actionTitle: model.usablePresets.isEmpty ? nil : "Add Folder",
+                       action: model.usablePresets.isEmpty ? nil : { showAdd = true })
       } else {
         List {
           ForEach(model.folders) { folder in
@@ -40,7 +40,7 @@ struct MonitoredFoldersView: View {
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
         Button { showAdd = true } label: { Label("Add Folder", systemImage: "plus") }
-          .disabled(model.presets.isEmpty)
+          .disabled(model.usablePresets.isEmpty)
       }
     }
     .sheet(isPresented: $showAdd) { AddFolderSheet() }
@@ -72,7 +72,7 @@ private struct AddFolderSheet: View {
         Section("Apply") {
           Picker("Preset", selection: $presetID) {
             Text("Choose…").tag(UUID?.none)
-            ForEach(model.presets) { Text($0.name).tag(Optional($0.id)) }
+            ForEach(model.usablePresets) { Text($0.name).tag(Optional($0.id)) }
           }
           Picker("Destination", selection: $mode) {
             ForEach(DestinationMode.allCases, id: \.self) { Text($0.displayName).tag($0) }

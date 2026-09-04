@@ -16,7 +16,7 @@ final class AppModel: ObservableObject {
   @Published var lastError: String?
 
   let coordinator: ProcessingCoordinator
-  private let persistence = PersistenceManager.shared
+  private let persistence: PersistenceManager
   private var watchers: [UUID: MonitoredFolderWatcher] = [:]
 
   /// Files Forge has just written. A watched folder that also receives the
@@ -24,10 +24,14 @@ final class AppModel: ObservableObject {
   private var produced: Set<String> = []
   private static let producedLimit = 512
 
-  init() {
+  /// - Parameter persistence: where presets, folders and history live. Tests
+  ///   pass a scratch store; anything else writing to the real one is a bug
+  ///   that shows up as junk presets in somebody's app.
+  init(persistence: PersistenceManager = .shared) {
     let loaded = AppSettings.load()
     self.settings = loaded
-    self.coordinator = ProcessingCoordinator(settings: loaded)
+    self.persistence = persistence
+    self.coordinator = ProcessingCoordinator(settings: loaded, persistence: persistence)
   }
 
   /// Load persisted state on launch; seed default presets on first run.
@@ -63,6 +67,28 @@ final class AppModel: ObservableObject {
     }
     presets = Self.ordered(presets)
     persist({ try await $0.savePreset(preset) }, doing: "saving “\(preset.name)”")
+  }
+
+  /// Add a preset from the gallery, under a new identity so installing the
+  /// same one twice gives two, not a silent replacement of yours.
+  func install(_ preset: RulePreset) {
+    var copy = preset
+    copy.id = UUID()
+    copy.position = (presets.map(\.position).max() ?? 0) + 1
+    savePreset(copy)
+  }
+
+  /// Turn a preset off without losing it.
+  func setPreset(_ preset: RulePreset, enabled: Bool) {
+    guard let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
+    presets[index].isEnabled = enabled
+    let updated = presets[index]
+    persist({ try await $0.savePreset(updated) }, doing: "saving “\(preset.name)”")
+  }
+
+  /// The presets on offer anywhere a conversion is started.
+  var usablePresets: [RulePreset] {
+    presets.filter(\.isEnabled)
   }
 
   /// Move a preset one place, and write the new order down.
@@ -117,7 +143,7 @@ final class AppModel: ObservableObject {
   func importPresets(from url: URL) {
     Task { [weak self] in
       do {
-        let imported = try await PersistenceManager.shared.importPresets(from: url)
+        let imported = try await self?.persistence.importPresets(from: url) ?? []
         guard let self else { return }
         for preset in imported {
           var copy = preset

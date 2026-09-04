@@ -14,6 +14,11 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   var description: String
   var category: PresetCategory
 
+  /// Off presets stay where they are but are not offered anywhere. Turning one
+  /// off is the answer to "I do not need this right now", which used to mean
+  /// deleting it and making it again later.
+  var isEnabled: Bool = true
+
   /// Where this sits in the list. Presets used to be sorted by name, which is
   /// tidy and not the order anyone works in.
   var position: Int = 0
@@ -27,6 +32,7 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
     description: String,
     category: PresetCategory,
     position: Int = 0,
+    isEnabled: Bool = true,
     actions: [Operation] = []
   ) {
     self.id = id
@@ -34,6 +40,7 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
     self.description = description
     self.category = category
     self.position = position
+    self.isEnabled = isEnabled
     self.actions = actions
   }
 
@@ -141,7 +148,7 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
 
 extension RulePreset {
   private enum CodingKeys: String, CodingKey {
-    case id, name, description, category, position, actions
+    case id, name, description, category, position, isEnabled, actions
     // The shape presets were saved in before they became a chain.
     case targetFormat, resize, quality, filters, ocrLanguages
   }
@@ -159,6 +166,7 @@ extension RulePreset {
     description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
     category = try container.decodeIfPresent(PresetCategory.self, forKey: .category) ?? .custom
     position = try container.decodeIfPresent(Int.self, forKey: .position) ?? 0
+    isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
 
     if let actions = try container.decodeIfPresent([Operation].self, forKey: .actions) {
       self.actions = actions
@@ -181,6 +189,7 @@ extension RulePreset {
     try container.encode(description, forKey: .description)
     try container.encode(category, forKey: .category)
     try container.encode(position, forKey: .position)
+    try container.encode(isEnabled, forKey: .isEnabled)
     try container.encode(actions, forKey: .actions)
   }
 }
@@ -201,7 +210,7 @@ enum PresetCategory: String, Codable, CaseIterable, Sendable {
   var icon: String {
     switch self {
     case .image: return "photo"
-    case .video: return "filmstrip"
+    case .video: return "film"
     case .audio: return "waveform"
     case .document: return "doc"
     case .custom: return "star"

@@ -11,10 +11,10 @@ struct MenuBarView: View {
 
   var body: some View {
     Group {
-      if model.presets.isEmpty {
-        Text("No presets yet")
+      if model.usablePresets.isEmpty {
+        Text("No presets turned on")
       } else {
-        ForEach(model.presets) { preset in
+        ForEach(model.usablePresets) { preset in
           Button(preset.name) { convert(with: preset) }
             .disabled(!model.canDeliver(preset))
         }

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// What this Mac can do, and what it cannot.
@@ -6,13 +7,16 @@ import SwiftUI
 /// computed from the frameworks at run time, so it describes the machine it is
 /// running on rather than a claim written months ago.
 struct CapabilitiesView: View {
+  private let columns = [GridItem(.adaptive(minimum: 300), spacing: 16)]
+
   var body: some View {
     ScrollView {
-      LazyVStack(alignment: .leading, spacing: 20) {
-        section("Ready to use", Capabilities.all.filter(\.status.isAvailable))
-        section("Coming", Capabilities.all.filter { if case .planned = $0.status { return true } else { return false } })
-        section("Would need an addition", Capabilities.all.filter { if case .needsPack = $0.status { return true } else { return false } })
-        section("Not possible on macOS", Capabilities.all.filter { if case .unavailable = $0.status { return true } else { return false } })
+      LazyVStack(alignment: .leading, spacing: 22) {
+        section("Ready to use", of: { if case .available = $0 { return true } else { return false } })
+        section("Add from macOS", of: { if case .installable = $0 { return true } else { return false } })
+        section("Coming", of: { if case .planned = $0 { return true } else { return false } })
+        section("Not included", of: { if case .needsPack = $0 { return true } else { return false } })
+        section("Not possible on macOS", of: { if case .unavailable = $0 { return true } else { return false } })
       }
       .padding(20)
     }
@@ -20,40 +24,47 @@ struct CapabilitiesView: View {
   }
 
   @ViewBuilder
-  private func section(_ title: String, _ capabilities: [Capability]) -> some View {
+  private func section(_ title: String, of matches: (Capability.Status) -> Bool) -> some View {
+    let capabilities = Capabilities.all.filter { matches($0.status) }
     if !capabilities.isEmpty {
       VStack(alignment: .leading, spacing: 10) {
-        Text(title)
-          .font(.headline)
-        ForEach(capabilities) { CapabilityRow(capability: $0) }
+        Text(title).font(.headline)
+        LazyVGrid(columns: columns, spacing: 16) {
+          ForEach(capabilities) { CapabilityCard(capability: $0) }
+        }
       }
     }
   }
 }
 
-private struct CapabilityRow: View {
+private struct CapabilityCard: View {
   let capability: Capability
 
   var body: some View {
-    HStack(alignment: .top, spacing: 12) {
-      Image(systemName: capability.symbol)
-        .font(.title3)
-        .foregroundStyle(tint)
-        .frame(width: 26)
-
-      VStack(alignment: .leading, spacing: 3) {
-        HStack(spacing: 8) {
-          Text(capability.title).font(.callout.weight(.semibold))
-          badge
-        }
-        Text(capability.summary)
-          .font(.callout)
-          .foregroundStyle(.secondary)
-        detail
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(spacing: 8) {
+        Image(systemName: capability.symbol)
+          .font(.title3)
+          .foregroundStyle(tint)
+        Spacer()
+        badge
       }
+
+      Text(capability.title)
+        .font(.headline)
+        .lineLimit(1)
+
+      Text(capability.summary)
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+
       Spacer(minLength: 0)
+
+      detail
     }
-    .padding(12)
+    .padding(14)
+    .frame(height: 190, alignment: .top)
     .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
     .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
   }
@@ -62,33 +73,41 @@ private struct CapabilityRow: View {
   private var detail: some View {
     switch capability.status {
     case .available(let detail):
-      Text(detail)
-        .font(.caption)
-        .foregroundStyle(.tertiary)
+      caption(detail)
+
+    case .installable(let install):
+      VStack(alignment: .leading, spacing: 8) {
+        caption(install.adds)
+        Button(install.action) { NSWorkspace.shared.open(install.settings) }
+          .controlSize(.small)
+      }
+
     case .planned:
       EmptyView()
+
     case .needsPack(let pack):
-      Text("\(pack.name) — needs \(pack.requires), about \(pack.approximateSize).")
-        .font(.caption)
-        .foregroundStyle(.tertiary)
+      caption("\(pack.name): needs \(pack.requires), about \(pack.approximateSize).")
+
     case .unavailable(let reason):
-      Text(reason)
-        .font(.caption)
-        .foregroundStyle(.tertiary)
+      caption(reason)
     }
+  }
+
+  private func caption(_ text: String) -> some View {
+    Text(text)
+      .font(.caption)
+      .foregroundStyle(.tertiary)
+      .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   @ViewBuilder
   private var badge: some View {
     switch capability.status {
-    case .available:
-      label("Available", .green)
-    case .planned:
-      label("Coming", .blue)
-    case .needsPack:
-      label("Not included", .orange)
-    case .unavailable:
-      label("Unavailable", .secondary)
+    case .available: label("Available", .green)
+    case .installable: label("Add", .accentColor)
+    case .planned: label("Coming", .blue)
+    case .needsPack: label("Not included", .orange)
+    case .unavailable: label("Unavailable", .secondary)
     }
   }
 
@@ -102,6 +121,9 @@ private struct CapabilityRow: View {
   }
 
   private var tint: Color {
-    capability.status.isAvailable ? .accentColor : .secondary
+    switch capability.status {
+    case .available, .installable: return .accentColor
+    default: return .secondary
+    }
   }
 }

@@ -20,6 +20,9 @@ struct Capability: Identifiable, Hashable {
     case available(detail: String)
     /// Could work, but is not built yet.
     case planned
+    /// macOS can add this itself, on demand. Forge points at the place that
+    /// does it rather than shipping a copy of what the system already has.
+    case installable(Install)
     /// Would need something Forge does not ship, described plainly.
     case needsPack(Pack)
     /// Cannot be done the way Forge is built, and why.
@@ -29,6 +32,16 @@ struct Capability: Identifiable, Hashable {
       if case .available = self { return true }
       return false
     }
+  }
+
+  /// Something the system downloads for you, and where to ask for it.
+  struct Install: Hashable {
+    /// What gets added, in the user's words.
+    let adds: String
+    /// The button.
+    let action: String
+    /// Where macOS does it.
+    let settings: URL
   }
 
   /// A capability that would arrive as a downloadable addition.
@@ -51,6 +64,11 @@ struct Capability: Identifiable, Hashable {
 enum Capabilities {
 
   static var all: [Capability] { native + notYetBuilt + wouldNeedAPack + outOfReach }
+
+  /// Capabilities macOS will extend on demand.
+  static var installable: [Capability] {
+    all.filter { if case .installable = $0.status { return true } else { return false } }
+  }
 
   static var available: [Capability] { all.filter(\.status.isAvailable) }
 
@@ -120,18 +138,24 @@ enum Capabilities {
       Capability(
         id: "speech",
         title: "Text to speech",
-        summary: "Turn a document into spoken audio.",
+        summary: "Turn a document into spoken audio. More voices and languages install from macOS itself.",
         symbol: "speaker.wave.2",
-        status: .available(
-          detail: "\(SpeechSynthesis.voices.count) voices in \(SpeechSynthesis.languages.count) languages"
-        )
+        status: .installable(.init(
+          adds: "\(SpeechSynthesis.voices.count) voices in \(SpeechSynthesis.languages.count) languages installed",
+          action: "Add Voices",
+          settings: URL(string: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension?Speech")!
+        ))
       ),
       Capability(
         id: "transcription",
         title: "Transcription",
         summary: "Turn a recording, or a video's soundtrack, into text on device.",
         symbol: "text.bubble",
-        status: .available(detail: "\(Transcription.supportedLocales.count) locales, permission asked once")
+        status: .installable(.init(
+          adds: "\(Transcription.supportedLocales.count) locales; macOS downloads the on-device models",
+          action: "Add Languages",
+          settings: URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")!
+        ))
       ),
       Capability(
         id: "models",

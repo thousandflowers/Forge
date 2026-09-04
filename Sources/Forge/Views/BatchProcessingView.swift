@@ -64,7 +64,7 @@ struct BatchProcessingView: View {
           .disabled(vm.files.isEmpty || vm.isProcessing)
       }
     }
-    .onAppear { if selectedPresetID == nil { selectedPresetID = model.presets.first?.id } }
+    .onAppear { if selectedPresetID == nil { selectedPresetID = model.usablePresets.first?.id } }
     .confirmationDialog(summaryTitle, isPresented: $confirming) {
       Button(destinationMode == .overwrite ? "Replace Files" : "Move Files", role: .destructive) {
         start()
@@ -81,7 +81,6 @@ struct BatchProcessingView: View {
         .font(.system(size: 52, weight: .light))
         .foregroundStyle(isTargeted ? Color.accentColor : Color.secondary)
       Text("Drop files to convert").font(.title2.weight(.medium))
-      Text("Images, video, audio, and PDFs").font(.callout).foregroundStyle(.secondary)
       Button { addFiles() } label: { Label("Choose Files…", systemImage: "folder") }
         .controlSize(.large).padding(.top, 4)
     }
@@ -135,7 +134,7 @@ struct BatchProcessingView: View {
       HStack(spacing: 14) {
         Picker("Preset", selection: $selectedPresetID) {
           Text("Choose preset…").tag(UUID?.none)
-          ForEach(model.presets) { p in Text(p.name).tag(Optional(p.id)) }
+          ForEach(model.usablePresets) { p in Text(p.name).tag(Optional(p.id)) }
         }
         .labelsHidden().frame(maxWidth: 220)
 

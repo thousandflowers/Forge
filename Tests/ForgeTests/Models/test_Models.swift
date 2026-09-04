@@ -651,7 +651,7 @@ final class PresetOrderTests: BaseTestCase {
 
   @MainActor
   func test_movingRewritesEveryPosition() {
-    let model = AppModel()
+    let model = AppModel(persistence: store)
     model.presets = presets(["One", "Two", "Three"])
 
     model.movePreset(model.presets[2], by: -1)
@@ -662,7 +662,7 @@ final class PresetOrderTests: BaseTestCase {
 
   @MainActor
   func test_movingPastTheEndDoesNothing() {
-    let model = AppModel()
+    let model = AppModel(persistence: store)
     model.presets = presets(["One", "Two"])
 
     model.movePreset(model.presets[0], by: -1)
@@ -718,5 +718,75 @@ final class SavingReportTests: BaseTestCase {
   func test_nothingConvertedMeansNothingToReport() throws {
     let source = try file("in.png", bytes: 100)
     XCTAssertNil(BatchViewModel.saving(from: [], sources: [source]))
+  }
+}
+
+/// Nothing in the suite may write into the folder the app keeps for the person
+/// using it. A test once left nine presets called One, Two and Three in it.
+final class TestIsolationTests: BaseTestCase {
+
+  @MainActor
+  func test_theModelWritesWhereItIsTold() async throws {
+    let model = AppModel(persistence: store)
+    model.savePreset(RulePreset(name: "Scratch only", description: "", category: .image))
+
+    // Give the write a moment to land, then look in both places.
+    try await Task.sleep(nanoseconds: 300_000_000)
+
+    let inScratch = try await store.loadAllPresets()
+    XCTAssertTrue(inScratch.contains { $0.name == "Scratch only" })
+
+    let real = try await PersistenceManager.shared.loadAllPresets()
+    XCTAssertFalse(
+      real.contains { $0.name == "Scratch only" },
+      "a test wrote into the real Application Support folder"
+    )
+  }
+}
+
+/// Turning a preset off, which used to mean deleting it.
+final class PresetEnablingTests: BaseTestCase {
+
+  @MainActor
+  func test_anOffPresetIsNotOffered() {
+    let model = AppModel(persistence: store)
+    model.presets = [
+      RulePreset(name: "On", description: "", category: .image),
+      RulePreset(name: "Off", description: "", category: .image, isEnabled: false),
+    ]
+    XCTAssertEqual(model.usablePresets.map(\.name), ["On"])
+  }
+
+  @MainActor
+  func test_turningOneOffKeepsItInTheList() {
+    let model = AppModel(persistence: store)
+    model.presets = [RulePreset(name: "Kept", description: "", category: .image)]
+
+    model.setPreset(model.presets[0], enabled: false)
+
+    XCTAssertEqual(model.presets.count, 1, "it is off, not gone")
+    XCTAssertFalse(model.presets[0].isEnabled)
+    XCTAssertTrue(model.usablePresets.isEmpty)
+
+    model.setPreset(model.presets[0], enabled: true)
+    XCTAssertEqual(model.usablePresets.count, 1)
+  }
+
+  /// A preset written before the switch existed is on, not off.
+  func test_aPresetWithoutTheFlagIsOn() throws {
+    let json = """
+    { "name": "Old", "category": "image", "actions": [] }
+    """
+    let preset = try JSONDecoder().decode(RulePreset.self, from: Data(json.utf8))
+    XCTAssertTrue(preset.isEnabled)
+  }
+
+  func test_theFlagSurvivesASaveAndLoad() async throws {
+    let preset = RulePreset(name: "Off", description: "", category: .image, isEnabled: false)
+    try await store.savePreset(preset)
+
+    let reopened = PersistenceManager(root: store.root)
+    let loaded = try await reopened.loadAllPresets()
+    XCTAssertEqual(loaded.first?.isEnabled, false)
   }
 }
