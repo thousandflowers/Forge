@@ -274,7 +274,7 @@ final class BatchViewModel: ObservableObject {
     return { [weak self] fraction in
       let rounded = (fraction * 100).rounded() / 100
       guard latest.advance(to: rounded) else { return }
-      Task { @MainActor in self?.fileProgress[id] = rounded }
+      Task { @MainActor [weak self] in self?.fileProgress[id] = rounded }
     }
   }
 }

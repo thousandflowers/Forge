@@ -19,6 +19,13 @@ Thank you for your interest in contributing to Forge! This document provides gui
 - Xcode 15+ or Swift 5.9 toolchain
 - Command Line Tools: `xcode-select --install`
 
+> **The code has to compile on Swift 5.9**, which is what `Package.swift`
+> declares and what CI builds with. A recent Xcode will happily accept things
+> 5.9 rejects, so a green build on your machine is not the last word - watch
+> the CI run. The two that have caught us out: trailing commas in argument
+> lists (Swift 6.1+), and using a `self` captured by an outer closure inside a
+> nested `Task` without re-capturing it.
+
 ### Build & Test
 
 ```bash

@@ -119,7 +119,7 @@ struct PresetEditorView: View {
       resize: resize,
       quality: enableQuality ? Int(quality) : nil,
       filters: Array(filters),
-      category: category,
+      category: category
     )
     onSave(preset)
     dismiss()

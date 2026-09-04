@@ -77,7 +77,7 @@ final class AppModel: ObservableObject {
         resize: preset.resize,
         quality: preset.quality,
         filters: preset.filters,
-        category: preset.category,
+        category: preset.category
       )
     )
   }
