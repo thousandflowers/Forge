@@ -151,13 +151,25 @@ Native, no new dependencies, in rough order of value.
 ### Tools this Mac has, that Forge does not call yet
 
 Forge finds `ffmpeg`, `pandoc`, `tesseract` and `fonttools` when they are
-installed, and installs any of them with Homebrew from inside the app. Only
-WebP is wired through to a real conversion. Until the rest are, the cards say
-"installed, Forge does not call it yet" rather than turning green on a promise.
+installed, and installs any of them with Homebrew from inside the app. The
+cards say "installed, Forge does not call it yet" for the ones that are still
+only found, rather than turning green on a promise.
 
-- [ ] **Broadcast and legacy video through ffmpeg** - WMV, MXF, FLV, and AV1 or
-      VP9 encoding.
-- [ ] **Office and ebooks through pandoc** - XLSX, PPTX, EPUB.
+Where a tool is wired, Forge keeps no list of what it can do: pandoc is asked
+for its own input and output formats, and ffmpeg is asked by being run, since
+working out which muxer a filename means is the whole of its job. A list here
+would be wrong the day either of them gains a format.
+
+Anything macOS can do itself is still done by macOS. A tool is only offered
+the pair the frameworks turned down - which is what makes an MP4 to WMV
+possible without changing what an MP4 to MOV does.
+
+- [x] **Broadcast and legacy video through ffmpeg** - WMV, MXF, FLV, MKV, AVI,
+      and AV1 or VP9 encoding. Measured: a 320x240 MP4 converts to ASF/WMV,
+      Matroska and AVI, and `--resize` crosses as a scale filter.
+- [x] **Office and ebooks through pandoc** - EPUB, DOCX and the rest of what
+      pandoc lists. Measured: a Markdown file becomes a valid EPUB, `mimetype`
+      and container included.
 - [ ] **The OCR languages Vision does not have, through tesseract.**
 - [ ] **Font conversion through fonttools** - and a way to find it: it installs
       into a Python user directory that a GUI app's PATH does not include, so
