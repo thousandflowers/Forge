@@ -580,3 +580,44 @@ final class PresetSharingTests: BaseTestCase {
     XCTAssertEqual(Notifier.summary(converted: 3, failed: 1), "3 files converted, 1 failed.")
   }
 }
+
+/// Adjusting a preset for one batch, without editing the saved one.
+final class PresetAdjustmentTests: BaseTestCase {
+
+  func test_replacingSwapsTheActionOfThatKind() {
+    let preset = RulePreset(
+      name: "Base", description: "", category: .image,
+      actions: [.convertFormat(to: .jpeg), .quality(level: 80)]
+    )
+    let adjusted = preset.replacing(.quality(level: 40))
+
+    XCTAssertEqual(adjusted.quality, 40)
+    XCTAssertEqual(adjusted.actions.count, 2, "it replaced rather than piling one on")
+    XCTAssertEqual(preset.quality, 80, "the original is untouched")
+  }
+
+  func test_replacingAddsWhenThereIsNoneOfThatKind() {
+    let preset = RulePreset(name: "Base", description: "", category: .image,
+                            actions: [.convertFormat(to: .jpeg)])
+    let adjusted = preset.replacing(.resize(width: 640, height: nil, fitMode: .proportional))
+
+    XCTAssertEqual(adjusted.resize?.width, 640)
+    XCTAssertEqual(adjusted.actions.count, 2)
+  }
+
+  /// The order the chain runs in must survive an adjustment.
+  func test_replacingKeepsThePosition() {
+    let preset = RulePreset(
+      name: "Base", description: "", category: .image,
+      actions: [.quality(level: 80), .convertFormat(to: .jpeg), .filter(type: .sepia)]
+    )
+    let adjusted = preset.replacing(.quality(level: 30))
+    XCTAssertEqual(adjusted.actions.map(\.id), ["quality", "convert", "filter"])
+  }
+
+  func test_removingTakesTheActionOut() {
+    let preset = RulePreset(name: "Base", description: "", category: .image,
+                            actions: [.convertFormat(to: .jpeg), .quality(level: 80)])
+    XCTAssertNil(preset.removing("quality").quality)
+  }
+}

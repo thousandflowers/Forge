@@ -79,8 +79,9 @@ Native, no new dependencies, in rough order of value.
 
 - [x] **In-app format overview** - the Capabilities screen, computed from the
       frameworks at run time, so it describes the machine it runs on.
-- [ ] **Quality and format controls in the convert screen** - currently they
-      live only inside a preset.
+- [x] **Quality and format controls in the convert screen** - an Adjust button
+      overrides the preset's format, width and quality for one batch, without
+      editing the preset.
 - [ ] **Estimated output size and a summary before converting** - worth having
       precisely because the destination modes can replace files.
 - [x] **Filename suffix when resizing** - `photo-1280.jpg`. Converting one

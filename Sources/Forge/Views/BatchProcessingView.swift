@@ -10,8 +10,34 @@ struct BatchProcessingView: View {
   @State private var destinationMode: DestinationMode = .copyTo
   @State private var destinationURL: URL?
   @State private var isTargeted = false
+  @State private var showingAdjustments = false
+  @State private var overrideFormat: OutputFormat = .keep
+  @State private var overrideQuality: Double = 0
+  @State private var overrideWidth = ""
 
   private var preset: RulePreset? { model.presets.first { $0.id == selectedPresetID } }
+
+  /// The preset with this batch's adjustments applied, without touching the
+  /// saved one. Converting one folder differently should not mean editing a
+  /// preset and putting it back.
+  private var effectivePreset: RulePreset? {
+    guard var preset else { return nil }
+    if let format = overrideFormat.type {
+      preset = preset.replacing(.convertFormat(to: format))
+    }
+    if overrideQuality > 0 {
+      preset = preset.replacing(.quality(level: Int(overrideQuality)))
+    }
+    if let width = Int(overrideWidth.trimmingCharacters(in: .whitespaces)), width > 0 {
+      let mode = preset.resize?.fitMode ?? .proportional
+      preset = preset.replacing(.resize(width: width, height: nil, fitMode: mode))
+    }
+    return preset
+  }
+
+  private var hasAdjustments: Bool {
+    overrideFormat.type != nil || overrideQuality > 0 || !overrideWidth.isEmpty
+  }
   private var needsDestination: Bool { destinationMode != .overwrite }
   private var canConvert: Bool {
     !vm.files.isEmpty && preset != nil && !vm.isProcessing && (!needsDestination || destinationURL != nil)
@@ -94,6 +120,9 @@ struct BatchProcessingView: View {
       if vm.isProcessing {
         ProgressView(value: vm.progress).progressViewStyle(.linear)
       }
+      if showingAdjustments {
+        adjustments
+      }
       HStack(spacing: 14) {
         Picker("Preset", selection: $selectedPresetID) {
           Text("Choose preset…").tag(UUID?.none)
@@ -113,6 +142,12 @@ struct BatchProcessingView: View {
           }
         }
 
+        Toggle(isOn: $showingAdjustments) {
+          Label("Adjust", systemImage: hasAdjustments ? "slider.horizontal.3" : "slider.horizontal.below.rectangle")
+        }
+        .toggleStyle(.button)
+        .help("Change the format, size or quality for this batch only")
+
         Spacer()
 
         Text(vm.files.count == 1 ? "1 file" : "\(vm.files.count) files")
@@ -122,7 +157,7 @@ struct BatchProcessingView: View {
           Button("Cancel") { vm.cancel(model: model) }
         } else {
           Button {
-            if let preset {
+            if let preset = effectivePreset {
               Task { await vm.convert(model: model, preset: preset, mode: destinationMode, destination: destinationURL) }
             }
           } label: { Text("Convert").frame(minWidth: 84) }
@@ -133,6 +168,44 @@ struct BatchProcessingView: View {
       }
     }
     .padding()
+  }
+
+  /// Overrides for this batch only. Empty means "whatever the preset says".
+  private var adjustments: some View {
+    HStack(spacing: 14) {
+      Picker("Format", selection: $overrideFormat) {
+        Text("From preset").tag(OutputFormat.keep)
+        Section("Images") { ForEach(OutputFormat.images) { Text($0.label).tag($0) } }
+        Section("Audio") { ForEach(OutputFormat.audio) { Text($0.label).tag($0) } }
+        Section("Video") { ForEach(OutputFormat.video) { Text($0.label).tag($0) } }
+        Section("Documents") { ForEach(OutputFormat.documents) { Text($0.label).tag($0) } }
+      }
+      .frame(maxWidth: 200)
+
+      HStack(spacing: 4) {
+        Text("Width").foregroundStyle(.secondary)
+        TextField("auto", text: $overrideWidth).frame(width: 60)
+      }
+
+      HStack(spacing: 6) {
+        Text("Quality").foregroundStyle(.secondary)
+        Slider(value: $overrideQuality, in: 0...100, step: 1).frame(width: 130)
+        Text(overrideQuality > 0 ? "\(Int(overrideQuality))" : "preset")
+          .monospacedDigit()
+          .foregroundStyle(.secondary)
+          .frame(width: 46, alignment: .leading)
+      }
+
+      Spacer()
+
+      Button("Reset") {
+        overrideFormat = .keep
+        overrideQuality = 0
+        overrideWidth = ""
+      }
+      .disabled(!hasAdjustments)
+    }
+    .padding(.bottom, 4)
   }
 
   private func addFiles() {

@@ -83,6 +83,28 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   /// The actions, ready to run.
   func toOperations() -> [Operation] { actions }
 
+  /// A copy with `action` put in place of the one of its kind already there,
+  /// or added if there is none.
+  ///
+  /// This is how the convert screen adjusts a preset for one batch without
+  /// editing the preset itself.
+  func replacing(_ action: Operation) -> RulePreset {
+    var copy = self
+    if let index = copy.actions.firstIndex(where: { $0.id == action.id }) {
+      copy.actions[index] = action
+    } else {
+      copy.actions.append(action)
+    }
+    return copy
+  }
+
+  /// A copy without any action of that kind.
+  func removing(_ kind: String) -> RulePreset {
+    var copy = self
+    copy.actions.removeAll { $0.id == kind }
+    return copy
+  }
+
   // MARK: - Reading the chain
 
   /// What the chain converts to, if it says.
