@@ -7,6 +7,16 @@ import UniformTypeIdentifiers
 /// QuickLook can draw.
 final class VectorTests: BaseTestCase {
 
+  /// Whether this machine draws SVG at all. macOS 14 answers the QuickLook
+  /// request and hands back something that is not the artwork, so Forge does
+  /// not offer SVG there - and the tests that need a drawing stand aside.
+  private func requireADrawingMachine() throws {
+    try XCTSkipUnless(
+      FormatCatalog.isRasterizableVector(.svg),
+      "this machine's QuickLook does not draw SVG"
+    )
+  }
+
   /// 200 by 100, so anything that loses the proportions is visible in a number.
   private static let svg = """
     <svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">\
@@ -46,6 +56,7 @@ final class VectorTests: BaseTestCase {
   /// The whole point: an SVG becomes a raster without a web view and without
   /// anything installed.
   func test_svg_becomesAnImage() async throws {
+    try requireADrawingMachine()
     let source = try svgFile()
     let destination = try folder("out")
 
@@ -69,6 +80,7 @@ final class VectorTests: BaseTestCase {
   /// A resize decides the size the vector is drawn at, rather than being
   /// applied to a drawing made at some other size.
   func test_svg_isDrawnAtTheSizeAskedFor() async throws {
+    try requireADrawingMachine()
     let source = try svgFile()
     let destination = try folder("out")
 
@@ -91,6 +103,7 @@ final class VectorTests: BaseTestCase {
   /// An `.svgz` is refused outright by the QuickLook generator, so it is
   /// unpacked first - and has to end up at the same picture.
   func test_svgz_isUnpackedAndDrawsTheSameThing() async throws {
+    try requireADrawingMachine()
     let destination = try folder("out")
     let coordinator = coordinator()
 

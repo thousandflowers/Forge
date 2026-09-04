@@ -29,6 +29,71 @@ final class VectorProcessor: FileProcessor, @unchecked Sendable {
 
   private let images = ImageProcessor()
 
+  /// Whether this Mac's QuickLook really draws an SVG.
+  ///
+  /// Asked rather than assumed, and asked about the drawing rather than the
+  /// call: on macOS 14 the request succeeds and comes back with a square that
+  /// is not the artwork - a page or an icon - which would have made Forge
+  /// hand somebody a picture of the wrong thing and call it a conversion.
+  /// A flat block of one colour is drawn and the middle pixel is read back.
+  static let canDraw: Bool = probe()
+
+  private static func probe() -> Bool {
+    let folder = FileManager.default.temporaryDirectory
+      .appendingPathComponent("forge-vector-probe-\(UUID().uuidString)", isDirectory: true)
+    guard (try? FileManager.default.createDirectory(
+      at: folder, withIntermediateDirectories: true
+    )) != nil else { return false }
+    defer { try? FileManager.default.removeItem(at: folder) }
+
+    let file = folder.appendingPathComponent("probe.svg")
+    let colour = (red: 0x31, green: 0x78, blue: 0xc6)
+    let svg = """
+      <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">\
+      <rect width="64" height="64" fill="#3178c6"/></svg>
+      """
+    guard (try? svg.write(to: file, atomically: true, encoding: .utf8)) != nil else { return false }
+
+    let request = QLThumbnailGenerator.Request(
+      fileAt: file, size: CGSize(width: 64, height: 64), scale: 1, representationTypes: .thumbnail
+    )
+    let waiting = DispatchSemaphore(value: 0)
+    let box = DrawingBox()
+    QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { representation, _ in
+      box.image = representation?.cgImage
+      waiting.signal()
+    }
+    // A generator that never answers is a generator this machine does not have.
+    guard waiting.wait(timeout: .now() + 5) == .success, let drawing = box.image else {
+      return false
+    }
+
+    guard let middle = centrePixel(of: drawing) else { return false }
+    let tolerance = 24
+    return abs(Int(middle.red) - colour.red) <= tolerance
+      && abs(Int(middle.green) - colour.green) <= tolerance
+      && abs(Int(middle.blue) - colour.blue) <= tolerance
+  }
+
+  /// The colour in the middle of a drawing, read through a one-pixel context so
+  /// the pixel format of whatever came back does not have to be guessed at.
+  private static func centrePixel(of image: CGImage) -> (red: UInt8, green: UInt8, blue: UInt8)? {
+    var pixel: [UInt8] = [0, 0, 0, 0]
+    guard let context = CGContext(
+      data: &pixel,
+      width: 1,
+      height: 1,
+      bitsPerComponent: 8,
+      bytesPerRow: 4,
+      space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else { return nil }
+    // Draw the whole image scaled down onto that one pixel: for a flat colour
+    // the average is the colour, and for a page of text or an icon it is not.
+    context.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+    return (pixel[0], pixel[1], pixel[2])
+  }
+
   func canProcess(_ file: ProcessableFile) -> Bool {
     FormatCatalog.isRasterizableVector(file.fileType)
   }
@@ -181,6 +246,11 @@ final class VectorProcessor: FileProcessor, @unchecked Sendable {
       }
       capacity = min(capacity * 2, maximumUnpackedBytes)
     }
+  }
+
+  /// Somewhere for the probe's completion handler to leave its answer.
+  private final class DrawingBox: @unchecked Sendable {
+    var image: CGImage?
   }
 
   private static let truncated = ProcessingError.conversionFailed(

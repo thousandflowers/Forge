@@ -21,7 +21,7 @@ supports, so they are live now and simply were not advertised.
 | **PSD** | read and write |
 | **ICO / ICNS** | read and write |
 | **WebP** | read |
-| **SVG / SVGZ** | read, drawn by QuickLook rather than ImageIO |
+| **SVG / SVGZ** | read, drawn by QuickLook rather than ImageIO - on a machine whose QuickLook draws them, which Forge checks by drawing one |
 | **PDF** | write, as an image destination |
 | **ProRes, HEVC** | export presets exist; not yet reachable from the UI |
 | **AC3, VOB** | read |
@@ -66,6 +66,13 @@ Native, no new dependencies, in rough order of value.
       at the size asked for rather than at a default and scaled, and everything
       after it - format, quality, filters - is the ordinary image path, so an
       SVG can become a PDF as easily as a PNG.
+
+      Not every Mac has that generator, and the ones that do not fail in the
+      worst way: on macOS 14 the request succeeds and hands back a square that
+      is not the artwork. Asking the type database is no help, so Forge draws a
+      flat block of one colour at startup and reads the middle pixel back. If
+      it is not the colour that went in, SVG is not offered at all - which is
+      why `forge formats` lists `svg` on one machine and not on another.
 - [x] **Metadata preservation** - images already carried EXIF and GPS across;
       audio did not carry anything, because the audio path writes with
       `AVAudioFile`, which has no notion of metadata. The tags are now put back
