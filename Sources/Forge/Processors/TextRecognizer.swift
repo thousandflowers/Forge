@@ -1,5 +1,7 @@
 import CoreGraphics
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 import Vision
 
 /// Reads text out of an image, on device.
@@ -33,11 +35,11 @@ enum TextRecognizer {
       request.automaticallyDetectsLanguage = true
     } else {
       let unknown = languages.filter { !supports($0) }
-      guard unknown.isEmpty else {
-        throw ProcessingError.validationFailed(
-          message: "Vision cannot recognise \(unknown.joined(separator: ", ")). "
-            + "It knows: \(supportedLanguages.joined(separator: ", "))"
-        )
+      if !unknown.isEmpty {
+        // Vision recognises thirty languages and Greek is not one of them.
+        // tesseract might have it - the user's tesseract, with the language
+        // data the user installed - so it is asked before giving up.
+        return try Tesseract.text(in: image, languages: languages)
       }
       request.recognitionLanguages = languages
       request.automaticallyDetectsLanguage = false
@@ -49,5 +51,92 @@ enum TextRecognizer {
     return observations
       .compactMap { $0.topCandidates(1).first?.string }
       .joined(separator: "\n")
+  }
+}
+
+
+/// The OCR languages Vision does not have, through the user's tesseract.
+///
+/// Which languages that is comes from tesseract itself - `--list-langs` is the
+/// list of data files somebody installed - and the codes are translated by
+/// Foundation rather than by a table here: Vision speaks BCP-47 and tesseract
+/// speaks ISO 639-2, and `el-GR` is `ell` in both of their books.
+enum Tesseract {
+
+  /// What this machine's tesseract has, asked once.
+  static let languages: Set<String> = ask()
+
+  /// tesseract's name for a language Vision would call `el-GR`.
+  static func code(for language: String) -> String? {
+    Locale.Language(identifier: language).languageCode?.identifier(.alpha3)
+  }
+
+  static func has(_ language: String) -> Bool {
+    guard let code = code(for: language) else { return false }
+    return languages.contains(code)
+  }
+
+  static func text(in image: CGImage, languages wanted: [String]) throws -> String {
+    let codes = wanted.compactMap(code(for:))
+    let missing = wanted.filter { !has($0) }
+
+    guard let tesseract = ExternalTools.locate("tesseract"), missing.isEmpty else {
+      throw ProcessingError.validationFailed(
+        message: "Neither Vision nor tesseract has \(missing.joined(separator: ", ")) on this Mac. "
+          + "Vision knows: \(TextRecognizer.supportedLanguages.joined(separator: ", ")). "
+          + "`brew install tesseract-lang` adds the rest."
+      )
+    }
+
+    let folder = FileManager.default.temporaryDirectory
+      .appendingPathComponent("forge-ocr-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+
+    let picture = folder.appendingPathComponent("page.png")
+    guard let sink = CGImageDestinationCreateWithURL(
+      picture as CFURL, UTType.png.identifier as CFString, 1, nil
+    ) else {
+      throw ProcessingError.conversionFailed(reason: "Cannot hand the page to tesseract")
+    }
+    CGImageDestinationAddImage(sink, image, nil)
+    guard CGImageDestinationFinalize(sink) else {
+      throw ProcessingError.conversionFailed(reason: "Cannot hand the page to tesseract")
+    }
+
+    // tesseract names its own output, adding .txt to the base it is given.
+    let base = folder.appendingPathComponent("read")
+    try ExternalTools.run(tesseract, [
+      picture.path, base.path, "-l", codes.joined(separator: "+"),
+    ])
+
+    let written = base.appendingPathExtension("txt")
+    guard let text = try? String(contentsOf: written, encoding: .utf8) else {
+      throw ProcessingError.conversionFailed(reason: "tesseract read the page and wrote nothing")
+    }
+    return text.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private static func ask() -> Set<String> {
+    guard let tesseract = ExternalTools.locate("tesseract") else { return [] }
+    let process = Process()
+    process.executableURL = tesseract
+    process.arguments = ["--list-langs"]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = Pipe()
+
+    guard (try? process.run()) != nil else { return [] }
+    let said = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard let text = String(data: said, encoding: .utf8) else { return [] }
+
+    // The first line says where the data is; the rest are the languages.
+    return Set(
+      text.split(separator: "\n")
+        .dropFirst()
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .filter { !$0.isEmpty }
+    )
   }
 }

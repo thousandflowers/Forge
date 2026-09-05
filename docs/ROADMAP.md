@@ -202,7 +202,18 @@ possible without changing what an MP4 to MOV does.
       on.** The parts that could be checked were: the folder handover, the
       failure when a tool writes nothing, and that a spreadsheet is offered to
       whichever tool is actually present.
-- [ ] **The OCR languages Vision does not have, through tesseract.**
+- [x] **The OCR languages Vision does not have, through tesseract** - asked
+      when Vision says it cannot read a language, and only then. Which
+      languages tesseract has comes from `--list-langs`, which is the list of
+      data files somebody installed rather than a list kept here; the codes are
+      translated by Foundation, since Vision speaks BCP-47 and tesseract speaks
+      ISO 639-2 and `el-GR` is `ell` in both of their books.
+
+      Measured on a rendered page: Vision asked for `en-US` and tesseract asked
+      for `eng` - which Vision does not answer to, so it genuinely takes the
+      other path - both read back "Forge legge questo". Asked for Greek, where
+      this machine has neither, the message names both engines, lists what
+      Vision does have, and says `brew install tesseract-lang` adds the rest.
 - [ ] **Font conversion through fonttools** - and a way to find it: it installs
       into a Python user directory that a GUI app's PATH does not include, so
       Forge currently reports it missing on a Mac that has it.

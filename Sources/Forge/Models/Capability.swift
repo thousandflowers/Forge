@@ -263,7 +263,8 @@ enum Capabilities {
           name: "Extra recognition languages",
           requires: "a second recognition engine and its language data",
           approximateSize: "tens of megabytes per language",
-          tool: ExternalTool(binary: "tesseract", formula: "tesseract-lang", adds: "the languages Vision does not read")
+          tool: ExternalTool(binary: "tesseract", formula: "tesseract-lang", adds: "the languages Vision does not read"),
+          isWired: true
         )),
         evidence: []
       ),
