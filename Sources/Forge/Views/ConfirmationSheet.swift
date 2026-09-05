@@ -241,7 +241,7 @@ final class PreviewRun: ObservableObject {
   /// A small picture of a file, made by ImageIO at the size it is shown.
   /// Decoding a whole image to draw a thumbnail is how a preview of a sixty
   /// megapixel photograph costs a gigabyte.
-  static func thumbnail(of url: URL, maximumPixels: Int = 480) -> NSImage? {
+  nonisolated static func thumbnail(of url: URL, maximumPixels: Int = 480) -> NSImage? {
     guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
     let options: [CFString: Any] = [
       kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -256,7 +256,7 @@ final class PreviewRun: ObservableObject {
 
   /// The first frame of a film, which is the cheapest true thing to show about
   /// one.
-  static func frame(of url: URL) async -> NSImage? {
+  nonisolated static func frame(of url: URL) async -> NSImage? {
     let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
     generator.appliesPreferredTrackTransform = true
     generator.maximumSize = CGSize(width: 480, height: 480)
