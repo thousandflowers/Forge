@@ -10,6 +10,12 @@ import Foundation
 /// routinely. Nothing here is ever applied on its own, and no part of the app
 /// may describe it as making a file anonymous.
 struct RedactionCandidate: Identifiable, Hashable, Sendable {
+  // Hashed and compared by id rather than by synthesis: two candidates are the
+  // same candidate when they are the same one, and a CGRect is not something
+  // every toolchain Forge builds on will hash for us.
+  static func == (lhs: RedactionCandidate, rhs: RedactionCandidate) -> Bool { lhs.id == rhs.id }
+  func hash(into hasher: inout Hasher) { hasher.combine(id) }
+
   let id: UUID
   /// Where it is, in the image's own coordinates: 0-1 from the bottom left,
   /// which is what Vision reports and what Core Image draws in.

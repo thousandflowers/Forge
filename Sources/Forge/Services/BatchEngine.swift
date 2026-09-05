@@ -206,7 +206,10 @@ actor BatchEngine {
 
   private func start() {
     monitor = PressureMonitor { [weak self] pressure in
-      Task { await self?.pressureChanged(to: pressure) }
+      // Bound once, strongly: a weak capture is a mutable reference, and one
+      // cannot be read again from inside the task this closure starts.
+      guard let engine = self else { return }
+      Task { await engine.pressureChanged(to: pressure) }
     }
   }
 
