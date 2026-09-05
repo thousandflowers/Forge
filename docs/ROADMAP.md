@@ -226,10 +226,15 @@ possible without changing what an MP4 to MOV does.
       GUI app inherits. Those directories are now searched, read rather than
       guessed at, since the version in that path is Python's business.
 
-      **Writing a WOFF2 is unverified on the machine this was built on**:
-      fonttools is here and its brotli module is not, which is a separate pip
-      package. Forge says exactly that now rather than passing on a Python
-      traceback.
+      Measured, both directions, on Andale Mono: 109,700 bytes of TTF become a
+      49,348-byte WOFF2 and come back as a font with the same name, the same
+      659 glyphs and the same unitsPerEm. The one table that does not survive
+      is `DSIG`, the digital signature, which the WOFF2 transform invalidates
+      by design and the specification says to drop.
+
+      Writing one needs fonttools' brotli module, which pip does not install
+      alongside it. When it is missing Forge says so in those words - and says
+      which command adds it - rather than passing on a Python traceback.
 - [ ] **A size ceiling on video and audio** - today only images are written,
       measured and written again lower until they fit. A video asked to come in
       under a size is not refused; the ceiling is simply not offered for it.
