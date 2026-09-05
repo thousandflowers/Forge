@@ -10,6 +10,12 @@ import Foundation
 /// than a file that would not convert.
 enum Toml {
 
+  /// TOML by its extension rather than by its type: `public.toml` does not
+  /// exist on macOS 14, so asking the type database whether a file is TOML
+  /// gets a different answer depending on the Mac. The extension does not
+  /// move.
+  static func handles(_ ext: String) -> Bool { ext.lowercased() == "toml" }
+
   // MARK: - Reading
 
   static func object(from text: String) throws -> [String: Any] {

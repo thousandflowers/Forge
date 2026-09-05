@@ -20,7 +20,7 @@ final class DataProcessor: FileProcessor, @unchecked Sendable {
   }
 
   func canProcess(_ file: ProcessableFile) -> Bool {
-    Self.readable.contains { file.fileType.conforms(to: $0) }
+    Toml.handles(file.url.pathExtension) || Self.readable.contains { file.fileType.conforms(to: $0) }
   }
 
   func process(
@@ -35,7 +35,9 @@ final class DataProcessor: FileProcessor, @unchecked Sendable {
       throw ProcessingError.unknownType
     }
     let outputType = Self.outputType(for: output, operations: operations)
-    guard Self.readable.contains(where: { outputType.conforms(to: $0) }) else {
+    let writable = Toml.handles(output.pathExtension)
+      || Self.readable.contains { outputType.conforms(to: $0) }
+    guard writable else {
       throw ProcessingError.unsupportedConversion(from: inputType, to: outputType)
     }
 
@@ -68,7 +70,7 @@ final class DataProcessor: FileProcessor, @unchecked Sendable {
     guard let text = String(data: data, encoding: .utf8) else {
       throw ProcessingError.conversionFailed(reason: "\(url.lastPathComponent) is not UTF-8 text")
     }
-    if let toml, type.conforms(to: toml) {
+    if Toml.handles(url.pathExtension) {
       return try Toml.object(from: text)
     }
     return try Separated.rows(from: text, separator: separator(for: type))
@@ -89,7 +91,7 @@ final class DataProcessor: FileProcessor, @unchecked Sendable {
       return try data.write(to: url, options: .atomic)
     }
 
-    if let toml, type.conforms(to: toml) {
+    if Toml.handles(url.pathExtension) {
       return try Toml.text(from: value).write(to: url, atomically: true, encoding: .utf8)
     }
 

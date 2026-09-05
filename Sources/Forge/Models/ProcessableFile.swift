@@ -60,7 +60,9 @@ struct ProcessableFile: Identifiable, Hashable, Sendable {
   private static func type(of url: URL) -> UTType? {
     guard let type = UTType(filenameExtension: url.pathExtension) else { return nil }
     guard type.isDynamic else { return type }
-    if Subtitles.reads(url.pathExtension) {
+    // TOML for the same reason: `public.toml` does not exist on macOS 14, so
+    // a .toml file gets an invented type there and a real one here.
+    if Toml.handles(url.pathExtension) || Subtitles.reads(url.pathExtension) {
       return UTType(filenameExtension: url.pathExtension, conformingTo: .plainText)
     }
     // WOFF2 has no type either, and is a font rather than text.
