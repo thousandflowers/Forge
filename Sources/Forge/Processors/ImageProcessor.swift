@@ -378,9 +378,22 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     let targetH = CGFloat(targetHeight ?? Int(original.height))
     guard targetW > 0, targetH > 0, original.width > 0, original.height > 0 else { return image }
 
+    // Only the sides that were actually asked for decide the scale.
+    //
+    // Filling the missing one in with the original and handing both to min()
+    // looks harmless and is not: the unasked side always has a ratio of exactly
+    // 1, so it silently became the floor. "1600 wide" on an 800 pixel picture
+    // scaled by min(2, 1) and came back unchanged, which reads as a resize that
+    // did nothing. The box for a crop or a pad still uses the original for the
+    // side nobody named - that part was right.
+    let asked = [
+      targetWidth.map { CGFloat($0) / original.width },
+      targetHeight.map { CGFloat($0) / original.height },
+    ].compactMap { $0 }.filter { $0 > 0 }
+
     switch mode {
     case .proportional:
-      let scale = min(targetW / original.width, targetH / original.height)
+      guard let scale = asked.min() else { return image }
       return image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
 
     case .stretch:
@@ -390,7 +403,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       ))
 
     case .cropCenter:
-      let scale = max(targetW / original.width, targetH / original.height)
+      guard let scale = asked.max() else { return image }
       let scaled = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
       let crop = CGRect(
         x: scaled.extent.origin.x + (scaled.extent.width - targetW) / 2,
@@ -403,7 +416,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       )
 
     case .pad:
-      let scale = min(targetW / original.width, targetH / original.height)
+      let scale = asked.min() ?? 1
       let scaled = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
       let canvas = CGRect(x: 0, y: 0, width: targetW, height: targetH)
       let centred = scaled.transformed(by: CGAffineTransform(

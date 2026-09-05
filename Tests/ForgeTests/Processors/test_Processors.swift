@@ -133,6 +133,74 @@ final class ConversionTests: BaseTestCase {
 
   /// Resize used to be applied as a display transform, leaving the pixels at
   /// their original size, so a "720p" preset changed nothing.
+  /// A width on its own means that width.
+  ///
+  /// It used to mean "that width, unless it is larger than the picture", because
+  /// the side nobody named was filled in with the original and its ratio of
+  /// exactly 1 became the floor. Asking for 1600 wide gave back 800.
+  func test_image_resizeToAWidthLargerThanTheOriginal() async throws {
+    let source = try Fixture.image(at: path("small.png"), width: 800, height: 600)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(
+        format: .png,
+        resize: ResizeSpec(width: 1600, height: nil, fitMode: .proportional),
+        category: .image
+      ),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    let output = try XCTUnwrap(entry.outputURL)
+    let size = try XCTUnwrap(try ProcessableFile(url: output).dimensions)
+    XCTAssertEqual(size.width, 1600)
+    XCTAssertEqual(size.height, 1200, "and the shape is kept")
+  }
+
+  /// The other direction still behaves, which is the case everybody was using.
+  func test_image_resizeToAWidthSmallerThanTheOriginal() async throws {
+    let source = try Fixture.image(at: path("big.png"), width: 800, height: 600)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(
+        format: .png,
+        resize: ResizeSpec(width: 400, height: nil, fitMode: .proportional),
+        category: .image
+      ),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    let size = try XCTUnwrap(try ProcessableFile(url: try XCTUnwrap(entry.outputURL)).dimensions)
+    XCTAssertEqual(size.width, 400)
+    XCTAssertEqual(size.height, 300)
+  }
+
+  /// Both sides named is a box to fit inside, and that has not changed.
+  func test_image_resizeInsideABoxTakesTheSmallerSide() async throws {
+    let source = try Fixture.image(at: path("wide.png"), width: 1000, height: 200)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(
+        format: .png,
+        resize: ResizeSpec(width: 500, height: 500, fitMode: .proportional),
+        category: .image
+      ),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    let size = try XCTUnwrap(try ProcessableFile(url: try XCTUnwrap(entry.outputURL)).dimensions)
+    XCTAssertEqual(size.width, 500, "the wide side is what fits")
+    XCTAssertEqual(size.height, 100)
+  }
+
   func test_video_resizeChangesThePixels() async throws {
     let source = try await Fixture.video(
       at: path("big.mp4"),
