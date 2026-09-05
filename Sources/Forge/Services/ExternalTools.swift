@@ -1,12 +1,15 @@
 import Foundation
 
-/// A converter Forge does not ship, and where to get it.
+/// A converter Forge does not ship, and where to get it from Homebrew.
 ///
-/// Forge does not download or bundle these. A pack downloaded by the app would
-/// be code Forge did not build, which needs a pinned source, a checksum and a
-/// signature to be honest about — and in FFmpeg's case would pull its licence
-/// onto Forge. Asking the Mac what it already has costs none of that, and the
-/// install is the one command the user would have typed anyway.
+/// Nothing is bundled inside the app: a copy of somebody else's binary in
+/// Forge's own bundle is their licence in Forge's repository. There are two
+/// ways one arrives instead. Homebrew, which is this type - the Mac is asked
+/// what it already has, and the install is the one command the user would have
+/// typed anyway. Or Forge's own hosted build, which is `ExtensionInfo`: a
+/// pinned source, a checksum and a version, downloaded on request. Both end up
+/// somewhere `locate` can find them, and nothing else in the app needs to know
+/// which of the two happened.
 struct ExternalTool: Hashable, Identifiable, Sendable {
   /// The executable's name, as it is called.
   let binary: String
@@ -73,6 +76,10 @@ enum ExternalTools {
 
   static func locate(_ binary: String) -> URL? {
     cache.location(of: binary) { name in
+      // A tool Forge fetched comes first. It is the build the manifest named
+      // and the hash was checked against, which is the only copy Forge can say
+      // anything true about - and the user asked for it by name.
+      if let managed = ManagedExtensions.executable(named: name) { return managed }
       for path in searchPaths {
         let candidate = URL(fileURLWithPath: path).appendingPathComponent(name)
         if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }
@@ -83,7 +90,14 @@ enum ExternalTools {
 
   /// Forget what was found, so a tool installed while the app was open is
   /// noticed without a restart.
-  static func forgetWhatWasFound() { cache.clear() }
+  static func forgetWhatWasFound() {
+    cache.clear()
+    // What pandoc reads and writes is pandoc's answer, and a pandoc that was
+    // not here when it was asked answered nothing. Downloading one has to
+    // count as a change of answer, or the formats it adds stay hidden until
+    // the next launch.
+    ExternalBridge.forgetToolFormats()
+  }
 
   /// Whether Homebrew itself is here, which decides whether offering the
   /// install command makes any sense.
@@ -147,6 +161,10 @@ enum ExternalTools {
     }
   }
 
+  /// How much of a failing tool's complaint is kept. Enough for a stack of
+  /// lines a person can read; not enough to matter.
+  private static let keptErrorBytes = 64 * 1024
+
   /// Run a tool and wait for it.
   ///
   /// Arguments are passed as a list, never as a string for a shell to parse:
@@ -158,13 +176,24 @@ enum ExternalTools {
     process.arguments = arguments
 
     // Whatever it has to say is kept, so a failure can say why rather than
-    // just "it did not work".
+    // just "it did not work" - but only the last of it. A tool that writes a
+    // megabyte of warnings is not a megabyte to hold in memory, and an unread
+    // pipe that fills stops the tool dead at 64KB, which is what an ignored
+    // standard output used to do to a chatty one.
     let errors = Pipe()
     process.standardError = errors
-    process.standardOutput = Pipe()
+    process.standardOutput = FileHandle.nullDevice
 
     try process.run()
-    let said = errors.fileHandleForReading.readDataToEndOfFile()
+
+    var said = Data()
+    let reading = errors.fileHandleForReading
+    while true {
+      let chunk = reading.availableData
+      if chunk.isEmpty { break }
+      said.append(chunk)
+      if said.count > keptErrorBytes { said.removeFirst(said.count - keptErrorBytes) }
+    }
     process.waitUntilExit()
 
     guard process.terminationStatus == 0 else {

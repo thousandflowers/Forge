@@ -73,8 +73,41 @@ enum ExternalBridge {
   /// pandoc's own answer to what it reads and writes, asked once.
   ///
   /// Empty when pandoc is not here, which is also the answer to "can pandoc
-  /// take this file".
-  static let pandocFormats: (read: Set<String>, write: Set<String>) = askPandoc()
+  /// take this file". Asked again after a tool is installed: a pandoc that
+  /// arrived while the app was open answered nothing when it was not here, and
+  /// keeping that answer would hide every format it just added.
+  static var pandocFormats: (read: Set<String>, write: Set<String>) {
+    formats.answer(askPandoc)
+  }
+
+  /// Forget what the tools said about themselves.
+  static func forgetToolFormats() { formats.clear() }
+
+  private static let formats = FormatAnswers()
+
+  private final class FormatAnswers: @unchecked Sendable {
+    private let lock = NSLock()
+    private var known: (read: Set<String>, write: Set<String>)?
+
+    func answer(_ ask: () -> (read: Set<String>, write: Set<String>)) -> (read: Set<String>, write: Set<String>) {
+      lock.lock()
+      if let known { lock.unlock(); return known }
+      lock.unlock()
+
+      let asked = ask()
+
+      lock.lock()
+      known = asked
+      lock.unlock()
+      return asked
+    }
+
+    func clear() {
+      lock.lock()
+      known = nil
+      lock.unlock()
+    }
+  }
 
   /// A format is what pandoc calls it; an extension is what a file is called.
   /// These are the few where the two differ - the rest of the list is used as
