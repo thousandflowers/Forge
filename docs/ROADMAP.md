@@ -214,9 +214,27 @@ possible without changing what an MP4 to MOV does.
       other path - both read back "Forge legge questo". Asked for Greek, where
       this machine has neither, the message names both engines, lists what
       Vision does have, and says `brew install tesseract-lang` adds the rest.
-- [ ] **Font conversion through fonttools** - and a way to find it: it installs
-      into a Python user directory that a GUI app's PATH does not include, so
-      Forge currently reports it missing on a Mac that has it.
+- [x] **Font conversion through fonttools** - TTF and OTF to WOFF2 and back,
+      which is the pair fonttools has a command of its own for. WOFF version 1
+      is left out: fonttools exposes no command for it, and driving its library
+      through `python3 -c` is a different promise from running a tool somebody
+      installed. TTF to OTF is not offered either - that is a change of outline
+      format rather than of container, and nothing here does it.
+
+      Finding it is fixed: a `pip install --user` puts its commands in
+      `~/Library/Python/<version>/bin`, which no shell profile mentions and no
+      GUI app inherits. Those directories are now searched, read rather than
+      guessed at, since the version in that path is Python's business.
+
+      Measured, both directions, on Andale Mono: 109,700 bytes of TTF become a
+      49,348-byte WOFF2 and come back as a font with the same name, the same
+      659 glyphs and the same unitsPerEm. The one table that does not survive
+      is `DSIG`, the digital signature, which the WOFF2 transform invalidates
+      by design and the specification says to drop.
+
+      Writing one needs fonttools' brotli module, which pip does not install
+      alongside it. When it is missing Forge says so in those words - and says
+      which command adds it - rather than passing on a Python traceback.
 - [ ] **A size ceiling on video and audio** - today only images are written,
       measured and written again lower until they fit. A video asked to come in
       under a size is not refused; the ceiling is simply not offered for it.
