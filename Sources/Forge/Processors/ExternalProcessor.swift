@@ -41,6 +41,35 @@ enum ExternalBridge {
     return nil
   }
 
+  /// Fonts, which macOS reads and cannot write: CoreText can list a font's
+  /// tables and has no public API to make one. fonttools can, and this is the
+  /// part of it with a command of its own - WOFF2 in both directions.
+  ///
+  /// WOFF version 1 is deliberately absent: fonttools exposes no command for
+  /// it, and driving its library through `python3 -c` is a different promise
+  /// from running a tool the user installed.
+  enum Fonts {
+    static let sfnt: Set<String> = ["ttf", "otf"]
+    static let packed: Set<String> = ["woff2"]
+
+    static func handles(_ ext: String) -> Bool {
+      sfnt.contains(ext.lowercased()) || packed.contains(ext.lowercased())
+    }
+
+    /// What fonttools should be told to do, or nothing when the pair is not
+    /// one it has a command for - ttf to otf among them, which is a change of
+    /// outline format rather than a change of container.
+    static func arguments(from source: String, to target: String, input: URL, output: URL) -> [String]? {
+      if sfnt.contains(source), packed.contains(target) {
+        return ["ttLib.woff2", "compress", "-o", output.path, input.path]
+      }
+      if packed.contains(source), sfnt.contains(target) {
+        return ["ttLib.woff2", "decompress", "-o", output.path, input.path]
+      }
+      return nil
+    }
+  }
+
   /// pandoc's own answer to what it reads and writes, asked once.
   ///
   /// Empty when pandoc is not here, which is also the answer to "can pandoc
@@ -60,6 +89,7 @@ enum ExternalBridge {
 
   static func canHandle(_ type: UTType) -> Bool {
     guard let ext = type.preferredFilenameExtension else { return false }
+    if Fonts.handles(ext) { return ExternalTools.locate("fonttools") != nil }
     if pandocReads(ext) { return true }
     // ffmpeg is asked about a pair rather than about a file, so anything
     // time-based is worth offering it and nothing else is.
@@ -75,6 +105,11 @@ enum ExternalBridge {
   static func plan(from input: URL, to output: URL, operations: [Operation]) -> Plan? {
     let source = input.pathExtension.lowercased()
     let target = output.pathExtension.lowercased()
+
+    if let fonttools = ExternalTools.locate("fonttools"),
+       let arguments = Fonts.arguments(from: source, to: target, input: input, output: output) {
+      return Plan(tool: fonttools, toolName: "fonttools", arguments: arguments)
+    }
 
     if let pandoc = ExternalTools.locate("pandoc"), pandocReads(source), pandocWrites(target) {
       // Standalone, or an HTML output is a fragment with no <head> and an EPUB
@@ -101,7 +136,15 @@ enum ExternalBridge {
       && (UTType(filenameExtension: source)?.conforms(to: .audiovisualContent) ?? false)
     if wantsTheSubtitles { wantsSomethingStill = false }
 
-    if !wantsSomethingStill, let ffmpeg = ExternalTools.locate("ffmpeg") {
+    // ffmpeg is for time-based files, and asked about nothing else. Without
+    // this it took anything that was not a picture or a document, fonts
+    // included: a TTF handed to it came back as "Invalid data found when
+    // processing input".
+    let sourceIsTimeBased = UTType(filenameExtension: source).map {
+      $0.conforms(to: .audiovisualContent) || $0.conforms(to: .audio)
+    } ?? false
+
+    if !wantsSomethingStill, sourceIsTimeBased, let ffmpeg = ExternalTools.locate("ffmpeg") {
       var arguments = ["-hide_banner", "-loglevel", "error", "-y", "-i", input.path]
       if wantsTheSubtitles {
         // The first subtitle track, and nothing else: without a map, ffmpeg

@@ -60,8 +60,14 @@ struct ProcessableFile: Identifiable, Hashable, Sendable {
   private static func type(of url: URL) -> UTType? {
     guard let type = UTType(filenameExtension: url.pathExtension) else { return nil }
     guard type.isDynamic else { return type }
-    guard Subtitles.reads(url.pathExtension) else { return nil }
-    return UTType(filenameExtension: url.pathExtension, conformingTo: .plainText)
+    if Subtitles.reads(url.pathExtension) {
+      return UTType(filenameExtension: url.pathExtension, conformingTo: .plainText)
+    }
+    // WOFF2 has no type either, and is a font rather than text.
+    if ExternalBridge.Fonts.handles(url.pathExtension) {
+      return UTType(filenameExtension: url.pathExtension, conformingTo: .font)
+    }
+    return nil
   }
 
   /// Image size, read from the header without decoding the image.
