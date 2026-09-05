@@ -232,6 +232,9 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     if isLossy(uti) {
       options[kCGImageDestinationLossyCompressionQuality] = quality(from: operations)
     }
+    // Whatever the chain says to leave behind, minus the two things that are
+    // never left behind: the orientation and the colour profile.
+    options = PrivacyFilter.filter(options, to: PrivacyFilter.policy(in: operations))
     return options
   }
 
@@ -355,7 +358,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
 
   private func applyOperation(_ operation: Operation, to image: CIImage) throws -> CIImage {
     switch operation {
-    case .convertFormat, .quality, .recognizeText, .encode, .limitSize:
+    case .convertFormat, .quality, .recognizeText, .encode, .limitSize, .stripMetadata:
       return image // settled when the file is written
     case .resize(let width, let height, let mode):
       return applyResize(image, targetWidth: width, targetHeight: height, mode: mode)

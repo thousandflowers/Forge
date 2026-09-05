@@ -173,6 +173,8 @@ struct PresetCard: View {
       case let (nil, height?): return "\(height) tall"
       case (nil, nil): return "resize"
       }
+    case .stripMetadata(let policy):
+      return policy == .stripLocation ? "no location" : "no metadata"
     case .quality(let level):
       return "Q\(level)"
     case .filter(let type):

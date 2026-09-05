@@ -105,7 +105,7 @@ extension ConversionPlan {
   /// in the filename included, because a plan that disagrees with the run is
   /// worse than no plan at all.
   init(file: ProcessableFile, preset: RulePreset?, destinationMode: DestinationMode) {
-    let operations = preset.map { SizeInName.applying(to: $0.toOperations(), from: file.fileName) } ?? []
+    let operations = preset.map { NameTokens.applying(to: $0.toOperations(), from: file.fileName) } ?? []
     let ceiling = SizeInName.ceiling(in: file.fileName)
 
     let source = ConvertKind(fileType: file.fileType)

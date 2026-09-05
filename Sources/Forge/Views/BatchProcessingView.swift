@@ -98,6 +98,7 @@ struct BatchProcessingView: View {
         fileCount: vm.files.count,
         totalSize: totalSize,
         presets: model.usablePresets,
+        defaultPrivacy: model.settings.privacy,
         choice: $choice,
         onConvert: {
           // Overwrite and Move both change what is already on disk, so they are

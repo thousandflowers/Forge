@@ -263,7 +263,7 @@ actor ProcessingCoordinator {
     // written into the file's own name beats both, because somebody typed it
     // onto that file for this conversion.
     let operations = settings.applyingDefaults(
-      to: SizeInName.applying(to: preset.toOperations(), from: file.fileName),
+      to: NameTokens.applying(to: preset.toOperations(), from: file.fileName),
       writing: preset.targetFormat ?? file.fileType
     )
 
@@ -301,6 +301,14 @@ actor ProcessingCoordinator {
     }
 
     try Task.checkCancellation()
+
+    // A PDF's author details can only be taken out of a PDF that exists, so
+    // this happens here rather than in a processor - on the scratch file,
+    // before anything is moved into place.
+    try PrivacyFilter.applyAfterWriting(
+      PrivacyFilter.policy(in: operations),
+      to: [plan.workURL] + result.additionalOutputs
+    )
 
     if plan.replacesSource, settings.createBackupBeforeOverwrite {
       try backUp(file.url)
