@@ -204,6 +204,31 @@ final class PrivacyTests: BaseTestCase {
     )
   }
 
+  // MARK: - What the sheet shows
+
+  /// Picking a preset fills the fields in from it - and clears the ones it says
+  /// nothing about.
+  ///
+  /// Leaving the last preset's answer behind is not only a wrong-looking chip:
+  /// touching any other field lets the preset go, and then that stale answer is
+  /// what actually runs.
+  func test_choosingAPreset_clearsWhatTheLastOneSaid() {
+    var thorough = RulePreset.make(format: .jpeg, category: .image)
+    thorough.actions.append(.stripMetadata(policy: .stripAll))
+    thorough.actions.append(.limitSize(bytes: 5_000_000))
+
+    let choice = ConvertChoice().adopting(thorough)
+    XCTAssertEqual(choice.privacy, .stripAll)
+    XCTAssertEqual(choice.maxBytes, 5_000_000)
+
+    let plain = RulePreset.make(format: .png, category: .image)
+    let after = choice.adopting(plain)
+
+    XCTAssertNil(after.privacy, "this preset says nothing about metadata, so neither does the sheet")
+    XCTAssertNil(after.maxBytes, "and nothing about a size ceiling either")
+    XCTAssertEqual(after.presetID, plain.id)
+  }
+
   // MARK: - Fixtures
 
   /// A JPEG with the things a camera writes: where, what, when, and which way

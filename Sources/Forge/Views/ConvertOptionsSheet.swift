@@ -33,6 +33,41 @@ struct ConvertChoice: Equatable {
 
   var wantsText: Bool { format.type?.conforms(to: .plainText) == true }
 
+  /// The same choice, filled in from a preset.
+  ///
+  /// Every field the sheet can show is cleared first. A preset that says
+  /// nothing about a size ceiling or about metadata is a preset that says
+  /// nothing, and leaving the last preset's answer in the field shows a promise
+  /// this one never made - which then gets applied for real the moment any
+  /// other field is touched and the preset lets go.
+  func adopting(_ preset: RulePreset) -> ConvertChoice {
+    var updated = self
+    updated.format = .keep
+    updated.width = nil
+    updated.quality = nil
+    updated.filter = nil
+    updated.codec = nil
+    updated.language = nil
+    updated.maxBytes = nil
+    updated.privacy = nil
+
+    for action in preset.actions {
+      switch action {
+      case .convertFormat(let to): updated.format = OutputFormat(type: to)
+      case .resize(let width, _, _): updated.width = width
+      case .quality(let level): updated.quality = level
+      case .filter(let type): updated.filter = type
+      case .encode(let codec): updated.codec = codec
+      case .recognizeText(let languages): updated.language = languages.first
+      case .limitSize(let bytes): updated.maxBytes = bytes
+      case .stripMetadata(let policy): updated.privacy = policy
+      }
+    }
+
+    updated.presetID = preset.id
+    return updated
+  }
+
   var needsDestination: Bool { destinationMode != .overwrite }
 
   /// The actions to run when no preset is in charge, in the order they run.
@@ -509,29 +544,7 @@ struct ConvertOptionsSheet: View {
   /// Fill the fields with what a preset says, so it reads as a starting point
   /// that can be adjusted rather than a black box.
   private func load(_ preset: RulePreset) {
-    var updated = choice
-    updated.format = .keep
-    updated.width = nil
-    updated.quality = nil
-    updated.filter = nil
-    updated.codec = nil
-    updated.language = nil
-
-    for action in preset.actions {
-      switch action {
-      case .convertFormat(let to): updated.format = OutputFormat(type: to)
-      case .resize(let width, _, _): updated.width = width
-      case .quality(let level): updated.quality = level
-      case .filter(let type): updated.filter = type
-      case .encode(let codec): updated.codec = codec
-      case .recognizeText(let languages): updated.language = languages.first
-      case .limitSize(let bytes): updated.maxBytes = bytes
-      case .stripMetadata(let policy): updated.privacy = policy
-      }
-    }
-
-    updated.presetID = preset.id
-    choice = updated
+    choice = choice.adopting(preset)
   }
 
   private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
