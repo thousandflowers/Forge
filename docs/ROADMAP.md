@@ -77,6 +77,21 @@ Native, no new dependencies, in rough order of value.
       audio did not carry anything, because the audio path writes with
       `AVAudioFile`, which has no notion of metadata. The tags are now put back
       on the finished file by a passthrough copy, so nothing is re-encoded.
+- [x] **Subtitle files** - SubRip, WebVTT, SBV, SubViewer and MicroDVD are
+      read; SubRip, WebVTT, SBV and plain text are written. macOS parses none
+      of these and has a type for almost none of them, so this is one of the
+      few places Forge reads a format itself - which is worth it because a cue
+      is a start, an end and some words, and the formats differ in punctuation
+      rather than in shape. MicroDVD counts frames and states its own rate, so
+      it is read and deliberately not written: writing one means inventing a
+      frame rate.
+
+      Two things had to give way. `.srt` has no type at all, and the file
+      model refuses an invented one - so an extension Forge genuinely parses
+      is given a dynamic type that conforms to plain text, and everything
+      else is still refused. And AVFoundation lists WebVTT among the types it
+      opens, then finds no tracks in one, so the subtitle path is asked before
+      the media path.
 - [ ] **Embedded subtitle extraction** - the tracks are reachable, but the text
       is not: AVFoundation exposes no high-level reader for subtitle samples, so
       this means parsing sample buffers per format. Possible, and more work than

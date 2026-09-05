@@ -12,6 +12,10 @@ actor ProcessingCoordinator {
     // `readableImageTypes` and then hand ImageIO a file it cannot decode.
     VectorProcessor(),
     ImageProcessor(),
+    // Before the media path: AVFoundation lists WebVTT among the types it
+    // opens, and then finds no tracks in one, so a subtitle handed to it fails
+    // with "contains no audio or video tracks" rather than being converted.
+    SubtitleProcessor(),
     MediaProcessor(),
     // Before the document reader: JSON and CSV are plain text as far as the
     // system is concerned, and the document reader would take them.

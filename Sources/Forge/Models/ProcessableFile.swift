@@ -36,11 +36,7 @@ struct ProcessableFile: Identifiable, Hashable, Sendable {
     let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
     self.fileSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
 
-    // Get UTType from extension. UTType(filenameExtension:) invents a dynamic
-    // type for unknown extensions instead of returning nil, so reject those too.
-    guard let type = UTType(filenameExtension: url.pathExtension), !type.isDynamic else {
-      throw ProcessingError.unknownType
-    }
+    guard let type = Self.type(of: url) else { throw ProcessingError.unknownType }
     self.fileType = type
 
     self.dimensions = Self.imageDimensions(url: url, type: type)
@@ -52,6 +48,20 @@ struct ProcessableFile: Identifiable, Hashable, Sendable {
     self.fileName = fileName
     self.fileSize = fileSize
     self.dimensions = dimensions
+  }
+
+  /// What a file is, by its extension.
+  ///
+  /// `UTType(filenameExtension:)` invents a dynamic type for an extension the
+  /// system has never heard of, which is worse than nil: it looks like an
+  /// answer. Those are refused - except for the subtitle formats, which macOS
+  /// genuinely has no types for and Forge genuinely reads. Those are given a
+  /// dynamic type that at least conforms to plain text, which is what they are.
+  private static func type(of url: URL) -> UTType? {
+    guard let type = UTType(filenameExtension: url.pathExtension) else { return nil }
+    guard type.isDynamic else { return type }
+    guard Subtitles.reads(url.pathExtension) else { return nil }
+    return UTType(filenameExtension: url.pathExtension, conformingTo: .plainText)
   }
 
   /// Image size, read from the header without decoding the image.
