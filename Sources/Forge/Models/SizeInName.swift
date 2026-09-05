@@ -22,16 +22,19 @@ enum SizeInName {
 
   /// The ceiling a filename asks for, or nil if it asks for nothing.
   ///
-  /// Only the last underscore-separated piece is read, so `holiday_2024_5MB`
-  /// works and `10MB_notes` — where the size is the subject rather than the
-  /// instruction — does not.
+  /// Read from the end of the name, so `holiday_2024_5MB` works and
+  /// `10MB_notes` — where the size is the subject rather than the instruction —
+  /// does not. `NameTokens` reads the rest of what a name can say.
   static func ceiling(in fileName: String) -> Int? {
-    let stem = (fileName as NSString).deletingPathExtension
-    guard let piece = stem.split(separator: "_").last.map(String.init), piece != stem else {
-      return nil
-    }
+    NameTokens.read(fileName).ceiling
+  }
 
-    let token = piece.lowercased().replacingOccurrences(of: ",", with: ".")
+  /// The size one piece of a name asks for, or nil if that piece is not a size.
+  ///
+  /// The piece rather than the name: a name can carry more than one
+  /// instruction, and which pieces to look at is `NameTokens`' business.
+  static func bytes(in token: String) -> Int? {
+    let token = token.lowercased().replacingOccurrences(of: ",", with: ".")
     for unit in units where token.hasSuffix(unit.suffix) {
       let number = String(token.dropLast(unit.suffix.count))
       guard !number.isEmpty, let value = Double(number), value > 0 else { continue }
@@ -42,12 +45,8 @@ enum SizeInName {
     return nil
   }
 
-  /// The chain with that ceiling in it, if the name asked for one. A ceiling
-  /// already in the chain is replaced: the name is the more specific answer.
+  /// The chain with that ceiling in it, if the name asked for one.
   static func applying(to operations: [Operation], from fileName: String) -> [Operation] {
-    guard let bytes = ceiling(in: fileName) else { return operations }
-    var result = operations.filter { if case .limitSize = $0 { return false } else { return true } }
-    result.append(.limitSize(bytes: bytes))
-    return result
+    NameTokens.applying(to: operations, from: fileName)
   }
 }

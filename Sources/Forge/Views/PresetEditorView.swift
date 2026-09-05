@@ -22,6 +22,15 @@ struct PresetEditorView: View {
   /// Empty means "use the general one from Settings".
   @State private var nameTemplate: String
 
+  /// What the preview should call its sample file: whatever this preset is
+  /// about to write, so the line under the field is about this preset.
+  private var outputExtension: String {
+    actions.compactMap { action -> String? in
+      guard case .convertFormat(let to) = action.operation else { return nil }
+      return FormatCatalog.fileExtension(for: to)
+    }.first ?? "jpeg"
+  }
+
   init(preset: RulePreset?, onSave: @escaping (RulePreset) -> Void) {
     self.existing = preset
     self.onSave = onSave
@@ -104,9 +113,13 @@ struct PresetEditorView: View {
         }
       }
 
-      HStack(spacing: 8) {
-        Text("Names files").foregroundStyle(.secondary)
-        TextField("{name}", text: $nameTemplate)
+      HStack(alignment: .top, spacing: 8) {
+        Text("Names files").foregroundStyle(.secondary).padding(.top, 3)
+        TemplateField(
+          title: "Names files",
+          template: $nameTemplate,
+          sampleExtension: outputExtension
+        )
       }
       .padding(.top, 4)
     }
@@ -317,7 +330,7 @@ struct Action: Identifiable, Hashable {
 /// top, because it is the one thing every preset answers and the one thing that
 /// can be answered more than once.
 enum ActionKind: String, CaseIterable, Identifiable {
-  case crop, resize, quality, limitSize, filter, recognizeText, encode
+  case crop, resize, quality, limitSize, filter, recognizeText, encode, privacy
   var id: String { rawValue }
 
   var title: String {
@@ -329,6 +342,7 @@ enum ActionKind: String, CaseIterable, Identifiable {
     case .filter: return "Filter"
     case .recognizeText: return "Read the text"
     case .encode: return "Codec"
+    case .privacy: return "Remove metadata"
     }
   }
 
@@ -341,6 +355,7 @@ enum ActionKind: String, CaseIterable, Identifiable {
     case .filter: return "camera.filters"
     case .recognizeText: return "text.viewfinder"
     case .encode: return "cpu"
+    case .privacy: return "eye.slash"
     }
   }
 
@@ -357,6 +372,7 @@ enum ActionKind: String, CaseIterable, Identifiable {
     case .encode:
       let codecs = category == .audio ? Codec.audioCodecs : Codec.videoCodecs
       return .encode(codec: codecs.first ?? .h264)
+    case .privacy: return .stripMetadata(policy: .stripAll)
     }
   }
 
@@ -375,6 +391,9 @@ enum ActionKind: String, CaseIterable, Identifiable {
       return category != .audio || category == .custom
     case .encode:
       return [.video, .audio, .custom].contains(category)
+    case .privacy:
+      // Every kind of file carries something about who made it.
+      return true
     }
   }
 }
@@ -460,6 +479,18 @@ private struct ActionRow: View {
       }
       .labelsHidden()
       .frame(maxWidth: 200, alignment: .leading)
+
+    case .stripMetadata(let policy):
+      Picker("", selection: Binding(
+        get: { policy },
+        set: { action.operation = .stripMetadata(policy: $0) }
+      )) {
+        ForEach(PrivacyPolicy.allCases.filter(\.removesSomething), id: \.self) {
+          Text($0.title).tag($0)
+        }
+      }
+      .labelsHidden()
+      .frame(maxWidth: 260, alignment: .leading)
 
     case .limitSize(let bytes):
       HStack(spacing: 6) {

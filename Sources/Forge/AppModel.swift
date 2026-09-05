@@ -15,6 +15,10 @@ final class AppModel: ObservableObject {
   /// everything had worked.
   @Published var lastError: String?
 
+  /// Files put on the Convert screen by something other than a drop - a row in
+  /// history asking to be run again. Cleared as soon as that screen takes them.
+  @Published var pending: PendingConversion?
+
   let coordinator: ProcessingCoordinator
   private let persistence: PersistenceManager
   private var watchers: [UUID: MonitoredFolderWatcher] = [:]
@@ -279,6 +283,86 @@ final class AppModel: ObservableObject {
     }
   }
 
+  // MARK: - Running something from history
+
+  /// Keep a one-off conversion as a preset.
+  ///
+  /// Saved through the ordinary path, so what comes out is a preset like any
+  /// other: editable, exportable, and eventually publishable to the Gallery.
+  func savePreset(from entry: ProcessingHistory) {
+    guard var preset = entry.savedPreset else {
+      lastError = "That run was recorded before Forge kept the steps, so there is nothing to save."
+      return
+    }
+    preset.position = (presets.map(\.position).max() ?? 0) + 1
+    savePreset(preset)
+  }
+
+  /// Run the same chain on the same files.
+  ///
+  /// The originals may have moved, been renamed or been converted in place
+  /// since. What is still there is run; what is gone is named rather than
+  /// skipped in silence.
+  func rerun(_ entry: ProcessingHistory) {
+    guard let preset = entry.rerunPreset else {
+      lastError = "That run was recorded before Forge kept the steps, so it cannot be repeated."
+      return
+    }
+
+    let sources = Self.split([entry.fileURL])
+    if let missing = Self.describeMissing(sources.missing) { lastError = missing }
+    guard !sources.here.isEmpty else { return }
+
+    // A conversion with no folder recorded replaced its original, so repeating
+    // it means replacing again - which the Convert screen asks about. Where a
+    // folder was recorded the copy is repeated, never the move: removing an
+    // original a second time is not something to infer from a row.
+    pending = PendingConversion(
+      files: sources.here,
+      preset: preset,
+      destination: entry.destinationFolder,
+      mode: entry.destinationFolder == nil ? .overwrite : .copyTo
+    )
+  }
+
+  /// Run the same chain on files chosen now. Nothing stale can be in it, so
+  /// there is nothing to check.
+  func reapply(_ entry: ProcessingHistory, to urls: [URL]) {
+    guard let preset = entry.rerunPreset else {
+      lastError = "That run was recorded before Forge kept the steps, so it cannot be repeated."
+      return
+    }
+    guard !urls.isEmpty else { return }
+    pending = PendingConversion(
+      files: urls,
+      preset: preset,
+      destination: entry.destinationFolder,
+      mode: .copyTo
+    )
+  }
+
+  /// Which of these files are still where they were.
+  nonisolated static func split(_ urls: [URL]) -> (here: [URL], missing: [URL]) {
+    var here: [URL] = []
+    var missing: [URL] = []
+    for url in urls {
+      if FileManager.default.fileExists(atPath: url.path) { here.append(url) } else { missing.append(url) }
+    }
+    return (here, missing)
+  }
+
+  /// The ones that are gone, named. "Some files were skipped" is not something
+  /// anybody can act on.
+  nonisolated static func describeMissing(_ urls: [URL]) -> String? {
+    guard !urls.isEmpty else { return nil }
+    if urls.count == 1 {
+      return "\(urls[0].lastPathComponent) is not where it was, so it was left out."
+    }
+    let names = urls.prefix(3).map(\.lastPathComponent).joined(separator: ", ")
+    let rest = urls.count > 3 ? " and \(urls.count - 3) more" : ""
+    return "\(names)\(rest) are not where they were, so they were left out."
+  }
+
   // MARK: - History
 
   func refreshHistory() async {
@@ -408,6 +492,14 @@ final class AppModel: ObservableObject {
 
   func report(_ error: Error, doing action: String) {
     lastError = "Something went wrong \(action): \(error.localizedDescription)"
+  }
+
+  /// A conversion the Convert screen has been handed rather than dropped.
+  struct PendingConversion: Equatable {
+    let files: [URL]
+    let preset: RulePreset
+    let destination: URL?
+    let mode: DestinationMode
   }
 
   // MARK: - Default presets (first run)

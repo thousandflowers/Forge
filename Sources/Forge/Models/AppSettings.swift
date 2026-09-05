@@ -29,6 +29,14 @@ struct AppSettings: Codable, Sendable, Equatable {
   /// The quality used when a preset names none. 1-100.
   var defaultQuality: Int = 80
 
+  /// How much of what a file says about its maker survives a conversion, when
+  /// nothing more specific says otherwise.
+  ///
+  /// Defaults to keeping everything: a conversion that quietly drops what the
+  /// original said is a conversion that lost something, and this is a choice
+  /// rather than a default anybody should have made for them.
+  var privacy: PrivacyPolicy = .keepAll
+
   /// How an output file is named. `{name}` is the original's name without its
   /// extension; a preset's parameters are available by their own keys, so a
   /// preset asking for a size ceiling under the key `maxsize` can be named
@@ -44,12 +52,22 @@ struct AppSettings: Codable, Sendable, Equatable {
   ///   Lossless refuses a bitrate outright — a general preference must not turn
   ///   a working conversion into a failure.
   func applyingDefaults(to operations: [Operation], writing target: UTType?) -> [Operation] {
-    guard let target, FormatCatalog.isWritableImage(target) else { return operations }
+    var chain = operations
 
-    let saysQuality = operations.contains { if case .quality = $0 { return true } else { return false } }
-    guard !saysQuality else { return operations }
+    // The privacy level applies to everything with metadata in it, which is
+    // every kind of file here - unlike quality, which is only meaningful where
+    // something is re-encoded.
+    let saysPrivacy = chain.contains { if case .stripMetadata = $0 { return true } else { return false } }
+    if !saysPrivacy, privacy.removesSomething {
+      chain.append(.stripMetadata(policy: privacy))
+    }
 
-    return operations + [.quality(level: defaultQuality)]
+    guard let target, FormatCatalog.isWritableImage(target) else { return chain }
+
+    let saysQuality = chain.contains { if case .quality = $0 { return true } else { return false } }
+    guard !saysQuality else { return chain }
+
+    return chain + [.quality(level: defaultQuality)]
   }
 
   // MARK: - Persistence

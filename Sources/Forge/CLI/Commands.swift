@@ -240,6 +240,8 @@ struct Presets: AsyncParsableCommand {
         return codec.title
       case .limitSize(let bytes):
         return "under \(Int64(bytes).formatted(.byteCount(style: .file)))"
+      case .stripMetadata(let policy):
+        return policy == .stripLocation ? "no location" : "no metadata"
       }
     }
   }

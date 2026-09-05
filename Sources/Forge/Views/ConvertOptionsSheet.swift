@@ -21,6 +21,9 @@ struct ConvertChoice: Equatable {
   var fitMode: ResizeFitMode = .proportional
   /// A ceiling on the finished file, in bytes.
   var maxBytes: Int?
+  /// How much of what these files say about their maker is carried across.
+  /// Nil means whatever Settings says, which is the general preference.
+  var privacy: PrivacyPolicy?
   /// Answers to the chosen preset's questions, by the parameter's key.
   var answers: [String: Double] = [:]
   /// The language for OCR and transcription. `nil` means let the system decide.
@@ -29,6 +32,41 @@ struct ConvertChoice: Equatable {
   var destinationURL: URL?
 
   var wantsText: Bool { format.type?.conforms(to: .plainText) == true }
+
+  /// The same choice, filled in from a preset.
+  ///
+  /// Every field the sheet can show is cleared first. A preset that says
+  /// nothing about a size ceiling or about metadata is a preset that says
+  /// nothing, and leaving the last preset's answer in the field shows a promise
+  /// this one never made - which then gets applied for real the moment any
+  /// other field is touched and the preset lets go.
+  func adopting(_ preset: RulePreset) -> ConvertChoice {
+    var updated = self
+    updated.format = .keep
+    updated.width = nil
+    updated.quality = nil
+    updated.filter = nil
+    updated.codec = nil
+    updated.language = nil
+    updated.maxBytes = nil
+    updated.privacy = nil
+
+    for action in preset.actions {
+      switch action {
+      case .convertFormat(let to): updated.format = OutputFormat(type: to)
+      case .resize(let width, _, _): updated.width = width
+      case .quality(let level): updated.quality = level
+      case .filter(let type): updated.filter = type
+      case .encode(let codec): updated.codec = codec
+      case .recognizeText(let languages): updated.language = languages.first
+      case .limitSize(let bytes): updated.maxBytes = bytes
+      case .stripMetadata(let policy): updated.privacy = policy
+      }
+    }
+
+    updated.presetID = preset.id
+    return updated
+  }
 
   var needsDestination: Bool { destinationMode != .overwrite }
 
@@ -41,6 +79,10 @@ struct ConvertChoice: Equatable {
     if let filter { actions.append(.filter(type: filter)) }
     if let codec { actions.append(.encode(codec: codec)) }
     if let maxBytes { actions.append(.limitSize(bytes: maxBytes)) }
+    // Included even when it is "keep everything": saying so for this batch has
+    // to be able to overrule the general preference, and a chain that says
+    // nothing is a chain the preference fills in.
+    if let privacy { actions.append(.stripMetadata(policy: privacy)) }
     if wantsText { actions.append(.recognizeText(languages: language.map { [$0] } ?? [])) }
     return actions
   }
@@ -82,6 +124,9 @@ struct ConvertOptionsSheet: View {
   let fileCount: Int
   let totalSize: Int64
   let presets: [RulePreset]
+  /// What Settings says about metadata, so the batch control can show what it
+  /// is starting from rather than an empty choice.
+  let defaultPrivacy: PrivacyPolicy
   @Binding var choice: ConvertChoice
   let onConvert: () -> Void
 
@@ -158,8 +203,10 @@ struct ConvertOptionsSheet: View {
         if kind.supportsCodec, !choice.wantsText { codecField(for: kind) }
         if kind.supportsFilter, !choice.wantsText { filterField }
         if kind.supportsTextExtraction, choice.wantsText { languageField }
+        privacyField
       } else {
         mixedNote
+        privacyField
       }
 
       destinationField
@@ -288,6 +335,21 @@ struct ConvertOptionsSheet: View {
       chips {
         ForEach(ResizeFitMode.allCases, id: \.self) { mode in
           chip(mode.title, selected: choice.fitMode == mode) { edit { $0.fitMode = mode } }
+        }
+      }
+    }
+  }
+
+  /// What these files should stop saying about whoever made them, for this
+  /// batch. Starts from the general preference in Settings and can disagree
+  /// with it, which is what makes that a preference rather than a law.
+  private var privacyField: some View {
+    field("Metadata") {
+      chips {
+        ForEach(PrivacyPolicy.allCases, id: \.self) { policy in
+          chip(policy.title, selected: (choice.privacy ?? defaultPrivacy) == policy) {
+            edit { $0.privacy = policy }
+          }
         }
       }
     }
@@ -482,28 +544,7 @@ struct ConvertOptionsSheet: View {
   /// Fill the fields with what a preset says, so it reads as a starting point
   /// that can be adjusted rather than a black box.
   private func load(_ preset: RulePreset) {
-    var updated = choice
-    updated.format = .keep
-    updated.width = nil
-    updated.quality = nil
-    updated.filter = nil
-    updated.codec = nil
-    updated.language = nil
-
-    for action in preset.actions {
-      switch action {
-      case .convertFormat(let to): updated.format = OutputFormat(type: to)
-      case .resize(let width, _, _): updated.width = width
-      case .quality(let level): updated.quality = level
-      case .filter(let type): updated.filter = type
-      case .encode(let codec): updated.codec = codec
-      case .recognizeText(let languages): updated.language = languages.first
-      case .limitSize(let bytes): updated.maxBytes = bytes
-      }
-    }
-
-    updated.presetID = preset.id
-    choice = updated
+    choice = choice.adopting(preset)
   }
 
   private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

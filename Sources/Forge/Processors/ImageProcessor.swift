@@ -98,6 +98,8 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     // An animation asked to become a movie is written as one, which is what
     // turns a GIF back into video.
     var extras: [URL] = []
+    // What the encoder was asked for, until a ceiling settles on something else.
+    var settled: Float? = isLossy(outputUTI) ? quality(from: operations) : nil
     if FormatCatalog.isWritableVideo(outputUTI) {
       try await MovieWriter.write(rendered, to: output, as: outputUTI) { progress(0.9 + $0 * 0.1) }
     } else {
@@ -108,7 +110,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       // the encoder, so it is kept the only way a promise about a result can
       // be: write it, measure it, and write it again lower until it fits.
       if let ceiling = Self.sizeCeiling(from: operations) {
-        try squeeze(rendered, to: output, as: outputUTI, options: options, ceiling: ceiling)
+        settled = try squeeze(rendered, to: output, as: outputUTI, options: options, ceiling: ceiling)
       }
     }
     progress(1.0)
@@ -119,7 +121,8 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       outputSize: attributes[.size] as? Int64 ?? 0,
       outputDimensions: (rendered[0].image.width, rendered[0].image.height),
       duration: Date().timeIntervalSince(start),
-      additionalOutputs: extras
+      additionalOutputs: extras,
+      appliedQuality: settled.map { Int(($0 * 100).rounded()) }
     )
   }
 
@@ -229,6 +232,9 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     if isLossy(uti) {
       options[kCGImageDestinationLossyCompressionQuality] = quality(from: operations)
     }
+    // Whatever the chain says to leave behind, minus the two things that are
+    // never left behind: the orientation and the colour profile.
+    options = PrivacyFilter.filter(options, to: PrivacyFilter.policy(in: operations))
     return options
   }
 
@@ -274,13 +280,15 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
   /// quality left to give, the pixels go. Both have a floor: past it the file
   /// is not the file anybody asked for, and saying so beats handing back
   /// something unrecognisable that happens to be small.
+  /// - Returns: the quality it settled on, which is what the ceiling cost.
+  @discardableResult
   private func squeeze(
     _ frames: [ImageFrame],
     to output: URL,
     as uti: UTType,
     options: [CFString: Any],
     ceiling: Int
-  ) throws {
+  ) throws -> Float {
     let lowestQuality: Float = 0.2
     let smallestScale: CGFloat = 0.15
     let attemptsAllowed = 12
@@ -323,6 +331,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
           + "\(Int64(finalSize).formatted(.byteCount(style: .file)))."
       )
     }
+    return quality
   }
 
   private static func fileSize(of url: URL) throws -> Int {
@@ -349,7 +358,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
 
   private func applyOperation(_ operation: Operation, to image: CIImage) throws -> CIImage {
     switch operation {
-    case .convertFormat, .quality, .recognizeText, .encode, .limitSize:
+    case .convertFormat, .quality, .recognizeText, .encode, .limitSize, .stripMetadata:
       return image // settled when the file is written
     case .resize(let width, let height, let mode):
       return applyResize(image, targetWidth: width, targetHeight: height, mode: mode)
