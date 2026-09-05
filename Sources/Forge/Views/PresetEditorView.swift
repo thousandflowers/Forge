@@ -503,7 +503,9 @@ struct OutputFormat: Identifiable, Hashable {
 
   var label: String {
     guard let type else { return "Keep original" }
-    return type.preferredFilenameExtension?.uppercased() ?? type.identifier
+    // Not `preferredFilenameExtension`: `public.toml` prefers `cfg`, and a
+    // menu offering CFG is a menu nobody finds TOML in.
+    return FormatCatalog.fileExtension(for: type)?.uppercased() ?? type.identifier
   }
 
   static let keep = OutputFormat(type: nil)
@@ -529,6 +531,23 @@ struct OutputFormat: Identifiable, Hashable {
   /// Words out of a file: OCR for anything with pixels, transcription for
   /// anything with a soundtrack. One format, because both paths write text.
   static var text: [OutputFormat] { [OutputFormat(type: .plainText)] }
+
+  /// The subtitle formats Forge writes. They are named by extension because
+  /// macOS has no types for them - `.srt` is not in the type database at all.
+  static var subtitles: [OutputFormat] {
+    ["srt", "vtt", "sbv"].compactMap { ext in
+      UTType(filenameExtension: ext, conformingTo: .plainText).map { OutputFormat(type: $0) }
+    }
+  }
+
+  /// Fonts, offered only where the tool that writes them is installed, since
+  /// CoreText reads a font's tables and cannot write one.
+  static var fonts: [OutputFormat] {
+    guard ExternalTools.locate("fonttools") != nil else { return [] }
+    return ["ttf", "otf", "woff2"].compactMap { ext in
+      UTType(filenameExtension: ext, conformingTo: .font).map { OutputFormat(type: $0) }
+    }
+  }
 
   /// What `DataProcessor` writes, which is exactly what it reads: it refuses
   /// any other pairing rather than writing something nothing can open.

@@ -129,6 +129,15 @@ Native, no new dependencies, in rough order of value.
 
 ### Interface
 
+- [x] **The window offers what the engine can do** - a subtitle, a font and a
+      film's own subtitle track are reachable from the Convert sheet, not only
+      from `forge`. They were not: a `.srt` was filed as a document and offered
+      PDF and DOCX; a `.vtt` was filed as a *video*, because AVFoundation lists
+      WebVTT among the types it opens, and using the controls it was given
+      failed with "contains no audio or video tracks"; a font was offered a
+      PDF it could never become. Subtitles and fonts are now kinds of their
+      own, asked before the media check.
+
 - [x] **In-app format overview** - the Capabilities screen, computed from the
       frameworks at run time, so it describes the machine it runs on.
 - [x] **Quality and format controls in the convert screen** - an Adjust button
