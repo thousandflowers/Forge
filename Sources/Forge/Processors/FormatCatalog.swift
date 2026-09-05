@@ -28,6 +28,22 @@ enum FormatCatalog {
   /// `VectorProcessor` settles it by drawing one and looking at it.
   static let rasterizableVectorTypes: Set<UTType> = VectorProcessor.canDraw ? [.svg] : []
 
+  /// What to call a file of this type.
+  ///
+  /// `preferredFilenameExtension` is the system's answer and is sometimes not
+  /// anybody else's: `public.toml` prefers `cfg`, and `public.yaml` prefers
+  /// `yml`. When the type is named after one of the extensions it declares -
+  /// `public.toml` after `toml` - that one is used instead, which leaves every
+  /// other type exactly as it was.
+  static func fileExtension(for type: UTType) -> String? {
+    let declared = type.tags[.filenameExtension] ?? []
+    if let named = type.identifier.split(separator: ".").last.map(String.init),
+       declared.contains(named) {
+      return named
+    }
+    return type.preferredFilenameExtension
+  }
+
   static func isRasterizableVector(_ type: UTType) -> Bool {
     rasterizableVectorTypes.contains { type == $0 || type.conforms(to: $0) }
   }

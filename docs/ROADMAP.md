@@ -55,6 +55,18 @@ Native, no new dependencies, in rough order of value.
       `com.apple.protected-mpeg-4-audio-b`, which is a quirk of the type
       database rather than a statement about the file: what Forge writes is
       plain AAC in an MP4 container, which is what a DRM-free audiobook is.
+- [x] **TOML** - read and written by Forge itself, since nothing on the
+      machine does: keys, `[tables]`, `[[arrays of tables]]`, arrays, inline
+      tables, comments, and the scalars a configuration file is made of. What
+      it does not do it refuses with the line number - dates and multi-line
+      strings - because a date read as a string is a file quietly changed.
+
+      Measured: a config with every one of those shapes in it goes to JSON and
+      back and says the same thing. Also fixed on the way: `--to toml` wrote a
+      file called `.cfg`, because that is the extension `public.toml` prefers.
+      A type named after one of the extensions it declares now uses that one,
+      which also turns `public.yaml`'s `yml` into `yaml` and leaves every other
+      type alone.
 - [x] **Data files** - CSV, TSV, JSON and Property List between each other,
       with the awkward parts of separated values handled: quoted fields,
       separators and newlines inside them.
@@ -300,9 +312,10 @@ installed.
 - **ZIP, TAR, TGZ** - Foundation exposes no archive API. AppleArchive handles
   `.aar` only, and shelling out to `ditto` or `tar` is the external-tool
   problem wearing a hat.
-- **YAML, TOML** - no parser in the standard library or in any Apple framework.
-  CSV, JSON and Property List are supported precisely because Foundation has
-  readers for them.
+- **YAML** - no parser in the standard library or in any Apple framework, and
+  its specification is large enough that a subset would quietly misread files
+  that look ordinary. TOML got a hand-written reader because a configuration
+  file is a small, closed shape; YAML is not one.
 - **EML, EMLX, MSG** - no reader.
 - **SubRip, SubViewer, MicroDVD** - no system parser for standalone subtitle
   files. Hand-writing one is possible but it is a parser to maintain, not a

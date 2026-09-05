@@ -115,14 +115,124 @@ final class DataConversionTests: BaseTestCase {
     }
   }
 
-  /// YAML and TOML have no parser to call, so nothing may claim them.
-  func test_yamlAndTomlAreNotClaimed() throws {
-    for ext in ["yaml", "yml", "toml"] {
+  /// YAML still has no parser to call, so nothing may claim it. Its
+  /// specification is large enough that a subset would quietly misread files
+  /// that look ordinary, which is the opposite of what a converter is for.
+  func test_yamlIsNotClaimed() throws {
+    for ext in ["yaml", "yml"] {
       guard let type = UTType(filenameExtension: ext), !type.isDynamic else { continue }
       XCTAssertFalse(
         DataProcessor.readable.contains { type.conforms(to: $0) },
         "\(ext) has no parser in Foundation"
       )
     }
+  }
+
+  // MARK: - TOML
+
+  private static let toml = """
+    # un commento
+    titolo = "Forge"          # anche qui
+    versione = 2
+    attivo = true
+    soglia = 0.8
+    formati = ["png", "jpeg", "webp"]
+
+    [autore]
+    nome = "Eugenio"
+
+    [server.limiti]
+    massimo = 10_000
+
+    [[preset]]
+    nome = "Web JPEG"
+    qualita = 80
+
+    [[preset]]
+    nome = "Archivio PNG"
+    qualita = 100
+    """
+
+  /// Nothing on this machine reads TOML, so this is Forge's own parser and it
+  /// is checked against a file with every shape it claims to know in it.
+  func test_toml_isReadIntoItsParts() throws {
+    let table = try Toml.object(from: Self.toml)
+
+    XCTAssertEqual(table["titolo"] as? String, "Forge")
+    XCTAssertEqual(table["versione"] as? Int, 2)
+    XCTAssertEqual(table["attivo"] as? Bool, true)
+    XCTAssertEqual(table["soglia"] as? Double, 0.8)
+    XCTAssertEqual(table["formati"] as? [String], ["png", "jpeg", "webp"])
+
+    let author = try XCTUnwrap(table["autore"] as? [String: Any])
+    XCTAssertEqual(author["nome"] as? String, "Eugenio")
+
+    // A dotted header makes the tables it names, not a key with a dot in it.
+    let server = try XCTUnwrap(table["server"] as? [String: Any])
+    let limits = try XCTUnwrap(server["limiti"] as? [String: Any])
+    XCTAssertEqual(limits["massimo"] as? Int, 10_000, "the underscore in 10_000 was not dropped")
+
+    let presets = try XCTUnwrap(table["preset"] as? [[String: Any]])
+    XCTAssertEqual(presets.count, 2)
+    XCTAssertEqual(presets.first?["nome"] as? String, "Web JPEG")
+    XCTAssertEqual(presets.last?["qualita"] as? Int, 100)
+  }
+
+  /// The point of converting a file is that it still says the same thing
+  /// afterwards.
+  func test_toml_saysTheSameThingAfterARoundTrip() throws {
+    let first = try Toml.object(from: Self.toml)
+    let written = try Toml.text(from: first)
+    let second = try Toml.object(from: written)
+
+    XCTAssertEqual(
+      try JSONSerialization.data(withJSONObject: first, options: [.sortedKeys]),
+      try JSONSerialization.data(withJSONObject: second, options: [.sortedKeys]),
+      "the file changed on the way through:\n\(written)"
+    )
+  }
+
+  /// A `#` inside a string is part of the string. Treating it as a comment
+  /// would quietly truncate somebody's value.
+  func test_toml_aHashInsideAStringIsNotAComment() throws {
+    let table = try Toml.object(from: "colore = \"#3178c6\" # il blu")
+    XCTAssertEqual(table["colore"] as? String, "#3178c6")
+  }
+
+  func test_toml_readsInlineTablesAndNestedLists() throws {
+    let table = try Toml.object(from: "punto = { x = 1, y = 2 }\nmatrice = [[1, 2], [3, 4]]")
+    let point = try XCTUnwrap(table["punto"] as? [String: Any])
+    XCTAssertEqual(point["x"] as? Int, 1)
+    XCTAssertEqual(point["y"] as? Int, 2)
+    XCTAssertEqual(try XCTUnwrap(table["matrice"] as? [[Int]]), [[1, 2], [3, 4]])
+  }
+
+  /// What this parser does not do, it refuses. A date read as a string, or a
+  /// multi-line string read as three empty ones, is a file quietly changed.
+  func test_toml_refusesWhatItDoesNotRead() {
+    XCTAssertThrowsError(try Toml.object(from: "quando = 1979-05-27T07:32:00Z")) { error in
+      XCTAssertTrue(error.localizedDescription.contains("date"), error.localizedDescription)
+      XCTAssertTrue(error.localizedDescription.contains("Line 1"), error.localizedDescription)
+    }
+    XCTAssertThrowsError(try Toml.object(from: "testo = \"\"\"due\nrighe\"\"\""))
+  }
+
+  /// TOML has no null, and writing one as an empty key would put a value in a
+  /// file that nobody put there.
+  func test_toml_refusesToWriteANull() {
+    XCTAssertThrowsError(try Toml.text(from: ["chiave": NSNull()]))
+  }
+
+  /// `public.toml` prefers the extension `cfg`, which nobody calls a TOML
+  /// file, and `public.yaml` prefers `yml`. A type named after one of the
+  /// extensions it declares uses that one instead.
+  func test_theExtensionIsTheOneTheTypeIsNamedAfter() throws {
+    XCTAssertEqual(FormatCatalog.fileExtension(for: try XCTUnwrap(UTType("public.toml"))), "toml")
+    XCTAssertEqual(FormatCatalog.fileExtension(for: try XCTUnwrap(UTType("public.yaml"))), "yaml")
+    // Everything else keeps the system's own answer.
+    XCTAssertEqual(FormatCatalog.fileExtension(for: .jpeg), "jpeg")
+    XCTAssertEqual(
+      FormatCatalog.fileExtension(for: try XCTUnwrap(UTType("com.apple.m4a-audio"))), "m4a"
+    )
   }
 }
