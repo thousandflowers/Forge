@@ -929,3 +929,87 @@ final class ConvertChoiceTests: XCTestCase {
     XCTAssertTrue(choice.customActions.contains { if case .recognizeText = $0 { return true } else { return false } })
   }
 }
+
+/// What the window offers for a file, which is a different question from what
+/// the engine can do with it - and was a different answer, for a while.
+final class ConvertKindOfferingTests: XCTestCase {
+
+  private func kind(of ext: String) throws -> ConvertKind {
+    let plain = try XCTUnwrap(UTType(filenameExtension: ext))
+    let type = plain.isDynamic
+      ? try XCTUnwrap(UTType(filenameExtension: ext, conformingTo: .plainText))
+      : plain
+    return try XCTUnwrap(ConvertKind(fileType: type), "\(ext) is filed under nothing")
+  }
+
+  private func offered(_ kind: ConvertKind) -> [String] {
+    kind.outputGroups.flatMap { group in
+      group.formats.compactMap { $0.type.flatMap(FormatCatalog.fileExtension(for:)) }
+    }
+  }
+
+  /// A subtitle is its own kind. It used to be filed as a document, which
+  /// offered PDF and DOCX and no way at all to write another subtitle - the
+  /// conversion existed and the window did not know about it.
+  func test_aSubtitleIsOfferedSubtitles() throws {
+    for ext in ["srt", "sbv"] {
+      let kind = try kind(of: ext)
+      XCTAssertEqual(kind, .subtitle, ext)
+      let formats = offered(kind)
+      XCTAssertTrue(formats.contains("srt"), "\(ext): \(formats)")
+      XCTAssertTrue(formats.contains("vtt"), "\(ext): \(formats)")
+      XCTAssertTrue(formats.contains("txt"), "\(ext): \(formats)")
+    }
+  }
+
+  /// WebVTT is the one macOS has a type for, and AVFoundation lists it among
+  /// the types it opens - so the window called a subtitle a video, showed it
+  /// video controls, and failed with "contains no audio or video tracks".
+  func test_webVTTIsASubtitleRatherThanAVideo() throws {
+    XCTAssertEqual(try kind(of: "vtt"), .subtitle)
+  }
+
+  /// A font used to be filed as a document, which offered to turn it into a
+  /// PDF and could not.
+  func test_aFontIsOfferedFonts() throws {
+    let kind = try kind(of: "ttf")
+    XCTAssertEqual(kind, .font)
+    // The formats themselves depend on fonttools being installed, which is
+    // the honest answer: nothing writes a font without it.
+    if ExternalTools.locate("fonttools") != nil {
+      XCTAssertTrue(offered(kind).contains("woff2"), "\(offered(kind))")
+    } else {
+      XCTAssertTrue(offered(kind).isEmpty)
+    }
+  }
+
+  /// The track inside a film is reachable from the window, not only from the
+  /// command line - where there is an ffmpeg to pull it out with.
+  func test_aFilmOffersItsSubtitlesWhenTheToolIsHere() throws {
+    let kind = try kind(of: "mp4")
+    XCTAssertEqual(kind, .video)
+    XCTAssertEqual(
+      offered(kind).contains("srt"),
+      ExternalTools.locate("ffmpeg") != nil,
+      "\(offered(kind))"
+    )
+  }
+
+  /// The formats that were already right, kept that way.
+  func test_theOtherKindsAreUnchanged() throws {
+    XCTAssertEqual(try kind(of: "png"), .image)
+    XCTAssertEqual(try kind(of: "mp4"), .video)
+    XCTAssertEqual(try kind(of: "json"), .data)
+    if FormatCatalog.isRasterizableVector(.svg) {
+      XCTAssertEqual(try kind(of: "svg"), .image)
+    }
+  }
+
+  /// `public.toml` prefers the extension `cfg`, so the menu used to list TOML
+  /// as CFG - a format nobody would look for.
+  func test_theMenuNamesAFormatWhatPeopleCallIt() throws {
+    guard let toml = UTType("public.toml") else { throw XCTSkip("no TOML type on this macOS") }
+    XCTAssertEqual(OutputFormat(type: toml).label, "TOML")
+    XCTAssertEqual(OutputFormat(type: .jpeg).label, "JPEG")
+  }
+}
