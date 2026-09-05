@@ -1008,6 +1008,31 @@ final class AppModelTests: BaseTestCase {
     XCTAssertTrue(said.contains(".zzz"), said)
   }
 
+  /// A preset with no steps could be saved, and converting with it copied the
+  /// file and reported "1 converted" - work that looks like work and is not.
+  func test_aPresetWithNoStepsDoesNothing() {
+    var empty = RulePreset.make(category: .custom)
+    empty.actions = []
+    XCTAssertFalse(empty.doesSomething)
+    XCTAssertTrue(RulePreset.make(format: .jpeg, category: .image).doesSomething)
+  }
+
+  /// The Gallery's "Added" was `@State`: leaving the screen and coming back
+  /// showed "Add" again on something already added, and adding it twice gave
+  /// two presets with one name. It is a question about the user's own list.
+  func test_theGalleryKnowsWhatIsAlreadyInTheList() async throws {
+    let model = AppModel(persistence: store)
+    let fromGallery = RulePreset.make(format: .jpeg, category: .image)
+
+    XCTAssertFalse(model.presets.contains { $0.name == fromGallery.name })
+    model.install(fromGallery)
+    XCTAssertTrue(
+      model.presets.contains { $0.name == fromGallery.name },
+      "the installed preset is not in the list the Gallery reads"
+    )
+    XCTAssertNotEqual(model.presets.first?.id, fromGallery.id, "it kept the gallery's identity")
+  }
+
   /// The same folder could be added twice, which put two watchers on it and
   /// converted everything twice - the second copy arriving as "photo 2.jpeg"
   /// with nothing to say where it came from.
