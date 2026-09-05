@@ -46,6 +46,10 @@ enum Batch {
       func spawn() -> Bool {
         guard shouldContinue(), next < files.count else { return false }
         let file = files[next]
+        // Its place in the batch, counting from one, for a name template that
+        // numbers them. Taken here rather than in the coordinator: the batch is
+        // the only thing that knows there is a sequence.
+        let position = next + 1
         next += 1
 
         onEvent(.started(id: file.id))
@@ -55,7 +59,8 @@ enum Batch {
               file,
               with: preset,
               destinationMode: mode,
-              destinationURL: destination
+              destinationURL: destination,
+              counter: position
             ) { fraction in
               onEvent(.progress(id: file.id, fraction: fraction))
             }

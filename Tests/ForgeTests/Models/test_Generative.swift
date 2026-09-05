@@ -62,8 +62,15 @@ final class GenerativePresetTests: BaseTestCase {
     XCTAssertEqual(try XCTUnwrap(history.outputURL).lastPathComponent, "plain.jpeg")
   }
 
-  /// A token nobody answered is dropped, not printed as itself.
-  func test_anUnansweredTokenLeavesNoBraces() async throws {
+  /// A token that names nothing is left where it is.
+  ///
+  /// This used to be blanked, on the grounds that `holiday_.jpg` beats
+  /// `holiday_{maxsize}.jpg`. That holds for a token Forge understands and
+  /// cannot answer - a codec on a photograph - and those are still dropped. A
+  /// token it does not understand at all is a typo, and one somebody can see in
+  /// the filename is one they can fix; silently swallowing it leaves them
+  /// wondering why their names are wrong.
+  func test_aTokenThatNamesNothingSurvivesSoItCanBeSeen() async throws {
     let source = try Fixture.image(at: path("odd.png"), width: 200, height: 200)
     let destination = try folder("out")
 
@@ -84,8 +91,32 @@ final class GenerativePresetTests: BaseTestCase {
     )
 
     let name = try XCTUnwrap(history.outputURL).lastPathComponent
-    XCTAssertFalse(name.contains("{"))
-    XCTAssertFalse(name.contains("}"))
+    XCTAssertEqual(name, "odd_{nobodyAnswered}.jpeg")
+  }
+
+  /// The other half of the same rule: understood, and with nothing to say.
+  func test_aTokenWithNothingToSayLeavesNothingBehind() async throws {
+    let source = try Fixture.image(at: path("odd.png"), width: 200, height: 200)
+    let destination = try folder("out")
+
+    var preset = RulePreset(
+      name: "Odd",
+      description: "",
+      category: .image,
+      actions: [.convertFormat(to: .jpeg)]
+    )
+    // A photograph has no codec.
+    preset.nameTemplate = "{name}_{codec}"
+
+    let history = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: preset,
+      destinationMode: .copyTo,
+      destinationURL: destination,
+      progress: { _ in }
+    )
+
+    XCTAssertEqual(try XCTUnwrap(history.outputURL).lastPathComponent, "odd.jpeg")
   }
 }
 

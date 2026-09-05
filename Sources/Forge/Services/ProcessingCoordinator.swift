@@ -51,11 +51,15 @@ actor ProcessingCoordinator {
   var maxConcurrentNative: Int { settings.maxConcurrentNative }
 
   /// Convert one file and record the outcome in history.
+  /// - Parameter counter: which file this is in the batch, counting from one,
+  ///   for a name template that numbers them. Nil where there is no batch to
+  ///   count - a watched folder, or one file on its own.
   func processFile(
     _ file: ProcessableFile,
     with preset: RulePreset,
     destinationMode: DestinationMode,
     destinationURL: URL? = nil,
+    counter: Int? = nil,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingHistory {
     let fileId = file.id
@@ -68,6 +72,7 @@ actor ProcessingCoordinator {
           preset: preset,
           destinationMode: destinationMode,
           destinationURL: destinationURL,
+          counter: counter,
           progress: progress
         )
 
@@ -131,6 +136,7 @@ actor ProcessingCoordinator {
       preset: preset,
       destinationMode: .copyTo,
       destinationURL: folder,
+      counter: nil,
       progress: progress
     )
   }
@@ -152,6 +158,7 @@ actor ProcessingCoordinator {
     preset: RulePreset,
     destinationMode: DestinationMode,
     destinationURL: URL?,
+    counter: Int?,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
     let formats = Self.formats(of: preset)
@@ -161,6 +168,7 @@ actor ProcessingCoordinator {
         preset: preset,
         destinationMode: destinationMode,
         destinationURL: destinationURL,
+        counter: counter,
         progress: progress
       )
     }
@@ -184,6 +192,7 @@ actor ProcessingCoordinator {
           preset: Self.preset(preset, writingOnly: format),
           destinationMode: destinationMode,
           destinationURL: destinationURL,
+          counter: counter,
           progress: { fraction in progress(Double(index) * step + fraction * step) }
         )
       )
@@ -224,15 +233,26 @@ actor ProcessingCoordinator {
     preset: RulePreset,
     destinationMode: DestinationMode,
     destinationURL: URL?,
+    counter: Int?,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
     guard processors.contains(where: { $0.canProcess(file) }) else {
       throw ProcessingError.unreadableFormat(file.fileType)
     }
 
-    let plan = try makeOutputPlan(
+    // A preset says what it cares about; Settings says the rest; and what is
+    // written into the file's own name beats both, because somebody typed it
+    // onto that file for this conversion.
+    let operations = settings.applyingDefaults(
+      to: NameTokens.applying(to: preset.toOperations(), from: file.fileName),
+      writing: preset.targetFormat ?? file.fileType
+    )
+
+    var plan = try makeOutputPlan(
       for: file,
       preset: preset,
+      operations: operations,
+      counter: counter,
       destinationMode: destinationMode,
       destinationFolder: destinationURL
     )
@@ -258,14 +278,6 @@ actor ProcessingCoordinator {
     }
 
     try Task.checkCancellation()
-
-    // A preset says what it cares about; Settings says the rest; and a size
-    // written into the file's own name beats both, because somebody typed it
-    // onto that file for this conversion.
-    let operations = settings.applyingDefaults(
-      to: NameTokens.applying(to: preset.toOperations(), from: file.fileName),
-      writing: preset.targetFormat ?? file.fileType
-    )
 
     // Which processor can open the file is not the whole question: the media
     // path reads an MP4 and cannot write a WMV, and saying so is not the same
@@ -313,6 +325,10 @@ actor ProcessingCoordinator {
     if plan.replacesSource, settings.createBackupBeforeOverwrite {
       try backUp(file.url)
     }
+
+    // Now the file exists, the parts of its name that describe it can be
+    // filled in - how wide it came out, what a size ceiling settled on.
+    plan = try settle(plan, with: result)
 
     // A video taken apart into a hundred stills is a hundred loose files in
     // somebody's Downloads. They belong together, in a folder named after what
@@ -417,6 +433,8 @@ actor ProcessingCoordinator {
   private func makeOutputPlan(
     for file: ProcessableFile,
     preset: RulePreset,
+    operations: [Operation],
+    counter: Int?,
     destinationMode: DestinationMode,
     destinationFolder: URL?
   ) throws -> OutputPlan {
@@ -424,6 +442,9 @@ actor ProcessingCoordinator {
       ?? FormatCatalog.fileExtension(for: file.fileType)
       ?? file.url.pathExtension
     let suffix = Self.sizeSuffix(for: preset)
+    let context = Self.nameContext(
+      for: file, preset: preset, operations: operations, extension: outputExtension, counter: counter
+    )
 
     switch destinationMode {
     case .overwrite:
@@ -434,7 +455,7 @@ actor ProcessingCoordinator {
         // No size in the name here: converting in place means the file stays
         // where it is, under the name it has.
         .appendingPathComponent(
-          outputName(for: file, preset: preset, extension: outputExtension, fallbackSuffix: "")
+          outputName(for: file, preset: preset, context: context, extension: outputExtension, fallbackSuffix: "")
         )
       // Overwrite replaces the file it was handed, and nothing else. Changing
       // the format changes the name, and a *different* file already holding
@@ -447,7 +468,8 @@ actor ProcessingCoordinator {
         workURL: scratchURL(besides: final),
         reservationURL: final == file.url ? nil : final,
         replacesSource: true,
-        removesSource: final != file.url
+        removesSource: final != file.url,
+        nameContext: context
       )
 
     case .copyTo, .moveTo:
@@ -457,7 +479,7 @@ actor ProcessingCoordinator {
         )
       }
       let desired = folder.appendingPathComponent(
-        outputName(for: file, preset: preset, extension: outputExtension, fallbackSuffix: suffix)
+        outputName(for: file, preset: preset, context: context, extension: outputExtension, fallbackSuffix: suffix)
       )
       // Claim the name straight away: two files converging on one output name
       // used to leave a single file behind, with both reported as converted.
@@ -467,7 +489,8 @@ actor ProcessingCoordinator {
         workURL: scratchURL(besides: final),
         reservationURL: final,
         replacesSource: false,
-        removesSource: destinationMode == .moveTo
+        removesSource: destinationMode == .moveTo,
+        nameContext: context
       )
     }
   }
@@ -524,39 +547,98 @@ actor ProcessingCoordinator {
     return final.deletingLastPathComponent().appendingPathComponent(name)
   }
 
-  /// What the finished file is called.
+  /// Everything a name can be built from before the conversion runs.
+  static func nameContext(
+    for file: ProcessableFile,
+    preset: RulePreset,
+    operations: [Operation],
+    extension ext: String,
+    counter: Int?
+  ) -> NameTemplate.Static {
+    var answers: [String: String] = [:]
+    for parameter in preset.parameters {
+      let value = preset.parameterValues[parameter.key] ?? parameter.defaultValue
+      answers[parameter.key] = parameter.token(for: value)
+    }
+
+    let quality = operations.compactMap { operation -> Int? in
+      if case .quality(let level) = operation { return level } else { return nil }
+    }.first
+    let codec = operations.compactMap { operation -> String? in
+      if case .encode(let codec) = operation { return codec.rawValue } else { return nil }
+    }.first
+
+    return NameTemplate.Static(
+      name: (file.fileName as NSString).deletingPathExtension,
+      parent: file.url.deletingLastPathComponent().lastPathComponent,
+      // The file's own date where the filesystem knows one, since a template
+      // asking for a date is asking about the photograph, not about now.
+      date: (try? file.url.resourceValues(forKeys: [.contentModificationDateKey]))?
+        .contentModificationDate ?? Date(),
+      counter: counter ?? 1,
+      ext: ext,
+      quality: quality,
+      codec: codec,
+      parameters: answers
+    )
+  }
+
+  /// What the finished file is called, as far as anything knows yet.
   ///
   /// The template is the preset's own if it has one, otherwise the general one
-  /// from Settings. `{name}` is the original's name without its extension, and
-  /// every question the preset asked is available by its key — which is what
-  /// turns `holiday.png` into `holiday_10MB.jpg`.
+  /// from Settings. Tokens that only a written file can answer are left in the
+  /// name and filled in afterwards.
   private func outputName(
     for file: ProcessableFile,
     preset: RulePreset,
+    context: NameTemplate.Static,
     extension ext: String,
     fallbackSuffix: String
   ) -> String {
-    let stem = (file.fileName as NSString).deletingPathExtension
     let template = preset.nameTemplate ?? settings.nameTemplate
-
-    var name = template.replacingOccurrences(of: "{name}", with: stem)
-    for parameter in preset.parameters {
-      let value = preset.parameterValues[parameter.key] ?? parameter.defaultValue
-      name = name.replacingOccurrences(of: "{\(parameter.key)}", with: parameter.token(for: value))
-    }
-    // A token nobody answered is dropped rather than printed as itself: a file
-    // called `holiday_{maxsize}.jpg` is worse than one called `holiday_.jpg`.
-    name = name.replacingOccurrences(
-      of: "\\{[A-Za-z0-9_.-]+\\}", with: "", options: .regularExpression
-    )
-    name = name.trimmingCharacters(in: .whitespaces)
+    var name = NameTemplate.resolve(template, with: context)
 
     // A template that said nothing keeps the old behaviour, where a resize
     // puts its size in the name.
-    if name == stem { name += fallbackSuffix }
-    if name.isEmpty { name = stem }
+    if name == context.name { name += fallbackSuffix }
+    if name.isEmpty { name = context.name }
 
     return ext.isEmpty ? name : "\(name).\(ext)"
+  }
+
+  /// The same name again, now that the file exists and can answer the rest.
+  ///
+  /// Only when there is something left to answer: the usual template has no
+  /// such tokens in it, and renaming a file for no reason is a way to lose one.
+  private func settle(_ plan: OutputPlan, with result: ProcessingResult) throws -> OutputPlan {
+    let ext = plan.finalURL.pathExtension
+    let stem = plan.finalURL.deletingPathExtension().lastPathComponent
+    guard NameTemplate.needsSecondPass(stem) else { return plan }
+
+    let dynamic = NameTemplate.Dynamic(
+      width: result.outputDimensions?.width,
+      height: result.outputDimensions?.height,
+      bytes: result.outputSize,
+      quality: result.appliedQuality
+    )
+    var settled = NameTemplate.resolve(stem, with: plan.nameContext, and: dynamic)
+    if settled.isEmpty { settled = plan.nameContext.name }
+
+    let wanted = plan.finalURL.deletingLastPathComponent()
+      .appendingPathComponent(ext.isEmpty ? settled : "\(settled).\(ext)")
+    guard wanted != plan.finalURL else { return plan }
+
+    // The name claimed before the conversion is given up in the same breath as
+    // the new one is claimed, so nothing else can take it in between.
+    let final = try reserveUniqueURL(wanted)
+    if let reservation = plan.reservationURL, reservation != final {
+      try? FileManager.default.removeItem(at: reservation)
+    }
+
+    var updated = plan
+    updated.finalURL = final
+    updated.reservationURL = final
+    return updated
   }
 
   /// A resize puts its size in the name. Converting one picture to three sizes
@@ -583,13 +665,16 @@ actor ProcessingCoordinator {
 /// Where a conversion's output goes, and what happens to the original.
 private struct OutputPlan {
   /// Where the converted file ends up.
-  let finalURL: URL
+  var finalURL: URL
   /// The scratch file the conversion actually writes to.
   let workURL: URL
   /// A zero-byte file created to hold `finalURL`, cleaned up on failure.
-  let reservationURL: URL?
+  var reservationURL: URL?
   /// Whether this replaces a file the user already had.
   let replacesSource: Bool
   /// Whether the original should be removed once the output is in place.
   let removesSource: Bool
+  /// What the name was built from, for the tokens only a finished file can
+  /// answer.
+  let nameContext: NameTemplate.Static
 }
