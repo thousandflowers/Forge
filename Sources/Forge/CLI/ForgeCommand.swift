@@ -117,13 +117,17 @@ struct RecipeOptions: ParsableArguments {
   private func targetType() throws -> UTType? {
     guard let format else { return nil }
     if let type = UTType(filenameExtension: format), !type.isDynamic { return type }
-    // Only then: the subtitle formats have no type on macOS and are written
-    // all the same, so they are named by the extension asked for. Taking this
-    // branch first would have handed back a dynamic type for `txt`, which has
-    // a perfectly good one of its own.
+    // Only then: the formats macOS has no type for and Forge writes anyway.
+    // Taking this branch first would have handed back a dynamic type for
+    // `txt`, which has a perfectly good one of its own.
     if Subtitles.writes(format),
        let text = UTType(filenameExtension: format, conformingTo: .plainText) {
       return text
+    }
+    // WOFF2 has no type on macOS either, and is a font rather than text.
+    if ExternalBridge.Fonts.handles(format),
+       let font = UTType(filenameExtension: format, conformingTo: .font) {
+      return font
     }
     throw ValidationError("“\(format)” is not a format this Mac knows. Try `forge formats`.")
   }

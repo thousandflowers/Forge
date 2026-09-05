@@ -119,6 +119,71 @@ final class ExternalToolTests: BaseTestCase {
     XCTAssertEqual(ExternalBridge.canHandle(xlsx), somebodyCan)
   }
 
+  // MARK: - Fonts
+
+  /// CoreText reads a font's tables and has no public API to write one, so
+  /// this is fonttools' - and only for the pair it has a command for.
+  func test_fontsGoToFonttools() throws {
+    try XCTSkipUnless(ExternalTools.locate("fonttools") != nil, "fonttools is not installed here")
+    let plan = try XCTUnwrap(
+      ExternalBridge.plan(
+        from: URL(fileURLWithPath: "/tmp/mono.ttf"),
+        to: URL(fileURLWithPath: "/tmp/mono.woff2"),
+        operations: []
+      )
+    )
+    XCTAssertEqual(plan.toolName, "fonttools")
+    XCTAssertTrue(plan.arguments.contains("ttLib.woff2"), "\(plan.arguments)")
+    XCTAssertTrue(plan.arguments.contains("compress"), "\(plan.arguments)")
+  }
+
+  /// TTF to OTF is a change of outline format rather than of container, and
+  /// fonttools has no command for it. Before this, a font that nobody could
+  /// convert was handed to ffmpeg, which answered "Invalid data found when
+  /// processing input".
+  func test_aFontIsNeverHandedToFFmpeg() {
+    let plan = ExternalBridge.plan(
+      from: URL(fileURLWithPath: "/tmp/mono.ttf"),
+      to: URL(fileURLWithPath: "/tmp/mono.otf"),
+      operations: []
+    )
+    XCTAssertNotEqual(plan?.toolName, "ffmpeg")
+  }
+
+  /// A pip install --user puts its commands in a versioned directory no shell
+  /// profile mentions, which is why fonttools was reported missing on a Mac
+  /// that had it.
+  func test_pythonsOwnDirectoriesAreSearched() throws {
+    let python = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Python")
+    let versions = (try? FileManager.default.contentsOfDirectory(
+      at: python, includingPropertiesForKeys: nil
+    )) ?? []
+    try XCTSkipIf(versions.isEmpty, "no per-user Python on this machine")
+
+    for version in versions {
+      XCTAssertTrue(
+        ExternalTools.searchPaths.contains(version.appendingPathComponent("bin").path),
+        "\(version.lastPathComponent) is not searched"
+      )
+    }
+  }
+
+  /// fonttools can read a WOFF2 with what Python ships and cannot write one
+  /// without brotli, which pip does not install alongside it. What it says is
+  /// a traceback; what it means is one command away.
+  func test_theBrotliTracebackIsTranslated() {
+    let traceback = ProcessingError.conversionFailed(
+      reason: "fonttools: Traceback (most recent call last): ImportError: No module named brotli"
+    )
+    let explained = ExternalProcessor.explain(traceback, about: URL(fileURLWithPath: "/tmp/mono.ttf"))
+    XCTAssertTrue(
+      explained.localizedDescription.contains("brotli module"),
+      explained.localizedDescription
+    )
+    XCTAssertTrue(explained.localizedDescription.contains("pip3 install"))
+  }
+
   /// Pictures are ImageIO's, whatever is installed. A tool that offered to
   /// take them would take them off the path that resizes, filters and
   /// measures.

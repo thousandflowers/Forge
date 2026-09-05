@@ -48,7 +48,22 @@ enum ExternalTools {
       paths.append(contentsOf: path.split(separator: ":").map(String.init))
     }
     paths.append(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path)
+    // A pip install --user puts its commands in a versioned directory that no
+    // shell profile mentions and no GUI app inherits, which is why Forge
+    // reported fonttools missing on a Mac that had it.
+    paths.append(contentsOf: pythonUserPaths)
     return paths
+  }
+
+  /// `~/Library/Python/<version>/bin`, for whichever versions are installed.
+  /// Read rather than guessed: the version in that path is Python's, not ours.
+  private static var pythonUserPaths: [String] {
+    let root = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Python")
+    let versions = (try? FileManager.default.contentsOfDirectory(
+      at: root, includingPropertiesForKeys: nil
+    )) ?? []
+    return versions.map { $0.appendingPathComponent("bin").path }
   }
 
   /// Answers are remembered for the life of the app: a tool does not appear
