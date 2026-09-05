@@ -147,6 +147,32 @@ enum ExternalTools {
     }
   }
 
+  /// How much of a failing tool's complaint is kept. Enough for a stack of
+  /// lines a person can read; not enough to matter.
+  private static let keptErrorBytes = 64 * 1024
+
+  /// The tail of what a tool said, gathered off another thread.
+  private final class Collected: @unchecked Sendable {
+    private let lock = NSLock()
+    private let limit: Int
+    private var buffer = Data()
+
+    init(limit: Int) { self.limit = limit }
+
+    func append(_ chunk: Data) {
+      lock.lock()
+      buffer.append(chunk)
+      if buffer.count > limit { buffer.removeFirst(buffer.count - limit) }
+      lock.unlock()
+    }
+
+    var data: Data {
+      lock.lock()
+      defer { lock.unlock() }
+      return buffer
+    }
+  }
+
   /// Run a tool and wait for it.
   ///
   /// Arguments are passed as a list, never as a string for a shell to parse:
@@ -158,14 +184,38 @@ enum ExternalTools {
     process.arguments = arguments
 
     // Whatever it has to say is kept, so a failure can say why rather than
-    // just "it did not work".
+    // just "it did not work" - but only the last of it, and drained on a queue
+    // of its own. An unread pipe stops the tool dead once it fills, and this
+    // thread has to stay free to notice a cancellation.
     let errors = Pipe()
     process.standardError = errors
-    process.standardOutput = Pipe()
+    process.standardOutput = FileHandle.nullDevice
+
+    let collected = Collected(limit: keptErrorBytes)
+    let reading = errors.fileHandleForReading
+    DispatchQueue.global(qos: .utility).async {
+      while true {
+        let chunk = reading.availableData
+        if chunk.isEmpty { break }
+        collected.append(chunk)
+      }
+    }
 
     try process.run()
-    let said = errors.fileHandleForReading.readDataToEndOfFile()
+
+    // A cancelled conversion has to reach the tool itself. Dropping the task
+    // and leaving ffmpeg to finish a film nobody is waiting for is not a
+    // cancellation, it is a fan.
+    while process.isRunning {
+      if Task.isCancelled {
+        process.terminate()
+        process.waitUntilExit()
+        throw CancellationError()
+      }
+      Thread.sleep(forTimeInterval: 0.05)
+    }
     process.waitUntilExit()
+    let said = collected.data
 
     guard process.terminationStatus == 0 else {
       let message = String(data: said, encoding: .utf8)?

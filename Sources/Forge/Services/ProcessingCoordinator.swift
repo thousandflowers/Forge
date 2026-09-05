@@ -141,6 +141,13 @@ actor ProcessingCoordinator {
     )
   }
 
+  /// Stop one file. Its siblings carry on: a row that is taking too long is a
+  /// row, not a batch.
+  func cancel(_ file: UUID) {
+    activeTasks[file]?.cancel()
+    activeTasks.removeValue(forKey: file)
+  }
+
   func cancelAll() {
     for task in activeTasks.values { task.cancel() }
     activeTasks.removeAll()
