@@ -39,11 +39,22 @@ struct ConvertFilesIntent: AppIntent {
       throw ConversionIntentError.noDestination
     }
 
-    let sources = files.compactMap { file -> ProcessableFile? in
-      guard let url = file.fileURL else { return nil }
-      return try? ProcessableFile(url: url)
+    var sources: [ProcessableFile] = []
+    var refused: [String] = []
+    for file in files {
+      guard let url = file.fileURL, let source = try? ProcessableFile(url: url) else {
+        refused.append(file.filename)
+        continue
+      }
+      sources.append(source)
     }
     guard !sources.isEmpty else { throw ConversionIntentError.nothingToConvert }
+    // An automation that quietly converts seven of ten files is worse than one
+    // that stops: nobody is watching it, and the three are never missed until
+    // they are needed.
+    guard refused.isEmpty else {
+      throw ConversionIntentError.someRefused(names: refused.joined(separator: ", "))
+    }
 
     let settings = AppSettings.load()
     let coordinator = ProcessingCoordinator(settings: settings)
@@ -57,8 +68,10 @@ struct ConvertFilesIntent: AppIntent {
       limit: settings.maxConcurrentNative,
       coordinator: coordinator
     ) { event in
-      guard case .finished(_, _, let output, _, _) = event, let output else { return }
-      collected.add(output)
+      // Every file, not the first: a preset asking for two formats handed the
+      // Shortcut half of what it wrote.
+      guard case .finished(_, _, _, let written, _) = event, !written.isEmpty else { return }
+      written.forEach(collected.add)
     }
 
     guard report.failed == 0 else {
@@ -74,6 +87,7 @@ enum ConversionIntentError: Error, CustomLocalizedStringResourceConvertible {
   case noDestination
   case nothingToConvert
   case someFailed(count: Int)
+  case someRefused(names: String)
 
   var localizedStringResource: LocalizedStringResource {
     switch self {
@@ -85,6 +99,8 @@ enum ConversionIntentError: Error, CustomLocalizedStringResourceConvertible {
       return "None of those files is one Forge can open."
     case .someFailed(let count):
       return "\(count) file\(count == 1 ? "" : "s") could not be converted."
+    case .someRefused(let names):
+      return "Forge cannot open \(names), so nothing was converted. Take them out of the list, or filter them in the shortcut."
     }
   }
 }
