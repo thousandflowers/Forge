@@ -113,6 +113,12 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   /// The actions, ready to run.
   func toOperations() -> [Operation] { actions }
 
+  /// Whether this preset would actually do anything.
+  ///
+  /// A preset with no steps could be saved, and converting with it copied the
+  /// file and reported "1 converted" - work that looks like work and is not.
+  var doesSomething: Bool { !actions.isEmpty }
+
   /// A copy with `action` put in place of the one of its kind already there,
   /// or added if there is none.
   ///

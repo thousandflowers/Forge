@@ -276,7 +276,10 @@ struct PresetEditorView: View {
       Button("Save") { save() }
         .buttonStyle(.borderedProminent)
         .keyboardShortcut(.defaultAction)
-        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+        // A preset with no steps could be saved, and converting with it copied
+        // the file and reported "1 converted" - work that looks like work.
+        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || actions.isEmpty)
+        .help(actions.isEmpty ? "Add a step first: a preset with none would copy the file and call it a conversion." : "")
     }
     .padding()
   }

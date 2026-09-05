@@ -7,7 +7,13 @@ struct GalleryView: View {
   @State private var entries: [PresetGallery.Entry] = []
   @State private var loading = true
   @State private var failure: String?
-  @State private var installed: Set<String> = []
+  /// Whether a gallery preset is already in the user's own list is a fact
+  /// about the list, not about this screen. It used to be `@State`, so leaving
+  /// the Gallery and coming back showed "Add" again on something already
+  /// added - and adding it a second time gave two presets with one name.
+  private func isInstalled(_ entry: PresetGallery.Entry) -> Bool {
+    model.presets.contains { $0.name == entry.preset.name }
+  }
 
   @State private var search = ""
   /// `nil` on any of these means "do not narrow by this".
@@ -218,12 +224,11 @@ struct GalleryView: View {
         .help("Share “\(entry.preset.name)”")
         .accessibilityLabel(Text("Share \(entry.preset.name)"))
 
-        Button(installed.contains(entry.id) ? "Added" : "Add") {
+        Button(isInstalled(entry) ? "Added" : "Add") {
           model.install(entry.preset)
-          installed.insert(entry.id)
         }
-        .disabled(installed.contains(entry.id))
-        .help(installed.contains(entry.id) ? "Already in your presets" : "Add “\(entry.preset.name)” to your presets")
+        .disabled(isInstalled(entry))
+        .help(isInstalled(entry) ? "Already in your presets" : "Add “\(entry.preset.name)” to your presets")
       }
 
       Text(entry.preset.name)
