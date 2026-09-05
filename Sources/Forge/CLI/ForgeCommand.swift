@@ -120,7 +120,7 @@ struct RecipeOptions: ParsableArguments {
     // Only then: the formats macOS has no type for and Forge writes anyway.
     // Taking this branch first would have handed back a dynamic type for
     // `txt`, which has a perfectly good one of its own.
-    if Subtitles.writes(format),
+    if Toml.handles(format) || Subtitles.writes(format),
        let text = UTType(filenameExtension: format, conformingTo: .plainText) {
       return text
     }

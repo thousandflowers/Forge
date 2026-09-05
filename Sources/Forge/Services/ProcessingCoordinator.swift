@@ -376,8 +376,8 @@ actor ProcessingCoordinator {
     destinationMode: DestinationMode,
     destinationFolder: URL?
   ) throws -> OutputPlan {
-    let outputExtension = preset.targetFormat?.preferredFilenameExtension
-      ?? file.fileType.preferredFilenameExtension
+    let outputExtension = preset.targetFormat.flatMap(FormatCatalog.fileExtension(for:))
+      ?? FormatCatalog.fileExtension(for: file.fileType)
       ?? file.url.pathExtension
     let suffix = Self.sizeSuffix(for: preset)
 

@@ -1,23 +1,26 @@
 import Foundation
 import UniformTypeIdentifiers
 
-/// Tabular and structured data: CSV, JSON and Property List.
+/// Tabular and structured data: CSV, JSON, Property List and TOML.
 ///
-/// All three are Foundation's, so this needs nothing installed. YAML and TOML
-/// are not here because Foundation has no parser for them and there would be
-/// nothing to call.
+/// The first three are Foundation's. TOML is not - nothing on the machine
+/// reads it - so `Toml` reads and writes the part of it a configuration file
+/// is made of, and refuses the rest rather than guessing. YAML is still not
+/// here: its specification is large enough that a subset would quietly
+/// misread files that look ordinary.
 final class DataProcessor: FileProcessor, @unchecked Sendable {
   let name = "Data Processor"
 
   static let csv: UTType? = UTType("public.comma-separated-values-text")
   static let tsv: UTType? = UTType("public.tab-separated-values-text")
+  static let toml: UTType? = UTType("public.toml")
 
   static var readable: [UTType] {
-    [.json, .propertyList, csv, tsv].compactMap { $0 }
+    [.json, .propertyList, csv, tsv, toml].compactMap { $0 }
   }
 
   func canProcess(_ file: ProcessableFile) -> Bool {
-    Self.readable.contains { file.fileType.conforms(to: $0) }
+    Toml.handles(file.url.pathExtension) || Self.readable.contains { file.fileType.conforms(to: $0) }
   }
 
   func process(
@@ -32,7 +35,9 @@ final class DataProcessor: FileProcessor, @unchecked Sendable {
       throw ProcessingError.unknownType
     }
     let outputType = Self.outputType(for: output, operations: operations)
-    guard Self.readable.contains(where: { outputType.conforms(to: $0) }) else {
+    let writable = Toml.handles(output.pathExtension)
+      || Self.readable.contains { outputType.conforms(to: $0) }
+    guard writable else {
       throw ProcessingError.unsupportedConversion(from: inputType, to: outputType)
     }
 
@@ -65,6 +70,9 @@ final class DataProcessor: FileProcessor, @unchecked Sendable {
     guard let text = String(data: data, encoding: .utf8) else {
       throw ProcessingError.conversionFailed(reason: "\(url.lastPathComponent) is not UTF-8 text")
     }
+    if Toml.handles(url.pathExtension) {
+      return try Toml.object(from: text)
+    }
     return try Separated.rows(from: text, separator: separator(for: type))
   }
 
@@ -81,6 +89,10 @@ final class DataProcessor: FileProcessor, @unchecked Sendable {
     if type.conforms(to: .propertyList) {
       let data = try PropertyListSerialization.data(fromPropertyList: value, format: .xml, options: 0)
       return try data.write(to: url, options: .atomic)
+    }
+
+    if Toml.handles(url.pathExtension) {
+      return try Toml.text(from: value).write(to: url, atomically: true, encoding: .utf8)
     }
 
     guard let rows = value as? [[String: Any]] else {
