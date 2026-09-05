@@ -22,6 +22,15 @@ struct PresetEditorView: View {
   /// Empty means "use the general one from Settings".
   @State private var nameTemplate: String
 
+  /// What the preview should call its sample file: whatever this preset is
+  /// about to write, so the line under the field is about this preset.
+  private var outputExtension: String {
+    actions.compactMap { action -> String? in
+      guard case .convertFormat(let to) = action.operation else { return nil }
+      return FormatCatalog.fileExtension(for: to)
+    }.first ?? "jpeg"
+  }
+
   init(preset: RulePreset?, onSave: @escaping (RulePreset) -> Void) {
     self.existing = preset
     self.onSave = onSave
@@ -104,9 +113,13 @@ struct PresetEditorView: View {
         }
       }
 
-      HStack(spacing: 8) {
-        Text("Names files").foregroundStyle(.secondary)
-        TextField("{name}", text: $nameTemplate)
+      HStack(alignment: .top, spacing: 8) {
+        Text("Names files").foregroundStyle(.secondary).padding(.top, 3)
+        TemplateField(
+          title: "Names files",
+          template: $nameTemplate,
+          sampleExtension: outputExtension
+        )
       }
       .padding(.top, 4)
     }

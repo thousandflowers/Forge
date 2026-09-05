@@ -29,8 +29,8 @@ struct SettingsView: View {
         Text(model.settings.privacy.summary + " A preset, a batch, or a file named _privacy can ask for more.")
           .font(.caption)
           .foregroundStyle(.secondary)
-        TextField("Name new files", text: $model.settings.nameTemplate)
-        Text("{name} is the original's name. A preset that asks a question adds its own token, so {name}_{maxsize} writes holiday_10MB.jpg. Any preset can override all of this.")
+        TemplateField(title: "Name new files", template: $model.settings.nameTemplate)
+        Text("Any preset can override this. A preset that asks a question adds its own token too, so {name}_{maxsize} writes holiday_10MB.jpg.")
           .font(.caption)
           .foregroundStyle(.secondary)
       }
