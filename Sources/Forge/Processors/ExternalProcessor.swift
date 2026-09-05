@@ -18,6 +18,27 @@ enum ExternalBridge {
     let tool: URL
     let toolName: String
     let arguments: [String]
+    /// A tool that insists on naming its own output writes into this folder,
+    /// and whatever lands there is moved to where the conversion wanted it.
+    var collectFrom: URL?
+  }
+
+  /// LibreOffice, which is an application rather than a command on PATH.
+  ///
+  /// Looked for where it installs, and on PATH as well, since Homebrew's cask
+  /// and a hand-built copy both leave a `soffice` somewhere a shell can see.
+  static var libreOffice: URL? {
+    if let onPath = ExternalTools.locate("soffice") { return onPath }
+    let applications = [
+      URL(fileURLWithPath: "/Applications"),
+      FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications"),
+    ]
+    for folder in applications {
+      let candidate = folder
+        .appendingPathComponent("LibreOffice.app/Contents/MacOS/soffice")
+      if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }
+    }
+    return nil
   }
 
   /// pandoc's own answer to what it reads and writes, asked once.
@@ -42,8 +63,13 @@ enum ExternalBridge {
     if pandocReads(ext) { return true }
     // ffmpeg is asked about a pair rather than about a file, so anything
     // time-based is worth offering it and nothing else is.
-    return ExternalTools.locate("ffmpeg") != nil
-      && (type.conforms(to: .audiovisualContent) || type.conforms(to: .audio))
+    let isTimeBased = type.conforms(to: .audiovisualContent) || type.conforms(to: .audio)
+    if ExternalTools.locate("ffmpeg") != nil, isTimeBased { return true }
+    // LibreOffice opens what an office suite opens. Rather than list those
+    // formats - which would go stale and is a list nobody can finish - it is
+    // offered anything that is neither a picture nor a recording, and only
+    // after every processor that reads the format natively has declined.
+    return libreOffice != nil && !isTimeBased && !type.conforms(to: .image)
   }
 
   static func plan(from input: URL, to output: URL, operations: [Operation]) -> Plan? {
@@ -78,6 +104,30 @@ enum ExternalBridge {
       }
       arguments.append(output.path)
       return Plan(tool: ffmpeg, toolName: "ffmpeg", arguments: arguments)
+    }
+
+    if !wantsSomethingStill { return nil }
+
+    if let office = libreOffice {
+      // LibreOffice names its own output, after the input and the format it
+      // was asked for, so it is given a folder to itself and the one file
+      // that appears is moved into place.
+      let folder = FileManager.default.temporaryDirectory
+        .appendingPathComponent("forge-office-\(UUID().uuidString)", isDirectory: true)
+      return Plan(
+        tool: office,
+        toolName: "LibreOffice",
+        arguments: [
+          // A profile of its own: converting while LibreOffice is open in
+          // front of somebody otherwise fails on a locked user directory.
+          "-env:UserInstallation=file://\(folder.path)/profile",
+          "--headless",
+          "--convert-to", target,
+          "--outdir", folder.path,
+          input.path,
+        ],
+        collectFrom: folder
+      )
     }
 
     return nil
@@ -160,7 +210,19 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
     // Rather than parse it, a file is one step: it either converts or it does
     // not.
     progress(0.1)
+
+    if let folder = plan.collectFrom {
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    }
+    defer {
+      if let folder = plan.collectFrom { try? FileManager.default.removeItem(at: folder) }
+    }
+
     try ExternalTools.run(plan.tool, plan.arguments)
+
+    if let folder = plan.collectFrom {
+      try Self.collect(from: folder, to: output, wanted: output.pathExtension, tool: plan.toolName)
+    }
     progress(1.0)
 
     guard FileManager.default.fileExists(atPath: output.path) else {
@@ -176,5 +238,29 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
       outputDimensions: nil,
       duration: Date().timeIntervalSince(start)
     )
+  }
+
+  /// Move what a tool wrote under its own name to where the conversion wanted
+  /// it. The folder is this conversion's alone, so the file with the right
+  /// extension in it is the file that was just made - and a tool that exits
+  /// successfully having written nothing is a failure, not an empty result.
+  static func collect(from folder: URL, to output: URL, wanted: String, tool: String) throws {
+    let written = (try? FileManager.default.contentsOfDirectory(
+      at: folder, includingPropertiesForKeys: nil
+    )) ?? []
+
+    guard let made = written.first(where: {
+      $0.pathExtension.lowercased() == wanted.lowercased()
+    }) else {
+      throw ProcessingError.conversionFailed(
+        reason: "\(tool) finished without writing a \(wanted.uppercased())"
+      )
+    }
+
+    if FileManager.default.fileExists(atPath: output.path) {
+      _ = try FileManager.default.replaceItemAt(output, withItemAt: made)
+    } else {
+      try FileManager.default.moveItem(at: made, to: output)
+    }
   }
 }

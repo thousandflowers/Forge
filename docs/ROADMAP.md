@@ -167,9 +167,23 @@ possible without changing what an MP4 to MOV does.
 - [x] **Broadcast and legacy video through ffmpeg** - WMV, MXF, FLV, MKV, AVI,
       and AV1 or VP9 encoding. Measured: a 320x240 MP4 converts to ASF/WMV,
       Matroska and AVI, and `--resize` crosses as a scale filter.
-- [x] **Office and ebooks through pandoc** - EPUB, DOCX and the rest of what
-      pandoc lists. Measured: a Markdown file becomes a valid EPUB, `mimetype`
-      and container included.
+- [x] **Office and ebooks through pandoc** - EPUB, DOCX, PPTX, XLSX and the
+      rest of what pandoc lists. Measured: a Markdown file becomes a valid
+      EPUB, `mimetype` and container included, and a 28 KB PPTX; a spreadsheet
+      is read back to Markdown. pandoc 3.11 reads `xlsx` and `pptx` and writes
+      `pptx`, which is worth knowing because it makes LibreOffice unnecessary
+      for the formats it was going to be installed for.
+- [x] **Office through LibreOffice, when it is there** - the same bridge, for
+      what pandoc will not take and for `--convert-to pdf`. It is an
+      application rather than a command, so it is looked for in
+      `/Applications` and `~/Applications` as well as on PATH, given a profile
+      directory of its own so a copy already open in front of somebody does
+      not lock it out, and handed a folder to write into - it names its own
+      output, and the file that appears there is moved into place. **Not run
+      end to end: LibreOffice is not installed on the machine this was written
+      on.** The parts that could be checked were: the folder handover, the
+      failure when a tool writes nothing, and that a spreadsheet is offered to
+      whichever tool is actually present.
 - [ ] **The OCR languages Vision does not have, through tesseract.**
 - [ ] **Font conversion through fonttools** - and a way to find it: it installs
       into a Python user directory that a GUI app's PATH does not include, so

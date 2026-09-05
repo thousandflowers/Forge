@@ -83,6 +83,42 @@ final class ExternalToolTests: BaseTestCase {
     XCTAssertNotEqual(video?.toolName, "pandoc")
   }
 
+  /// LibreOffice names its output after the input, so Forge gives it a folder
+  /// to itself and moves what appears.
+  func test_whatTheToolNamedItselfIsMovedIntoPlace() throws {
+    let folder = try folder("office")
+    let made = folder.appendingPathComponent("slides.pdf")
+    try Data("%PDF-1.4\n".utf8).write(to: made)
+    let wanted = path("deck.pdf")
+
+    try ExternalProcessor.collect(from: folder, to: wanted, wanted: "pdf", tool: "LibreOffice")
+
+    XCTAssertTrue(exists(wanted))
+    XCTAssertFalse(exists(made), "the tool's own file was left behind")
+  }
+
+  /// A tool that exits successfully having written nothing is a failure, not
+  /// an empty result: the alternative is a conversion reported as done with
+  /// no file at the end of it.
+  func test_aToolThatWroteNothingIsAFailure() throws {
+    let folder = try folder("office")
+    XCTAssertThrowsError(
+      try ExternalProcessor.collect(
+        from: folder, to: path("deck.pdf"), wanted: "pdf", tool: "LibreOffice"
+      )
+    )
+  }
+
+  /// A spreadsheet is nobody native's: macOS reads none. It is offered by
+  /// whichever tool is here - and on a recent pandoc that is pandoc, which
+  /// reads xlsx and pptx and made LibreOffice unnecessary for them.
+  func test_spreadsheetsAreOfferedByWhicheverToolIsHere() throws {
+    let xlsx = try XCTUnwrap(UTType(filenameExtension: "xlsx"))
+    let somebodyCan = ExternalBridge.pandocFormats.read.contains("xlsx")
+      || ExternalBridge.libreOffice != nil
+    XCTAssertEqual(ExternalBridge.canHandle(xlsx), somebodyCan)
+  }
+
   /// Pictures are ImageIO's, whatever is installed. A tool that offered to
   /// take them would take them off the path that resizes, filters and
   /// measures.
