@@ -69,6 +69,16 @@ private struct HistoryRow: View {
         Text(duration)
           .font(.caption).foregroundStyle(.secondary).monospacedDigit()
       }
+
+      // The same actions as the context menu, somewhere they can be found
+      // without knowing to right-click.
+      Menu {
+        menu
+      } label: {
+        Image(systemName: "ellipsis.circle")
+      }
+      .menuStyle(.borderlessButton)
+      .fixedSize()
     }
     .padding(.vertical, 2)
     .contextMenu { menu }
@@ -85,8 +95,35 @@ private struct HistoryRow: View {
       : "\(output.lastPathComponent), in \(folder)"
   }
 
+  /// What can be done about a past run, most useful first.
+  ///
+  /// A run and a preset are the same thing said twice, so the first action is
+  /// the one that turns one into the other: a conversion done once becomes a
+  /// conversion that can be done again, edited, exported, published. The rest
+  /// run it again, on files chosen now or on the same ones.
   @ViewBuilder
   private var menu: some View {
+    if entry.isRepeatable {
+      Button("Save as a Preset") { model.savePreset(from: entry) }
+
+      Button("Run on Other Files…") {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.message = "Run the same steps on these."
+        if panel.runModal() == .OK { model.reapply(entry, to: panel.urls) }
+      }
+
+      // The original may have moved, been renamed, or been replaced in place by
+      // this very conversion. What is gone is said out loud rather than
+      // silently dropped, and what is here still goes through the ordinary
+      // confirmation before anything is replaced.
+      Button("Run Again on the Same File") { model.rerun(entry) }
+        .disabled(!FileManager.default.fileExists(atPath: entry.fileURL.path))
+
+      Divider()
+    }
+
     ForEach(entry.outputs, id: \.self) { output in
       Button("Show \(output.lastPathComponent) in Finder") {
         NSWorkspace.shared.activateFileViewerSelecting([output])
@@ -98,21 +135,5 @@ private struct HistoryRow: View {
       NSWorkspace.shared.activateFileViewerSelecting([entry.fileURL])
     }
     .disabled(!FileManager.default.fileExists(atPath: entry.fileURL.path))
-
-    if let preset, let destination = entry.destinationFolder {
-      Divider()
-      // A conversion that failed because a file was still being written, or a
-      // device was briefly busy, is worth one more try - and trying again was
-      // the one thing history could not do.
-      Button("Convert again with “\(preset.name)”") {
-        model.convertFromMenuBar([entry.fileURL], with: preset, into: destination)
-      }
-      .disabled(!FileManager.default.fileExists(atPath: entry.fileURL.path))
-    }
-  }
-
-  private var preset: RulePreset? {
-    guard let id = entry.ruleId else { return nil }
-    return model.presets.first { $0.id == id }
   }
 }
