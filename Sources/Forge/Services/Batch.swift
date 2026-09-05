@@ -25,8 +25,15 @@ enum Batch {
 
   /// Convert `files`, reporting each step through `onEvent`.
   ///
-  /// - Parameter shouldContinue: asked before each new file starts, so a cancel
+  /// Every file is started at once and then waits its turn: how many actually
+  /// run is `BatchEngine`'s business, per kind of work and per how the Mac is
+  /// coping. A suspended task costs almost nothing, and the alternative - this
+  /// counting its own slots - could only ever count one kind of thing.
+  ///
+  /// - Parameter shouldContinue: asked before each file starts, so a cancel
   ///   stops the queue instead of only the work already running.
+  /// - Parameter limit: what the user asked for in Settings. A ceiling on the
+  ///   engine's own answer, never a way to ask for more.
   static func run(
     _ files: [ProcessableFile],
     preset: RulePreset,
@@ -34,28 +41,40 @@ enum Batch {
     destination: URL?,
     limit: Int,
     coordinator: ProcessingCoordinator,
+    engine: BatchEngine = .shared,
     shouldContinue: @escaping @Sendable () -> Bool = { true },
+    isCancelled: @escaping @Sendable (UUID) -> Bool = { _ in false },
     onEvent: @escaping @Sendable (Event) -> Void
   ) async -> Report {
     var report = Report()
-    let slots = max(1, limit)
+    let ceiling = max(1, limit)
 
-    await withTaskGroup(of: Event.self) { group in
-      var next = 0
-
-      func spawn() -> Bool {
-        guard shouldContinue(), next < files.count else { return false }
-        let file = files[next]
-        next += 1
-
-        onEvent(.started(id: file.id))
+    await withTaskGroup(of: Event?.self) { group in
+      for (index, file) in files.enumerated() {
+        let workload = BatchEngine.Workload.of(file, writing: preset.targetFormat)
         group.addTask {
+          await engine.acquire(workload, ceiling: ceiling)
+          defer { Task { await engine.release(workload) } }
+
+          // Asked after waiting rather than before: a batch cancelled while
+          // this was in the queue must not start now - and neither must a file
+          // somebody stopped while it was still waiting its turn. Cancelling a
+          // queued row used to mark it cancelled on screen and convert it
+          // anyway, because there was no task yet to cancel.
+          guard shouldContinue(), !isCancelled(file.id) else {
+            return .finished(id: file.id, status: .cancelled, output: nil, outputs: [], error: nil)
+          }
+
+          onEvent(.started(id: file.id))
           do {
             let entry = try await coordinator.processFile(
               file,
               with: preset,
               destinationMode: mode,
-              destinationURL: destination
+              destinationURL: destination,
+              // Its place in the batch, counting from one, for a name template
+              // that numbers them.
+              counter: index + 1
             ) { fraction in
               onEvent(.progress(id: file.id, fraction: fraction))
             }
@@ -74,12 +93,10 @@ enum Batch {
             )
           }
         }
-        return true
       }
 
-      for _ in 0..<slots where spawn() {}
-
-      while let event = await group.next() {
+      for await event in group {
+        guard let event else { continue }
         onEvent(event)
         if case .finished(_, let status, _, _, _) = event {
           switch status {
@@ -88,7 +105,6 @@ enum Batch {
           default: report.failed += 1
           }
         }
-        _ = spawn()
       }
     }
 

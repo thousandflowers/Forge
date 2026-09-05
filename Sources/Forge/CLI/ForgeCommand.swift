@@ -12,7 +12,7 @@ struct ForgeCommand: AsyncParsableCommand {
     commandName: LaunchMode.toolName,
     abstract: "Batch file conversion on macOS, using only Apple frameworks.",
     version: Bundle.main.shortVersion,
-    subcommands: [Convert.self, Presets.self, Formats.self, Watch.self],
+    subcommands: [Convert.self, Presets.self, Formats.self, Watch.self, Extensions.self],
     defaultSubcommand: Convert.self
   )
 }

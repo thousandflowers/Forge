@@ -10,6 +10,18 @@ struct BatchProcessingView: View {
   @State private var showingOptions = false
   @State private var isTargeted = false
   @State private var confirming = false
+  /// The conversions worth one question, one per kind. Empty means there is
+  /// nothing to ask.
+  @State private var asking: [ConfirmationGroup] = []
+  /// A chain handed to this screen rather than chosen on it - a row in history
+  /// asking to be run again. It is not one of the saved presets, so it cannot
+  /// be looked up by id, and it stands until the user opens the sheet and says
+  /// something else.
+  @State private var adhoc: RulePreset?
+  /// The file being looked through for things to cover up. Redaction is not
+  /// part of a conversion: it is irreversible, it needs a person to agree to
+  /// every region, and it writes a copy of its own.
+  @State private var reviewing: ProcessableFile?
 
   /// The kinds of file in the list. What the sheet offers is decided from this,
   /// so a PDF is asked different questions than a video.
@@ -21,7 +33,7 @@ struct BatchProcessingView: View {
     vm.files.reduce(0) { $0 + $1.fileSize }
   }
 
-  private var preset: RulePreset? { choice.resolved(against: model.presets) }
+  private var preset: RulePreset? { adhoc ?? choice.resolved(against: model.presets) }
 
   var body: some View {
     VStack(spacing: 0) {
@@ -65,6 +77,11 @@ struct BatchProcessingView: View {
       }
     }
     .animation(.easeOut(duration: 0.15), value: isTargeted)
+    // A run started from History arrives here. Both hooks are needed: the
+    // screen may already be showing, or may be about to appear because
+    // something set this.
+    .onAppear { if let pending = model.pending { take(pending) } }
+    .onChange(of: model.pending) { pending in if let pending { take(pending) } }
     .navigationTitle("Convert")
     .toolbar {
       ToolbarItemGroup {
@@ -74,7 +91,7 @@ struct BatchProcessingView: View {
         if !vm.files.isEmpty {
           Button(role: .destructive) { clear() } label: { Label("Clear", systemImage: "trash") }
             .disabled(vm.isProcessing)
-          Button { showingOptions = true } label: { Label("Convert…", systemImage: "slider.horizontal.3") }
+          Button { openOptions() } label: { Label("Convert…", systemImage: "slider.horizontal.3") }
             .disabled(vm.isProcessing)
         }
       }
@@ -85,12 +102,30 @@ struct BatchProcessingView: View {
         fileCount: vm.files.count,
         totalSize: totalSize,
         presets: model.usablePresets,
+        defaultPrivacy: model.settings.privacy,
         choice: $choice,
         onConvert: {
           // Overwrite and Move both change what is already on disk, so they are
           // worth a sentence before rather than an apology after.
           if choice.destinationMode == .copyTo { start() } else { confirming = true }
         }
+      )
+    }
+    .sheet(item: $reviewing) { file in
+      RedactionReviewSheet(file: file) { written in
+        model.remember(written)
+        vm.lastSaving = "Covered copy written to \(written.lastPathComponent)."
+      }
+    }
+    .sheet(isPresented: Binding(get: { !asking.isEmpty }, set: { if !$0 { asking = [] } })) {
+      ConfirmationSheet(
+        groups: asking,
+        coordinator: model.coordinator,
+        onConvert: {
+          asking = []
+          start()
+        },
+        onCancel: { asking = [] }
       )
     }
     .confirmationDialog(summaryTitle, isPresented: $confirming) {
@@ -124,7 +159,18 @@ struct BatchProcessingView: View {
 
   private var fileTable: some View {
     Table(vm.files) {
-      TableColumn("File") { f in Text(f.fileName).lineLimit(1).truncationMode(.middle) }
+      TableColumn("File") { f in
+        Text(f.fileName)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .contextMenu {
+            // Images only: Vision reads pictures, and offering this for a CSV
+            // would be a menu item that finds nothing every time.
+            if FormatCatalog.isReadableImage(f.fileType) {
+              Button("Review for Redaction…") { reviewing = f }
+            }
+          }
+      }
       TableColumn("Type") { f in
         Text(f.fileType.localizedDescription ?? f.fileType.preferredFilenameExtension ?? "—")
           .foregroundStyle(.secondary)
@@ -138,19 +184,48 @@ struct BatchProcessingView: View {
       }
       TableColumn("Status") { f in
         let status = vm.statusMap[f.id] ?? .pending
-        if status == .processing, let fraction = vm.fileProgress[f.id] {
-          ProgressView(value: fraction).progressViewStyle(.linear).frame(maxWidth: 120)
-        } else {
-          status.label
+        HStack(spacing: 6) {
+          if status == .processing, let fraction = vm.fileProgress[f.id] {
+            ProgressView(value: fraction).progressViewStyle(.linear).frame(maxWidth: 120)
+          } else {
+            status.label
+          }
+          // One file taking too long is a file, not a batch.
+          if vm.isProcessing, status == .processing || status == .pending {
+            Button { vm.cancel(f, model: model) } label: {
+              Image(systemName: "xmark.circle.fill")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .help("Stop converting this one")
+          }
         }
       }
     }
   }
 
   private var processingBar: some View {
-    HStack(spacing: 14) {
-      ProgressView(value: vm.progress).progressViewStyle(.linear)
-      Button("Cancel") { vm.cancel(model: model) }
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 14) {
+        ProgressView(value: vm.progress).progressViewStyle(.linear)
+        Button(vm.isPaused ? "Resume" : "Pause") {
+          if vm.isPaused { vm.resume() } else { vm.pause() }
+        }
+        Button("Cancel") { vm.cancel(model: model) }
+      }
+      if vm.isPaused {
+        Label(
+          "Paused. Files already converting finish; nothing new starts.",
+          systemImage: "pause.circle"
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+      if let throttle = vm.throttle {
+        Label(throttle, systemImage: "thermometer.medium")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
     }
     .padding()
   }
@@ -160,7 +235,7 @@ struct BatchProcessingView: View {
     HStack(spacing: 14) {
       Text(saving).font(.callout).foregroundStyle(.secondary)
       Spacer()
-      Button("Convert Again…") { showingOptions = true }
+      Button("Convert Again…") { openOptions() }
     }
     .padding()
   }
@@ -173,16 +248,110 @@ struct BatchProcessingView: View {
   private func add(_ urls: [URL]) {
     let wasEmpty = vm.files.isEmpty
     vm.add(urls)
-    if wasEmpty, !vm.files.isEmpty {
+    guard !vm.files.isEmpty else { return }
+    if wasEmpty {
       // A batch starts from the general preference and can then disagree with
       // it, which is what makes the preference a default rather than a law.
       choice.fitMode = model.settings.defaultFitMode
-      showingOptions = true
     }
+    route()
+  }
+
+  /// What, if anything, to ask before converting what was just dropped.
+  ///
+  /// The rule is `ConfirmationLevel`'s, and the whole point of it is the first
+  /// case: a drop whose outcome is already settled - the second batch through a
+  /// preset chosen a minute ago, or a file the user renamed to say what they
+  /// wanted - just runs. What is left is one question, not one per file.
+  private func route() {
+    // Files dropped while a batch is running join the list and wait their turn.
+    // Routing them would start a second batch over the same files, which is two
+    // conversions writing the same output names at once.
+    guard !vm.isProcessing else { return }
+
+    let plans = vm.files.map {
+      ConversionPlan(file: $0, preset: preset, destinationMode: choice.destinationMode)
+    }
+
+    switch ConfirmationLevel.forBatch(plans) {
+    case .silent:
+      start()
+
+    case .block:
+      // Replacing or moving the originals, which has always been asked about.
+      confirming = true
+
+    case .confirm:
+      // Nothing says what these should become yet: that question is the sheet,
+      // and the sheet is the whole answer to it.
+      if plans.contains(where: \.hasUndefinedRequiredParams) {
+        openOptions()
+      } else {
+        asking = groups(from: plans)
+      }
+    }
+  }
+
+  /// One group per kind, standing for every file of that kind in the batch.
+  private func groups(from plans: [ConversionPlan]) -> [ConfirmationGroup] {
+    guard let preset else { return [] }
+
+    var seen: [ConvertKind: (file: ProcessableFile, plan: ConversionPlan, count: Int)] = [:]
+    for (file, plan) in zip(vm.files, plans) {
+      guard let kind = ConvertKind(fileType: file.fileType) else { continue }
+      if var already = seen[kind] {
+        already.count += 1
+        // The one worth asking about represents the group; a silent file in a
+        // group that also has a surprising one is not the file to show.
+        if plan.confirmationLevel > already.plan.confirmationLevel {
+          already.file = file
+          already.plan = plan
+        }
+        seen[kind] = already
+      } else {
+        seen[kind] = (file, plan, 1)
+      }
+    }
+
+    return seen
+      .filter { $0.value.plan.confirmationLevel == .confirm }
+      .map { kind, group in
+        ConfirmationGroup(
+          kind: kind,
+          representative: group.file,
+          count: group.count,
+          preset: preset,
+          plan: group.plan,
+          destination: choice.destinationURL
+        )
+      }
+      .sorted { $0.kind.rawValue < $1.kind.rawValue }
   }
 
   private func clear() {
     vm.clear()
+    adhoc = nil
+  }
+
+  /// The sheet is the place where the user says what they want, so opening it
+  /// puts them back in charge of the chain.
+  private func openOptions() {
+    adhoc = nil
+    showingOptions = true
+  }
+
+  /// Take a conversion handed over from somewhere else in the app - the same
+  /// files or new ones, with the chain a past run used - and put it through the
+  /// ordinary route, gate and confirmations included.
+  private func take(_ pending: AppModel.PendingConversion) {
+    vm.clear()
+    vm.add(pending.files)
+    adhoc = pending.preset
+    choice.destinationMode = pending.mode
+    choice.destinationURL = pending.destination
+    model.pending = nil
+    guard !vm.files.isEmpty else { return }
+    route()
   }
 
   private func start() {
@@ -255,7 +424,15 @@ final class BatchViewModel: ObservableObject {
   /// which three were missing or what was wrong with them.
   @Published var skipped: String?
 
+  /// Whether the queue is holding back new files.
+  @Published var isPaused = false
+  /// Why the engine has backed off, when it has, in the user's words.
+  @Published var throttle: String?
+
   private let cancellation = CancellationFlag()
+  /// Rows somebody stopped by hand. A row waiting its turn has no task to
+  /// cancel yet, so the batch asks this before starting it.
+  private let stopped = StoppedFiles()
 
   func add(_ urls: [URL]) {
     // What the last batch cost describes files that are no longer the ones on
@@ -317,6 +494,28 @@ final class BatchViewModel: ObservableObject {
     lastSaving = nil
   }
 
+  /// Stop starting new files. The ones already converting finish: a native
+  /// encode cannot be frozen halfway, and a button that claimed to would be
+  /// lying about what happened to the file.
+  func pause() {
+    isPaused = true
+    Task { await BatchEngine.shared.pause() }
+  }
+
+  func resume() {
+    isPaused = false
+    Task { await BatchEngine.shared.resume() }
+  }
+
+  /// Stop one file. The rest of the batch carries on.
+  func cancel(_ file: ProcessableFile, model: AppModel) {
+    statusMap[file.id] = .cancelled
+    fileProgress.removeValue(forKey: file.id)
+    stopped.add(file.id)
+    let coordinator = model.coordinator
+    Task { await coordinator.cancel(file.id) }
+  }
+
   func cancel(model: AppModel) {
     // The flag stops new files from being started; cancelling the coordinator
     // stops the ones already running. Doing only the second let the loop keep
@@ -327,10 +526,16 @@ final class BatchViewModel: ObservableObject {
   }
 
   func convert(model: AppModel, preset: RulePreset, mode: DestinationMode, destination: URL?) async {
-    guard !files.isEmpty else { return }
+    // Two batches over one list would race for the same output names, and the
+    // second would report files the first is still writing.
+    guard !files.isEmpty, !isProcessing else { return }
 
     let cancellation = self.cancellation
     cancellation.reset()
+    let stopped = self.stopped
+    stopped.clear()
+    isPaused = false
+    await BatchEngine.shared.resume()
     isProcessing = true
     progress = 0
     fileProgress.removeAll()
@@ -347,6 +552,19 @@ final class BatchViewModel: ObservableObject {
     let gates = ProgressGates()
     let outputs = OutputSizes()
 
+    // What the engine is doing about the state of the Mac, asked for rather
+    // than pushed: it changes on the order of seconds, and a batch that
+    // redrew the screen every time the temperature moved would be worse than
+    // one that noticed a moment late.
+    let watching = Task { [weak self] in
+      while !Task.isCancelled {
+        let pressure = await BatchEngine.shared.currentPressure
+        await MainActor.run { self?.throttle = pressure == .none ? nil : pressure.reason }
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+      }
+    }
+    defer { watching.cancel() }
+
     _ = await Batch.run(
       files,
       preset: preset,
@@ -354,7 +572,8 @@ final class BatchViewModel: ObservableObject {
       destination: destination,
       limit: limit,
       coordinator: coordinator,
-      shouldContinue: { !cancellation.isSet }
+      shouldContinue: { !cancellation.isSet },
+      isCancelled: { stopped.contains($0) }
     ) { [weak self] event in
       if case .progress(let id, let fraction) = event {
         guard gates.advance(id: id, to: (fraction * 100).rounded() / 100) else { return }
@@ -368,6 +587,8 @@ final class BatchViewModel: ObservableObject {
       Task { @MainActor [weak self] in self?.apply(event, of: total, in: model) }
     }
 
+    watching.cancel()
+    throttle = nil
     lastSaving = Self.saving(from: outputs.paths(), sources: files)
     await model.refreshHistory()
 
@@ -450,6 +671,30 @@ private final class ProgressGates: @unchecked Sendable {
 }
 
 /// A cancel flag both the main actor and the conversion tasks can see.
+/// The rows somebody stopped by hand, readable from the conversion tasks.
+private final class StoppedFiles: @unchecked Sendable {
+  private let lock = NSLock()
+  private var ids: Set<UUID> = []
+
+  func add(_ id: UUID) {
+    lock.lock()
+    ids.insert(id)
+    lock.unlock()
+  }
+
+  func contains(_ id: UUID) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return ids.contains(id)
+  }
+
+  func clear() {
+    lock.lock()
+    ids.removeAll()
+    lock.unlock()
+  }
+}
+
 private final class CancellationFlag: @unchecked Sendable {
   private let lock = NSLock()
   private var value = false

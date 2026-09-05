@@ -100,6 +100,41 @@ actor PersistenceManager {
     return try JSONDecoder().decode([MonitoredFolder].self, from: data)
   }
 
+  // MARK: - Extensions
+
+  /// Where fetched tools live: one folder per tool, one folder per version
+  /// inside it. Under the same root as everything else Forge keeps, so
+  /// removing that folder removes the lot.
+  nonisolated var extensionsDirectory: URL { root.appendingPathComponent("Extensions") }
+
+  private var extensionsFile: URL { root.appendingPathComponent("Extensions.json") }
+
+  func saveInstalledExtensions(_ installed: [InstalledExtension]) async throws {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    try encoder.encode(installed).write(to: extensionsFile, options: .atomic)
+  }
+
+  func loadInstalledExtensions() async throws -> [InstalledExtension] {
+    Self.readInstalledExtensions(under: root)
+  }
+
+  /// The same list, read without waiting on the actor.
+  ///
+  /// `ExternalTools.locate` is synchronous and is called from everywhere,
+  /// including code that decides whether to offer a conversion at all. The
+  /// file is only ever written atomically, so reading it from outside is
+  /// reading one whole version of it or the previous one, never half of each.
+  nonisolated func installedExtensionsSnapshot() -> [InstalledExtension] {
+    Self.readInstalledExtensions(under: root)
+  }
+
+  private static func readInstalledExtensions(under root: URL) -> [InstalledExtension] {
+    let file = root.appendingPathComponent("Extensions.json")
+    guard let data = try? Data(contentsOf: file) else { return [] }
+    return (try? JSONDecoder().decode([InstalledExtension].self, from: data)) ?? []
+  }
+
   // MARK: - History
 
   func appendHistory(_ entry: ProcessingHistory) async throws {

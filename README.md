@@ -65,7 +65,11 @@ The size ceiling is a promise about the result, not a setting handed to an encod
 
 The Capabilities screen is computed at run time, so it describes your Mac rather than a claim written months ago. Search it, filter it by status, and ask it to **look at the files you actually have**: it counts the kinds of file in your own folders and puts the capabilities that would help you at the top. Only filenames are read, never contents, and only when you press the button.
 
-Every conversion above is Apple's frameworks and nothing else: no ImageMagick, no FFmpeg, no LibreOffice, and nothing to install before Forge is useful. For the handful of jobs macOS cannot do alone, Forge names the tool that can and offers to install it with Homebrew from inside the app — the exact command shown once before it runs, its output live on the card. That tool is your Mac's, not Forge's: nothing is bundled in the app and nothing is downloaded by it, which keeps other people's licences off this project.
+Every conversion above is Apple's frameworks and nothing else: no ImageMagick, no FFmpeg, no LibreOffice, and nothing to install before Forge is useful. For the handful of jobs macOS cannot do alone, Forge names the tool that can and offers to add it — as an **extension**, which is a separate download and never part of the app.
+
+Two ways one arrives. Forge hosts builds of a few of these tools on its own releases: press Download and you are told the version, the licence, the project it comes from and how large it is before anything happens. What arrives is checked against a SHA-256 checksum from the manifest and thrown away if it does not match, then it is unpacked into `~/Library/Application Support/Forge/Extensions/` — not into the app, not onto your `PATH` — and it can be removed from the same card. Or Homebrew, for anything Forge hosts no build of: the exact command is shown once before it runs, with its output live on the card, and the tool is your Mac's rather than Forge's.
+
+What stays true either way: **the core converts with Apple's frameworks and nothing else**, no extension is needed for any of it, and no third-party binary is bundled inside the `.app`. What is no longer true is the older claim that Forge downloads nobody's binaries. It downloads the ones you ask it for, from its own releases, with the checksum checked. `FORGE_EXTENSIONS_MANIFEST` points the app at a different manifest, if you would rather host your own.
 
 WebP is the one wired all the way through today. Install `cwebp` and images really do convert to WebP, with the format appearing only where an image processor will do the writing.
 
@@ -76,13 +80,13 @@ Forge is not trying to out-encode a specialist. HandBrake has spent twenty years
 | | Forge | Permute | HandBrake | ImageOptim |
 | --- | --- | --- | --- | --- |
 | What it converts | images, video, audio, PDF, data, 3D, subtitles | images, video, audio | video, and the audio inside it | images |
-| Where the converters come from | macOS itself | bundled with the app | bundled with the app | bundled with the app |
+| Where the converters come from | macOS itself, plus optional extensions you ask for | bundled with the app | bundled with the app | bundled with the app |
 | What it offers is read from your Mac at run time | yes | no | no | no |
 | Presets you can export, import and browse in a gallery | yes | presets, kept local | presets, importable files | no |
 | Command line | the same binary | no | separate `HandBrakeCLI` | no official one |
 | Licence | MIT | paid, closed | GPL-2.0 | GPL-2.0 |
 
-Roadmap, not shipping today: metadata stripping on conversion, and downloading optional converters rather than asking Homebrew for them.
+Removing metadata on conversion — location, device, serial numbers, author — is a setting here, overridable per preset, per batch, and by naming a file `_privacy`.
 
 ## A gallery you can search
 

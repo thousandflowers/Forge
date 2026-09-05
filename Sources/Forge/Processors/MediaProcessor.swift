@@ -271,6 +271,21 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     session.outputURL = output
     session.outputFileType = fileType
     session.shouldOptimizeForNetworkUse = true
+
+    // Where the film was shot travels inside it. An export with no metadata of
+    // its own carries the source's across, so leaving it out is done here: the
+    // session's own filter for the thorough level, since AVFoundation knows
+    // what each key means, and the location keys alone otherwise.
+    let privacy = PrivacyFilter.policy(in: operations)
+    if privacy.removesSomething {
+      if let filter = PrivacyFilter.filter(for: privacy) {
+        session.metadataItemFilter = filter
+      } else {
+        session.metadata = PrivacyFilter.metadata(
+          try await asset.load(.metadata), to: privacy
+        )
+      }
+    }
     // Metadata is deliberately not set: an export session with none of its own
     // carries the source's across, and setting it to the common key space
     // would *narrow* that to the handful of tags every container shares.
@@ -453,7 +468,9 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       progress(totalFrames > 0 ? Double(position) / Double(totalFrames) : 0)
     }
 
-    try await Self.carryTags(from: input, to: output, type: outputType)
+    try await Self.carryTags(
+      from: input, to: output, type: outputType, privacy: PrivacyFilter.policy(in: operations)
+    )
     progress(1.0)
 
     return ProcessingResult(
@@ -474,8 +491,15 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   /// Which containers can hold tags is asked rather than listed: an export
   /// session says what it can write, and a FLAC or a WAV is simply left
   /// untagged instead of being promised something AVFoundation cannot do.
-  private static func carryTags(from input: URL, to output: URL, type: UTType) async throws {
-    let tags = try await AVURLAsset(url: input).load(.metadata)
+  private static func carryTags(
+    from input: URL,
+    to output: URL,
+    type: UTType,
+    privacy: PrivacyPolicy = .keepAll
+  ) async throws {
+    let tags = PrivacyFilter.metadata(
+      try await AVURLAsset(url: input).load(.metadata), to: privacy
+    )
     guard !tags.isEmpty else { return }
 
     guard let session = AVAssetExportSession(
