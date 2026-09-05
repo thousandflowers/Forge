@@ -236,6 +236,11 @@ final class AppModel: ObservableObject {
       lastError = "None of those files is one Forge can open."
       return
     }
+    // Some of them, rather than none, used to disappear without a word.
+    if files.count < urls.count {
+      let missed = urls.filter { url in !files.contains { $0.url == url } }
+      lastError = BatchViewModel.describe(missed)
+    }
 
     Task { [weak self] in
       guard let self else { return }

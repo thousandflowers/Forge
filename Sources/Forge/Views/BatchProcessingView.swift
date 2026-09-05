@@ -40,6 +40,14 @@ struct BatchProcessingView: View {
         Divider()
         resultBar(saving)
       }
+
+      if let skipped = vm.skipped {
+        Divider()
+        Label(skipped, systemImage: "exclamationmark.triangle")
+          .font(.callout)
+          .foregroundStyle(.secondary)
+          .padding(.horizontal).padding(.vertical, 8)
+      }
     }
     // A drop is accepted anywhere on the screen. Hanging this on the empty
     // state meant dragging worked for the first file and silently stopped
@@ -242,6 +250,10 @@ final class BatchViewModel: ObservableObject {
   /// What the last batch actually cost, once it is known. Guessing beforehand
   /// would be a guess; this is measured.
   @Published var lastSaving: String?
+  /// What was dropped and not taken, and why. Files Forge cannot open used to
+  /// be discarded without a word: drop ten and see seven, with nothing to say
+  /// which three were missing or what was wrong with them.
+  @Published var skipped: String?
 
   private let cancellation = CancellationFlag()
 
@@ -249,10 +261,40 @@ final class BatchViewModel: ObservableObject {
     // What the last batch cost describes files that are no longer the ones on
     // screen, so it stops being shown the moment the batch changes.
     lastSaving = nil
+    skipped = nil
+
     let existing = Set(files.map(\.url))
-    let added = urls.compactMap { try? ProcessableFile(url: $0) }.filter { !existing.contains($0.url) }
+    var added: [ProcessableFile] = []
+    var unreadable: [URL] = []
+
+    for url in urls {
+      guard let file = try? ProcessableFile(url: url) else {
+        unreadable.append(url)
+        continue
+      }
+      guard !existing.contains(file.url), !added.contains(where: { $0.url == file.url }) else { continue }
+      added.append(file)
+    }
+
     files.append(contentsOf: added)
     loadVideoDimensions(for: added)
+    skipped = Self.describe(unreadable)
+  }
+
+  /// The files that were turned away, named by what they are rather than
+  /// counted: "Forge cannot open .zzz" is something to act on.
+  static func describe(_ unreadable: [URL]) -> String? {
+    guard !unreadable.isEmpty else { return nil }
+
+    let kinds = Set(unreadable.map { $0.pathExtension.lowercased() })
+      .filter { !$0.isEmpty }
+      .sorted()
+      .map { ".\($0)" }
+
+    let what = kinds.isEmpty ? "those files" : kinds.joined(separator: ", ")
+    return unreadable.count == 1
+      ? "\(unreadable[0].lastPathComponent) was not added: Forge cannot open \(what)."
+      : "\(unreadable.count) files were not added: Forge cannot open \(what)."
   }
 
   /// Video sizes need the asset opened, which is far too slow to do for every

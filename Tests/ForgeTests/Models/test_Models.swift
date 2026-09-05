@@ -975,6 +975,39 @@ final class AppModelTests: BaseTestCase {
     )
   }
 
+  /// Files Forge cannot open were dropped on the floor: drop ten, see seven,
+  /// with nothing to say which three were missing or what was wrong with them.
+  func test_theFilesThatWereTurnedAwayAreNamed() {
+    let refused = [
+      URL(fileURLWithPath: "/tmp/archivio.zzz"),
+      URL(fileURLWithPath: "/tmp/altro.qqq"),
+    ]
+    let said = BatchViewModel.describe(refused) ?? ""
+    XCTAssertTrue(said.contains("2 files"), said)
+    XCTAssertTrue(said.contains(".zzz"), said)
+    XCTAssertTrue(said.contains(".qqq"), said)
+
+    let one = BatchViewModel.describe([URL(fileURLWithPath: "/tmp/solo.zzz")])
+    XCTAssertEqual(one?.contains("solo.zzz"), true, one ?? "")
+    XCTAssertNil(BatchViewModel.describe([]), "nothing turned away, nothing to say")
+  }
+
+  /// The menu bar said nothing when it took some of what it was given.
+  func test_theMenuBarSaysWhenItTookOnlySome() async throws {
+    let model = AppModel(persistence: store)
+    let preset = RulePreset.make(format: .jpeg, category: .image)
+    model.savePreset(preset)
+
+    let good = try Fixture.image(at: path("buona.png"), width: 60, height: 60)
+    let bad = path("rifiutata.zzz")
+    try Data("not a picture".utf8).write(to: bad)
+
+    model.convertFromMenuBar([good, bad], with: preset, into: try folder("out"))
+
+    let said = try XCTUnwrap(model.lastError, "nothing was said about the file it could not open")
+    XCTAssertTrue(said.contains(".zzz"), said)
+  }
+
   /// Deleting a preset left every folder watching with it looking active and
   /// doing nothing whatsoever with what landed in them.
   func test_deletingAPresetSwitchesOffTheFoldersUsingIt() async throws {
