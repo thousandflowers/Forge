@@ -22,6 +22,8 @@ final class AppModel: ObservableObject {
   /// Files Forge has just written. A watched folder that also receives the
   /// output would otherwise convert its own results forever.
   private var produced: Set<String> = []
+  /// The same paths in the order they were written, so the oldest can go first.
+  private var producedOrder: [String] = []
   private static let producedLimit = 512
 
   /// - Parameter persistence: where presets, folders and history live. Tests
@@ -116,6 +118,22 @@ final class AppModel: ObservableObject {
   func deletePreset(_ preset: RulePreset) {
     presets.removeAll { $0.id == preset.id }
     persist({ try await $0.deletePreset(id: preset.id) }, doing: "deleting “\(preset.name)”")
+
+    // A folder watching with this preset would have gone on looking active and
+    // done nothing at all with what landed in it, which is the worst of both.
+    let orphaned = folders.filter { $0.ruleId == preset.id && $0.isActive }
+    guard !orphaned.isEmpty else { return }
+
+    for folder in orphaned {
+      stopWatcher(folder)
+      if let index = folders.firstIndex(where: { $0.id == folder.id }) {
+        folders[index].isActive = false
+      }
+    }
+    persistFolders()
+    lastError = orphaned.count == 1
+      ? "“\(orphaned[0].displayName)” was watching with “\(preset.name)”, so it has been switched off."
+      : "\(orphaned.count) watched folders were using “\(preset.name)”, so they have been switched off."
   }
 
   func duplicatePreset(_ preset: RulePreset) {
@@ -230,8 +248,8 @@ final class AppModel: ObservableObject {
         limit: limit,
         coordinator: self.coordinator
       ) { event in
-        guard case .finished(_, _, let output, _) = event, let output else { return }
-        Task { @MainActor in self.remember(output) }
+        guard case .finished(_, _, _, let outputs, _) = event, !outputs.isEmpty else { return }
+        Task { @MainActor in outputs.forEach(self.remember) }
       }
 
       await self.refreshHistory()
@@ -295,7 +313,7 @@ final class AppModel: ObservableObject {
   }
 
   private func processIncoming(_ url: URL, folder: MonitoredFolder) async {
-    guard !produced.contains(url.standardizedFileURL.path) else { return }
+    guard !wroteThis(url) else { return }
     guard let preset = presets.first(where: { $0.id == folder.ruleId }) else { return }
 
     let file: ProcessableFile
@@ -312,7 +330,9 @@ final class AppModel: ObservableObject {
         destinationMode: folder.destinationMode,
         destinationURL: folder.destinationURL
       ) { _ in }
-      if let output = entry.outputURL { remember(output) }
+      // Every file it wrote, not only the first: the second one lands in the
+      // same watched folder and would be converted again.
+      entry.outputs.forEach(remember)
     } catch is CancellationError {
       // nothing to say
     } catch ProcessingError.unreadableFormat, ProcessingError.unsupportedConversion, ProcessingError.unknownType {
@@ -327,9 +347,26 @@ final class AppModel: ObservableObject {
   }
 
   /// Remember a file Forge wrote, keeping the set from growing without bound.
+  ///
+  /// The oldest are forgotten, not all of them: emptying the set meant a file
+  /// written a moment earlier stopped being recognised as Forge's own, and a
+  /// watched folder would convert it again.
+  /// Whether this is a file Forge wrote, which is how a watched folder that
+  /// also receives the output avoids converting its own results.
+  func wroteThis(_ url: URL) -> Bool {
+    produced.contains(url.standardizedFileURL.path)
+  }
+
   func remember(_ url: URL) {
-    if produced.count >= Self.producedLimit { produced.removeAll() }
-    produced.insert(url.standardizedFileURL.path)
+    let path = url.standardizedFileURL.path
+    guard !produced.contains(path) else { return }
+
+    if producedOrder.count >= Self.producedLimit {
+      let forget = producedOrder.removeFirst()
+      produced.remove(forget)
+    }
+    produced.insert(path)
+    producedOrder.append(path)
   }
 
 

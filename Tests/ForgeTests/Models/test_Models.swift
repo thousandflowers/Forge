@@ -930,6 +930,168 @@ final class ConvertChoiceTests: XCTestCase {
   }
 }
 
+/// Somewhere for a batch's callback to leave what it saw, since it is called
+/// from whatever thread the conversion finished on.
+private final class OutputBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var seen: [URL] = []
+
+  func add(_ urls: [URL]) {
+    lock.lock(); defer { lock.unlock() }
+    seen.append(contentsOf: urls)
+  }
+
+  var written: [URL] {
+    lock.lock(); defer { lock.unlock() }
+    return seen
+  }
+}
+
+/// The app's own bookkeeping: what it remembers writing, and what it does
+/// when the thing a watched folder depends on is taken away.
+@MainActor
+final class AppModelTests: BaseTestCase {
+
+  /// The set of files Forge wrote used to be emptied wholesale when it filled
+  /// up, so a file written a moment earlier stopped being recognised as its
+  /// own - and a watched folder would convert it again, and again.
+  func test_theOldestFileIsForgottenRatherThanAllOfThem() {
+    let model = AppModel(persistence: store)
+    let recent = URL(fileURLWithPath: "/tmp/scritto-recente.png")
+
+    for index in 0..<600 {
+      model.remember(URL(fileURLWithPath: "/tmp/scritto-\(index).png"))
+    }
+    model.remember(recent)
+
+    XCTAssertTrue(model.wroteThis(recent), "the file just written was already forgotten")
+    XCTAssertTrue(
+      model.wroteThis(URL(fileURLWithPath: "/tmp/scritto-599.png")),
+      "the most recent of the batch was forgotten"
+    )
+    XCTAssertFalse(
+      model.wroteThis(URL(fileURLWithPath: "/tmp/scritto-0.png")),
+      "the oldest should have been dropped to make room"
+    )
+  }
+
+  /// Deleting a preset left every folder watching with it looking active and
+  /// doing nothing whatsoever with what landed in them.
+  func test_deletingAPresetSwitchesOffTheFoldersUsingIt() async throws {
+    let model = AppModel(persistence: store)
+    let preset = RulePreset.make(format: .jpeg, category: .image)
+    model.savePreset(preset)
+
+    let watched = try folder("watched")
+    model.addFolder(
+      url: watched, presetID: preset.id, mode: .copyTo,
+      destination: try folder("out"), includeSubfolders: false
+    )
+    XCTAssertEqual(model.folders.first?.isActive, true)
+
+    model.deletePreset(preset)
+
+    XCTAssertEqual(model.folders.first?.isActive, false, "the folder is still claiming to watch")
+    let said = try XCTUnwrap(model.lastError)
+    XCTAssertTrue(said.contains(preset.name), said)
+  }
+}
+
+/// What history records, and whether a row leads anywhere.
+final class HistoryTests: BaseTestCase {
+
+  /// A batch reported one output per file, so a watched folder heard about
+  /// the first file of a two-format conversion and converted the second.
+  func test_aBatchReportsEveryFileItWrote() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 100, height: 100)
+    var preset = RulePreset.make(format: .jpeg, category: .image)
+    preset.actions.append(.convertFormat(to: .tiff))
+
+    let box = OutputBox()
+    _ = await Batch.run(
+      [try ProcessableFile(url: source)],
+      preset: preset,
+      mode: .copyTo,
+      destination: try folder("out"),
+      limit: 1,
+      coordinator: coordinator()
+    ) { event in
+      if case .finished(_, _, _, let written, _) = event { box.add(written) }
+    }
+
+    XCTAssertEqual(box.written.count, 2, "the batch reported \(box.written.count) of the files it wrote")
+  }
+
+  /// A preset asking for two formats writes two files. History kept the first
+  /// and forgot the second: both were on disk, and only one was accounted for.
+  func test_everyOutputIsRecorded() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 120, height: 120)
+    var preset = RulePreset.make(format: .jpeg, quality: 80, category: .image)
+    preset.actions.append(.convertFormat(to: .tiff))
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: preset,
+      destinationMode: .copyTo,
+      destinationURL: try folder("out")
+    ) { _ in }
+
+    XCTAssertEqual(entry.status, .completed)
+    XCTAssertEqual(entry.outputs.count, 2, "history kept \(entry.outputs.count) of the files written")
+    for output in entry.outputs {
+      XCTAssertTrue(exists(output), "\(output.lastPathComponent) is recorded and not on disk")
+    }
+  }
+
+  /// A failure recorded a duration of zero, so a conversion that gave up after
+  /// two minutes and one that failed at once read the same.
+  func test_aFailureRecordsHowLongItTookAndWhy() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 100, height: 100)
+    let icns = try XCTUnwrap(UTType("com.apple.icns"))
+
+    _ = try? await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: icns, category: .image),
+      destinationMode: .copyTo,
+      destinationURL: try folder("out")
+    ) { _ in }
+
+    let written = try await store.loadHistory()
+    let entry = try XCTUnwrap(written.first { $0.status == .failed })
+    XCTAssertGreaterThan(entry.duration, 0, "the failure was recorded as taking no time")
+    XCTAssertNotNil(entry.errorMessage, "the reason was not recorded")
+    XCTAssertNotNil(entry.destinationFolder, "nothing says where it was meant to go, so it cannot be retried")
+  }
+
+  /// "0.0s" reads like nothing happened.
+  func test_aShortConversionIsNotShownAsZero() {
+    func entry(_ seconds: TimeInterval) -> ProcessingHistory {
+      ProcessingHistory(fileURL: URL(fileURLWithPath: "/tmp/a.png"), status: .completed, duration: seconds)
+    }
+    XCTAssertEqual(entry(0.04).durationText, "40 ms")
+    XCTAssertEqual(entry(0.996).durationText, "996 ms")
+    XCTAssertEqual(entry(1.42).durationText, "1.4 s")
+    XCTAssertNil(entry(0).durationText, "a conversion with no measured time says nothing rather than zero")
+  }
+
+  /// History written before these fields existed still has to load: it is the
+  /// user's own record, and dropping it to add a column would be a poor trade.
+  func test_anOlderHistoryStillDecodes() throws {
+    let json = """
+      [{"id":"6E2E1F1A-0000-4000-8000-00000000ABCD",
+        "fileURL":"file:///tmp/old.png",
+        "timestamp":749000000,
+        "status":"completed",
+        "duration":1.5,
+        "outputURL":"file:///tmp/old.jpeg"}]
+      """
+    let decoded = try JSONDecoder().decode([ProcessingHistory].self, from: Data(json.utf8))
+    XCTAssertEqual(decoded.count, 1)
+    XCTAssertEqual(decoded.first?.outputs.count, 1)
+    XCTAssertNil(decoded.first?.destinationFolder)
+  }
+}
+
 /// What the window offers for a file, which is a different question from what
 /// the engine can do with it - and was a different answer, for a while.
 final class ConvertKindOfferingTests: XCTestCase {

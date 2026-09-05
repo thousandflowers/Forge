@@ -15,7 +15,7 @@ final class Reporter: @unchecked Sendable {
   }
 
   func report(_ event: Batch.Event) {
-    guard case .finished(let id, let status, let output, let error) = event else { return }
+    guard case .finished(let id, let status, let output, _, let error) = event else { return }
     let name = names[id] ?? "?"
 
     lock.lock()

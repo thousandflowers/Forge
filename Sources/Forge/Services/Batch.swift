@@ -11,7 +11,10 @@ enum Batch {
   enum Event: Sendable {
     case started(id: UUID)
     case progress(id: UUID, fraction: Double)
-    case finished(id: UUID, status: ProcessingStatus, output: URL?, error: String?)
+    /// `outputs` is every file the conversion wrote, not only the first: a
+    /// preset asking for two formats writes two, and a watched folder that
+    /// hears about one of them converts the other again.
+    case finished(id: UUID, status: ProcessingStatus, output: URL?, outputs: [URL], error: String?)
   }
 
   struct Report: Sendable {
@@ -56,11 +59,19 @@ enum Batch {
             ) { fraction in
               onEvent(.progress(id: file.id, fraction: fraction))
             }
-            return .finished(id: file.id, status: entry.status, output: entry.outputURL, error: entry.errorMessage)
+            return .finished(
+              id: file.id,
+              status: entry.status,
+              output: entry.outputURL,
+              outputs: entry.outputs,
+              error: entry.errorMessage
+            )
           } catch is CancellationError {
-            return .finished(id: file.id, status: .cancelled, output: nil, error: nil)
+            return .finished(id: file.id, status: .cancelled, output: nil, outputs: [], error: nil)
           } catch {
-            return .finished(id: file.id, status: .failed, output: nil, error: error.localizedDescription)
+            return .finished(
+              id: file.id, status: .failed, output: nil, outputs: [], error: error.localizedDescription
+            )
           }
         }
         return true
@@ -70,7 +81,7 @@ enum Batch {
 
       while let event = await group.next() {
         onEvent(event)
-        if case .finished(_, let status, _, _) = event {
+        if case .finished(_, let status, _, _, _) = event {
           switch status {
           case .completed: report.converted += 1
           case .cancelled: report.cancelled += 1
