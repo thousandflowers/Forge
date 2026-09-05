@@ -181,6 +181,21 @@ final class AppModel: ObservableObject {
   // MARK: - Folders
 
   func addFolder(url: URL, presetID: UUID, mode: DestinationMode, destination: URL?, includeSubfolders: Bool) {
+    // Two watchers on one folder convert everything twice, and the second copy
+    // arrives named "photo 2.jpeg" with nothing to say where it came from.
+    let path = url.standardizedFileURL.path
+    if folders.contains(where: { $0.url.standardizedFileURL.path == path }) {
+      lastError = "“\(url.lastPathComponent)” is already being watched."
+      return
+    }
+    if let covering = folders.first(where: {
+      $0.includeSubfolders && path.hasPrefix($0.url.standardizedFileURL.path + "/")
+    }) {
+      lastError = "“\(url.lastPathComponent)” is already inside “\(covering.displayName)”, "
+        + "which watches its subfolders - everything in it would be converted twice."
+      return
+    }
+
     let folder = MonitoredFolder(
       url: url,
       ruleId: presetID,

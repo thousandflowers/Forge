@@ -415,11 +415,11 @@ here so nobody has to rediscover them.
   work in the window, but they live in the SwiftUI view model, and testing them
   would need scaffolding out of proportion to the risk. The engine underneath
   them is tested.
-- **Preset categories now decide what a preset is offered.** They pick the
-  icon, and they also filter which steps the editor offers and which presets the
-  Convert sheet shows for a given file. A preset filed under the wrong category
-  will be offered the wrong steps; nothing checks that the category matches what
-  the actions actually do.
+- **A preset is offered for what it writes.** The category picks the icon and
+  the steps the editor shows, and it no longer decides which files a preset is
+  offered for: that comes from the target format, checked against the same list
+  the sheet offers. A preset that makes JPEGs and happens to be filed under
+  Video is offered for a picture, as it always should have been.
 - **The size ceiling is images only.** `ImageProcessor` writes, measures and
   rewrites. Video and audio have no such loop, so the ceiling is not offered for
   them rather than being offered and ignored.
