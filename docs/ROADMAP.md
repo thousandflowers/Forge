@@ -169,13 +169,17 @@ Native, no new dependencies, in rough order of value.
       PDF. Order them by what your own presets target and what went in, and put
       the rest behind a More. Not a hardcoded shortlist: the ranking has to come
       from the data, or it goes stale the moment macOS adds an encoder.
-- [ ] **History that leads somewhere** - a failed row says nothing about why it
-      failed, does not carry the path it wrote, and offers neither Reveal in
-      Finder nor a retry. The status is also shown twice per row, and the
-      duration reads 0.0s on anything quick.
-- [ ] **Every output in history** - a preset with two formats writes two files
-      and history records the first. The files are all on disk; the record is
-      not complete.
+- [x] **History that leads somewhere** - a failed row says why, in the words
+      the conversion failed with, which were recorded all along and shown
+      nowhere. A finished row says what it wrote and where. Every row carries
+      Show in Finder, for the output and for the original, and one that has a
+      preset and a destination carries Convert again - the retry that was
+      missing. The status is said once, as an icon, rather than twice.
+- [x] **Every output in history** - a preset asking for two formats records
+      both. So does a batch, which reported the first file of each conversion:
+      the measured saving at the end counted one output of two and called it
+      the total, and a watched folder that also receives the output heard
+      about one file and converted the other again.
 - [ ] **Aspect ratios in the crop block** - 16:9, 1:1, 4:5 rather than typing
       two numbers and knowing which is which.
 - [ ] **Remember what a preset was last answered** - a preset that asks for a

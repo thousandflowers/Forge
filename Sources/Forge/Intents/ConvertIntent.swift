@@ -57,7 +57,7 @@ struct ConvertFilesIntent: AppIntent {
       limit: settings.maxConcurrentNative,
       coordinator: coordinator
     ) { event in
-      guard case .finished(_, _, let output, _) = event, let output else { return }
+      guard case .finished(_, _, let output, _, _) = event, let output else { return }
       collected.add(output)
     }
 

@@ -317,8 +317,11 @@ final class BatchViewModel: ObservableObject {
       if case .progress(let id, let fraction) = event {
         guard gates.advance(id: id, to: (fraction * 100).rounded() / 100) else { return }
       }
-      if case .finished(_, _, let output, _) = event, let output {
-        outputs.add(output)
+      // Every file written, not the first one: the measured saving at the end
+      // of a batch counted one output of a two-format conversion and called it
+      // the total.
+      if case .finished(_, _, _, let written, _) = event, !written.isEmpty {
+        written.forEach(outputs.add)
       }
       Task { @MainActor [weak self] in self?.apply(event, of: total, in: model) }
     }
@@ -361,7 +364,7 @@ final class BatchViewModel: ObservableObject {
     case .progress(let id, let fraction):
       fileProgress[id] = fraction
 
-    case .finished(let id, let status, let output, _):
+    case .finished(let id, let status, let output, _, _):
       statusMap[id] = status
       fileProgress[id] = status == .completed ? 1 : 0
       if let output { model.remember(output) }

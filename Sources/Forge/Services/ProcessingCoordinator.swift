@@ -60,6 +60,7 @@ actor ProcessingCoordinator {
   ) async throws -> ProcessingHistory {
     let fileId = file.id
 
+    let started = Date()
     let task = Task {
       do {
         let result = try await self.run(
@@ -76,7 +77,9 @@ actor ProcessingCoordinator {
           timestamp: Date(),
           status: .completed,
           duration: result.duration,
-          outputURL: result.outputURL
+          outputURL: result.outputURL,
+          additionalOutputs: result.additionalOutputs.isEmpty ? nil : result.additionalOutputs,
+          destinationFolder: destinationURL
         )
         try await self.persistence.appendHistory(history)
         return history
@@ -87,8 +90,13 @@ actor ProcessingCoordinator {
           timestamp: Date(),
           status: error is CancellationError ? .cancelled : .failed,
           errorMessage: error.localizedDescription,
-          duration: 0,
-          outputURL: nil
+          // Measured rather than zeroed: a conversion that failed after two
+          // minutes and one that failed at once are not the same event, and
+          // history used to record both as taking no time at all.
+          duration: Date().timeIntervalSince(started),
+          outputURL: nil,
+          additionalOutputs: nil,
+          destinationFolder: destinationURL
         )
         try? await self.persistence.appendHistory(history)
         throw error
