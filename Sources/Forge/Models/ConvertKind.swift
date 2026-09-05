@@ -29,6 +29,8 @@ enum ConvertKind: String, CaseIterable, Sendable {
       // while the sheet is being drawn, and it is right for anything with a
       // normal name; a mislabelled file simply gets one control too many.
       self = fileType.conforms(to: .audio) ? .audio : .video
+    } else if Subtitles.reads(fileType.preferredFilenameExtension ?? "") {
+      self = .document
     } else if DataProcessor.readable.contains(where: { fileType.conforms(to: $0) }) {
       self = .data
     } else if SimpleDocProcessor.readableTypes.contains(where: { fileType.conforms(to: $0) }) {
