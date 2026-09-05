@@ -10,6 +10,9 @@ struct BatchProcessingView: View {
   @State private var showingOptions = false
   @State private var isTargeted = false
   @State private var confirming = false
+  /// The conversions worth one question, one per kind. Empty means there is
+  /// nothing to ask.
+  @State private var asking: [ConfirmationGroup] = []
 
   /// The kinds of file in the list. What the sheet offers is decided from this,
   /// so a PDF is asked different questions than a video.
@@ -93,6 +96,17 @@ struct BatchProcessingView: View {
         }
       )
     }
+    .sheet(isPresented: Binding(get: { !asking.isEmpty }, set: { if !$0 { asking = [] } })) {
+      ConfirmationSheet(
+        groups: asking,
+        coordinator: model.coordinator,
+        onConvert: {
+          asking = []
+          start()
+        },
+        onCancel: { asking = [] }
+      )
+    }
     .confirmationDialog(summaryTitle, isPresented: $confirming) {
       Button(choice.destinationMode == .overwrite ? "Replace Files" : "Move Files", role: .destructive) {
         start()
@@ -173,12 +187,84 @@ struct BatchProcessingView: View {
   private func add(_ urls: [URL]) {
     let wasEmpty = vm.files.isEmpty
     vm.add(urls)
-    if wasEmpty, !vm.files.isEmpty {
+    guard !vm.files.isEmpty else { return }
+    if wasEmpty {
       // A batch starts from the general preference and can then disagree with
       // it, which is what makes the preference a default rather than a law.
       choice.fitMode = model.settings.defaultFitMode
-      showingOptions = true
     }
+    route()
+  }
+
+  /// What, if anything, to ask before converting what was just dropped.
+  ///
+  /// The rule is `ConfirmationLevel`'s, and the whole point of it is the first
+  /// case: a drop whose outcome is already settled - the second batch through a
+  /// preset chosen a minute ago, or a file the user renamed to say what they
+  /// wanted - just runs. What is left is one question, not one per file.
+  private func route() {
+    // Files dropped while a batch is running join the list and wait their turn.
+    // Routing them would start a second batch over the same files, which is two
+    // conversions writing the same output names at once.
+    guard !vm.isProcessing else { return }
+
+    let plans = vm.files.map {
+      ConversionPlan(file: $0, preset: preset, destinationMode: choice.destinationMode)
+    }
+
+    switch ConfirmationLevel.forBatch(plans) {
+    case .silent:
+      start()
+
+    case .block:
+      // Replacing or moving the originals, which has always been asked about.
+      confirming = true
+
+    case .confirm:
+      // Nothing says what these should become yet: that question is the sheet,
+      // and the sheet is the whole answer to it.
+      if plans.contains(where: \.hasUndefinedRequiredParams) {
+        showingOptions = true
+      } else {
+        asking = groups(from: plans)
+      }
+    }
+  }
+
+  /// One group per kind, standing for every file of that kind in the batch.
+  private func groups(from plans: [ConversionPlan]) -> [ConfirmationGroup] {
+    guard let preset else { return [] }
+
+    var seen: [ConvertKind: (file: ProcessableFile, plan: ConversionPlan, count: Int)] = [:]
+    for (file, plan) in zip(vm.files, plans) {
+      guard let kind = ConvertKind(fileType: file.fileType) else { continue }
+      if var already = seen[kind] {
+        already.count += 1
+        // The one worth asking about represents the group; a silent file in a
+        // group that also has a surprising one is not the file to show.
+        if plan.confirmationLevel > already.plan.confirmationLevel {
+          already.file = file
+          already.plan = plan
+        }
+        seen[kind] = already
+      } else {
+        seen[kind] = (file, plan, 1)
+      }
+    }
+
+    return seen
+      .filter { $0.value.plan.confirmationLevel == .confirm }
+      .map { kind, group in
+        ConfirmationGroup(
+          kind: kind,
+          representative: group.file,
+          count: group.count,
+          preset: preset,
+          plan: group.plan,
+          destination: choice.destinationURL
+        )
+      }
+      .sorted { $0.kind.rawValue < $1.kind.rawValue }
   }
 
   private func clear() {
@@ -327,7 +413,9 @@ final class BatchViewModel: ObservableObject {
   }
 
   func convert(model: AppModel, preset: RulePreset, mode: DestinationMode, destination: URL?) async {
-    guard !files.isEmpty else { return }
+    // Two batches over one list would race for the same output names, and the
+    // second would report files the first is still writing.
+    guard !files.isEmpty, !isProcessing else { return }
 
     let cancellation = self.cancellation
     cancellation.reset()
