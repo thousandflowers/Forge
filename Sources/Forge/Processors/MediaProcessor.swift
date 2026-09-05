@@ -47,6 +47,17 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // Anything with a soundtrack asked for words becomes words. Which words
     // file it becomes is up to the extension: a recording renamed .rtf comes
     // out as RTF, .docx as DOCX, .pdf as a PDF of the transcript.
+    // A subtitle asked of a video is the track that is already in it, not the
+    // soundtrack typed out: the file says so by asking for .srt rather than
+    // .txt. AVFoundation exposes no reader for subtitle samples, so this goes
+    // to the tools, which is what declining it here arranges.
+    if Subtitles.carriesCues(output.pathExtension) {
+      throw ProcessingError.unsupportedConversion(
+        from: UTType(filenameExtension: input.pathExtension) ?? .movie,
+        to: wanted
+      )
+    }
+
     if Self.isWords(wanted), !audioTracks.isEmpty {
       return try await transcribe(
         input, to: output, as: wanted, operations: operations, start: start, progress: progress

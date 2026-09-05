@@ -24,8 +24,15 @@ enum Subtitles {
   /// counts in frames, so writing one means inventing a frame rate.
   static let writableExtensions: Set<String> = ["srt", "vtt", "webvtt", "sbv", "txt", "text"]
 
+  /// The formats that carry cues, as against plain text - which is a thing any
+  /// of them can be turned into and is not a subtitle format. Asking a film
+  /// for `.srt` means the track inside it; asking for `.txt` still means
+  /// transcribe the soundtrack, and this is the line between the two.
+  static let cueExtensions: Set<String> = readableExtensions.union(["sbv"])
+
   static func reads(_ ext: String) -> Bool { readableExtensions.contains(ext.lowercased()) }
   static func writes(_ ext: String) -> Bool { writableExtensions.contains(ext.lowercased()) }
+  static func carriesCues(_ ext: String) -> Bool { cueExtensions.contains(ext.lowercased()) }
 
   // MARK: - Reading
 

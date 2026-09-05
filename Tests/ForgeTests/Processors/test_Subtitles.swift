@@ -115,6 +115,56 @@ final class SubtitleTests: BaseTestCase {
     XCTAssertNil(Subtitles.seconds(from: "not a time"))
   }
 
+  // MARK: - The track inside a film
+
+  /// Muxes a subtitle track into a Matroska file. ffmpeg is doing this because
+  /// nothing on macOS writes one - the same reason it does the reading.
+  private func filmWithSubtitles() async throws -> URL {
+    let picture = try await Fixture.video(at: path("clip.mp4"), seconds: 1)
+    let words = try file("track.srt", Self.subRip)
+    let film = path("film.mkv")
+
+    let ffmpeg = try XCTUnwrap(ExternalTools.locate("ffmpeg"))
+    try ExternalTools.run(ffmpeg, [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-i", picture.path, "-i", words.path, "-c", "copy", "-c:s", "srt", film.path,
+    ])
+    return film
+  }
+
+  /// A subtitle asked of a film is the track already in it. AVFoundation
+  /// exposes no reader for subtitle samples, so this is ffmpeg's - and asking
+  /// for `.srt` rather than `.txt` is how the two are told apart, since a
+  /// video asked for words still gets its soundtrack transcribed.
+  func test_aFilmGivesUpItsSubtitles() async throws {
+    try XCTSkipUnless(ExternalTools.locate("ffmpeg") != nil, "ffmpeg is not installed here")
+    let film = try await filmWithSubtitles()
+
+    let output = try await convert(film, to: "srt")
+    let written = try String(contentsOf: output, encoding: .utf8)
+
+    XCTAssertTrue(written.contains("Buongiorno."), written)
+    XCTAssertTrue(written.contains("00:00:01,000 --> 00:00:04,000"), written)
+  }
+
+  /// ffmpeg answers a missing track with "Stream map '' matches no streams. To
+  /// ignore this, add a trailing '?' to the map", which is about a flag nobody
+  /// typed.
+  func test_aFilmWithNoSubtitlesSaysSo() async throws {
+    try XCTSkipUnless(ExternalTools.locate("ffmpeg") != nil, "ffmpeg is not installed here")
+    let silent = try await Fixture.video(at: path("plain.mp4"), seconds: 1)
+
+    do {
+      _ = try await convert(silent, to: "srt")
+      XCTFail("a film with no subtitle track cannot give one up")
+    } catch {
+      XCTAssertTrue(
+        error.localizedDescription.lowercased().contains("no subtitles"),
+        "the tool's own words came through: \(error.localizedDescription)"
+      )
+    }
+  }
+
   /// A text file with no cues in it is not an empty subtitle: it is not a
   /// subtitle, and saying so beats writing an empty one.
   func test_aFileWithNoCuesFails() throws {

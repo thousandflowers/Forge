@@ -91,12 +91,23 @@ enum ExternalBridge {
     // deserves "Forge cannot convert WAV to JPEG", not ffmpeg's account of an
     // output file with no streams in it.
     let targetType = UTType(filenameExtension: target)
-    let wantsSomethingStill = targetType.map {
+    var wantsSomethingStill = targetType.map {
       $0.conforms(to: .image) || $0.conforms(to: .text) || $0.conforms(to: .pdf)
     } ?? false
 
+    // With one exception: a subtitle asked of a film is a track inside it, and
+    // pulling that out is time-based work whatever the file is called.
+    let wantsTheSubtitles = Subtitles.carriesCues(target)
+      && (UTType(filenameExtension: source)?.conforms(to: .audiovisualContent) ?? false)
+    if wantsTheSubtitles { wantsSomethingStill = false }
+
     if !wantsSomethingStill, let ffmpeg = ExternalTools.locate("ffmpeg") {
       var arguments = ["-hide_banner", "-loglevel", "error", "-y", "-i", input.path]
+      if wantsTheSubtitles {
+        // The first subtitle track, and nothing else: without a map, ffmpeg
+        // would try to carry the picture and the sound into a .srt.
+        arguments += ["-map", "0:s:0"]
+      }
       if let size = Self.size(in: operations) {
         // -2 rather than -1 for the side that follows: some encoders refuse an
         // odd number of pixels, and this rounds to an even one.
@@ -218,7 +229,11 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
       if let folder = plan.collectFrom { try? FileManager.default.removeItem(at: folder) }
     }
 
-    try ExternalTools.run(plan.tool, plan.arguments)
+    do {
+      try ExternalTools.run(plan.tool, plan.arguments)
+    } catch {
+      throw Self.explain(error, about: input)
+    }
 
     if let folder = plan.collectFrom {
       try Self.collect(from: folder, to: output, wanted: output.pathExtension, tool: plan.toolName)
@@ -237,6 +252,19 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
       outputSize: attributes[.size] as? Int64 ?? 0,
       outputDimensions: nil,
       duration: Date().timeIntervalSince(start)
+    )
+  }
+
+  /// Say what went wrong in the terms of the file rather than the tool's.
+  ///
+  /// Asked for a subtitle track that is not there, ffmpeg answers "Stream map
+  /// '' matches no streams. To ignore this, add a trailing '?' to the map",
+  /// which is true, is about a flag the user never typed, and does not say the
+  /// film has no subtitles in it.
+  static func explain(_ error: Error, about input: URL) -> Error {
+    guard error.localizedDescription.contains("matches no streams") else { return error }
+    return ProcessingError.conversionFailed(
+      reason: "There are no subtitles in \(input.lastPathComponent)"
     )
   }
 

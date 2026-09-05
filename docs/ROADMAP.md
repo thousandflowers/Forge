@@ -92,10 +92,13 @@ Native, no new dependencies, in rough order of value.
       else is still refused. And AVFoundation lists WebVTT among the types it
       opens, then finds no tracks in one, so the subtitle path is asked before
       the media path.
-- [ ] **Embedded subtitle extraction** - the tracks are reachable, but the text
-      is not: AVFoundation exposes no high-level reader for subtitle samples, so
-      this means parsing sample buffers per format. Possible, and more work than
-      it looks.
+- [x] **Embedded subtitle extraction** - through ffmpeg, which is already
+      wired. AVFoundation still exposes no reader for subtitle samples, and
+      parsing them per format is still more work than it looks; asking the tool
+      that already does it is not. A film asked for `.srt` gives up the track
+      inside it, while a film asked for `.txt` still gets its soundtrack
+      transcribed on device - which is what the line between a cue format and
+      plain text is for.
 - [ ] **Signing and notarization** - needs a Developer ID. Until then the DMG is
       ad-hoc signed and Gatekeeper warns on first launch.
 - [x] **Homebrew cask** - `Casks/forge.rb`, ready to copy into a tap. A cask
