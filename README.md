@@ -4,9 +4,13 @@
 
 # Forge
 
-**Batch file conversion for macOS. Every conversion is Apple's own frameworks — nothing to install alongside it.**
+**Batch file conversion for macOS. Photos, video, audio and PDFs, converted by the frameworks already on your Mac.**
 
-Drop in a folder of photos, a video, a stack of PDFs. Forge asks what they should become, in the terms of what they are, and converts them in parallel without loading them all into memory.
+<!-- TODO: demo GIF goes here. Drop the file at docs/screens/demo.gif and uncomment the line below.
+<img src="docs/screens/demo.gif" alt="Dropping a folder of photos into Forge and converting it" width="820">
+-->
+
+Drop in a folder of photos, a video, a stack of PDFs. Forge asks what they should become, in the terms of what they are, and converts them in parallel without loading them all into memory. It is one binary that is both a Mac app and a command line tool, it works with Core Image, AVFoundation, PDFKit and Vision, and it asks macOS what this particular machine can read and write — so it never offers a conversion it cannot finish.
 
 [![Build and Test](https://github.com/thousandflowers/Forge/actions/workflows/build.yml/badge.svg)](https://github.com/thousandflowers/Forge/actions/workflows/build.yml)
 [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-orange.svg)](https://swift.org)
@@ -15,13 +19,7 @@ Drop in a folder of photos, a video, a stack of PDFs. Forge asks what they shoul
 
 > Alpha. It works, it is tested, and it is still changing week to week.
 
-<img src="docs/screens/presets.png" alt="The Presets screen, one card per preset" width="820">
-
 </div>
-
-## What it is
-
-Forge is one binary that is both a Mac app and a command line tool. It uses Core Image, AVFoundation, PDFKit and Vision to do the work, so there is no ImageMagick, no FFmpeg and no LibreOffice to install first. It asks macOS what this particular machine can read and write, and offers exactly that, which means it never shows you a conversion it cannot finish.
 
 ## Drop the files, then answer one question
 
@@ -38,6 +36,8 @@ A control that would be ignored is not shown. If it is on screen, something hono
 <img src="docs/screens/capabilities.png" alt="The Capabilities screen" width="820">
 
 ## Presets are a starting point, not a mode
+
+<img src="docs/screens/presets.png" alt="The Presets screen, one card per preset" width="820">
 
 Pick a preset in the sheet and its settings fill in the fields below. Change any field and the preset lets go, because from that point the fields are the truth. Leave it alone and the preset runs exactly as saved, which matters when it holds something the sheet has no control for.
 
@@ -65,15 +65,28 @@ The size ceiling is a promise about the result, not a setting handed to an encod
 
 The Capabilities screen is computed at run time, so it describes your Mac rather than a claim written months ago. Search it, filter it by status, and ask it to **look at the files you actually have**: it counts the kinds of file in your own folders and puts the capabilities that would help you at the top. Only filenames are read, never contents, and only when you press the button.
 
-For the handful of jobs macOS cannot do alone, Forge names the tool that can and offers to add it — as an **extension**, which is a separate download and never part of the app.
+Every conversion above is Apple's frameworks and nothing else: no ImageMagick, no FFmpeg, no LibreOffice, and nothing to install before Forge is useful. For the handful of jobs macOS cannot do alone, Forge names the tool that can and offers to add it — as an **extension**, which is a separate download and never part of the app.
 
-Two ways one arrives. Forge hosts builds of a few of these tools on its own releases: press Download and you are told the version, the licence, the project it comes from and how large it is before anything happens. What arrives is checked against a SHA-256 checksum in a signed release manifest and thrown away if it does not match, then it is unpacked into `~/Library/Application Support/Forge/Extensions/` — not into the app, not onto your `PATH` — and it can be removed from the same card. Or Homebrew, for anything Forge hosts no build of: the exact command is shown once before it runs, with its output live on the card, and the tool is your Mac's rather than Forge's.
+Two ways one arrives. Forge hosts builds of a few of these tools on its own releases: press Download and you are told the version, the licence, the project it comes from and how large it is before anything happens. What arrives is checked against a SHA-256 checksum from the manifest and thrown away if it does not match, then it is unpacked into `~/Library/Application Support/Forge/Extensions/` — not into the app, not onto your `PATH` — and it can be removed from the same card. Or Homebrew, for anything Forge hosts no build of: the exact command is shown once before it runs, with its output live on the card, and the tool is your Mac's rather than Forge's.
 
-What stays true either way: **the core converts with Apple's frameworks and nothing else**, no extension is needed for any of it, and no third-party binary is bundled inside the `.app` — which keeps other people's licences off this project. What is no longer true is the older claim that Forge downloads nobody's binaries. It downloads the ones you ask it for, from its own releases, with the checksum checked.
-
-Set `FORGE_EXTENSIONS_MANIFEST` to point the app at a different manifest, if you would rather host your own.
+What stays true either way: **the core converts with Apple's frameworks and nothing else**, no extension is needed for any of it, and no third-party binary is bundled inside the `.app`. What is no longer true is the older claim that Forge downloads nobody's binaries. It downloads the ones you ask it for, from its own releases, with the checksum checked. `FORGE_EXTENSIONS_MANIFEST` points the app at a different manifest, if you would rather host your own.
 
 WebP is the one wired all the way through today. Install `cwebp` and images really do convert to WebP, with the format appearing only where an image processor will do the writing.
+
+## How it compares
+
+Forge is not trying to out-encode a specialist. HandBrake has spent twenty years on video and will beat Forge at video; ImageOptim squeezes PNGs harder than ImageIO does. What Forge has is breadth, nothing to install first, and presets that travel.
+
+| | Forge | Permute | HandBrake | ImageOptim |
+| --- | --- | --- | --- | --- |
+| What it converts | images, video, audio, PDF, data, 3D, subtitles | images, video, audio | video, and the audio inside it | images |
+| Where the converters come from | macOS itself, plus optional extensions you ask for | bundled with the app | bundled with the app | bundled with the app |
+| What it offers is read from your Mac at run time | yes | no | no | no |
+| Presets you can export, import and browse in a gallery | yes | presets, kept local | presets, importable files | no |
+| Command line | the same binary | no | separate `HandBrakeCLI` | no official one |
+| Licence | MIT | paid, closed | GPL-2.0 | GPL-2.0 |
+
+Removing metadata on conversion — location, device, serial numbers, author — is a setting here, overridable per preset, per batch, and by naming a file `_privacy`.
 
 ## A gallery you can search
 
@@ -131,7 +144,6 @@ ln -s /Applications/Forge.app/Contents/MacOS/Forge /usr/local/bin/forge
 ```bash
 forge convert *.png --to jpeg --quality 80 --out ./web
 forge convert photo.heic --preset "Web JPEG" --out ~/Desktop
-forge convert clip.mov --to mp4 --resize 1280x720 --out ./out
 forge convert *.png --to jpeg --overwrite          # keeps a backup
 forge watch ~/Desktop/incoming --preset "Web JPEG" --out ~/Desktop/web
 
@@ -145,12 +157,7 @@ It reads the presets you save in the app, writes to the same history, and exits 
 forge convert *.heic --to jpeg --out ./web --quiet > converted.txt
 ```
 
-Completions come from the tool itself:
-
-```bash
-forge --generate-completion-script zsh  > ~/.zsh/completions/_forge
-forge --generate-completion-script bash > /usr/local/etc/bash_completion.d/forge
-```
+Completions come from the tool itself: `forge --generate-completion-script zsh` (or `bash`, or `fish`).
 
 ## Watched folders
 
@@ -174,7 +181,7 @@ SwiftUI  ──▶  ProcessingCoordinator  ──▶  Image / Media / Document /
 ## Development
 
 ```bash
-swift test                         # 196 tests
+swift test                         # the whole suite
 ./Scripts/build_app.sh             # build build/Forge.app
 ./Scripts/make_dmg.sh              # package it as a DMG
 ```
