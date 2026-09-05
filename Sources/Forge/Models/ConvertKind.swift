@@ -166,6 +166,30 @@ enum ConvertKind: String, CaseIterable, Sendable {
     }
   }
 
+  /// What a preview of this kind may cost.
+  ///
+  /// A picture converts in a moment, so the preview is the real thing. A film
+  /// does not: encoding one to show somebody what encoding it would look like
+  /// is the conversion they have not agreed to yet, done twice. It gets a frame
+  /// and a description instead, and a recording gets the description alone -
+  /// there is nothing to look at in a sound file.
+  var previewCost: PreviewCost {
+    switch self {
+    case .image, .document, .data, .model, .subtitle, .font: return .runIt
+    case .video: return .oneFrame
+    case .audio: return .describeIt
+    }
+  }
+
+  enum PreviewCost: Sendable {
+    /// Convert the one file for real, into scratch.
+    case runIt
+    /// Show a frame of the source and say what will happen.
+    case oneFrame
+    /// Say what will happen.
+    case describeIt
+  }
+
   /// Whether a file of this kind can be asked for that format, taken from the
   /// same list the sheet offers rather than from a second one kept beside it.
   func offers(_ format: UTType) -> Bool {

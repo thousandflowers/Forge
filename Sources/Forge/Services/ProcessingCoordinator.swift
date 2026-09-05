@@ -109,6 +109,28 @@ actor ProcessingCoordinator {
     return try await task.value
   }
 
+  /// Convert one file into a folder of the caller's choosing, without writing
+  /// it down.
+  ///
+  /// The same chain, the same processors, the same output planning - it is the
+  /// real conversion, which is the only kind worth showing somebody before they
+  /// agree to it. What it is not is an event in their history: a preview they
+  /// looked at and cancelled did not happen.
+  func preview(
+    _ file: ProcessableFile,
+    with preset: RulePreset,
+    into folder: URL,
+    progress: @escaping @Sendable (Double) -> Void = { _ in }
+  ) async throws -> ProcessingResult {
+    try await run(
+      file: file,
+      preset: preset,
+      destinationMode: .copyTo,
+      destinationURL: folder,
+      progress: progress
+    )
+  }
+
   func cancelAll() {
     for task in activeTasks.values { task.cancel() }
     activeTasks.removeAll()
@@ -172,7 +194,8 @@ actor ProcessingCoordinator {
       outputSize: results.reduce(0) { $0 + $1.outputSize },
       outputDimensions: first.outputDimensions,
       duration: results.reduce(0) { $0 + $1.duration },
-      additionalOutputs: first.additionalOutputs + results.dropFirst().map(\.outputURL)
+      additionalOutputs: first.additionalOutputs + results.dropFirst().map(\.outputURL),
+      appliedQuality: first.appliedQuality
     )
   }
 
@@ -300,7 +323,8 @@ actor ProcessingCoordinator {
       outputSize: result.outputSize,
       outputDimensions: result.outputDimensions,
       duration: result.duration,
-      additionalOutputs: committed.extras
+      additionalOutputs: committed.extras,
+      appliedQuality: result.appliedQuality
     )
   }
 

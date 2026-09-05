@@ -10,19 +10,26 @@ struct ProcessingResult: Sendable {
   /// Extra files the conversion produced, in order. One input can legitimately
   /// yield many outputs: a twenty-page PDF becomes twenty images.
   let additionalOutputs: [URL]
+  /// The quality the encoder settled on, where that was a result rather than a
+  /// setting. A size ceiling is kept by writing the file again lower until it
+  /// fits, so the number that got there is only known afterwards - and it is
+  /// the interesting half of "10 MB, and what did that cost".
+  let appliedQuality: Int?
 
   init(
     outputURL: URL,
     outputSize: Int64,
     outputDimensions: (width: Int, height: Int)?,
     duration: TimeInterval,
-    additionalOutputs: [URL] = []
+    additionalOutputs: [URL] = [],
+    appliedQuality: Int? = nil
   ) {
     self.outputURL = outputURL
     self.outputSize = outputSize
     self.outputDimensions = outputDimensions
     self.duration = duration
     self.additionalOutputs = additionalOutputs
+    self.appliedQuality = appliedQuality
   }
 }
 
