@@ -213,6 +213,11 @@ struct BatchProcessingView: View {
   /// preset chosen a minute ago, or a file the user renamed to say what they
   /// wanted - just runs. What is left is one question, not one per file.
   private func route() {
+    // Files dropped while a batch is running join the list and wait their turn.
+    // Routing them would start a second batch over the same files, which is two
+    // conversions writing the same output names at once.
+    guard !vm.isProcessing else { return }
+
     let plans = vm.files.map {
       ConversionPlan(file: $0, preset: preset, destinationMode: choice.destinationMode)
     }
@@ -440,7 +445,9 @@ final class BatchViewModel: ObservableObject {
   }
 
   func convert(model: AppModel, preset: RulePreset, mode: DestinationMode, destination: URL?) async {
-    guard !files.isEmpty else { return }
+    // Two batches over one list would race for the same output names, and the
+    // second would report files the first is still writing.
+    guard !files.isEmpty, !isProcessing else { return }
 
     let cancellation = self.cancellation
     cancellation.reset()
