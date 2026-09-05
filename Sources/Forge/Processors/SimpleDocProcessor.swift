@@ -149,7 +149,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       nil
     ) else {
       throw ProcessingError.conversionFailed(
-        reason: "Cannot write \(uti.preferredFilenameExtension ?? uti.identifier)"
+        reason: "Cannot write \(FormatCatalog.fileExtension(for: uti) ?? uti.identifier)"
       )
     }
 

@@ -304,13 +304,13 @@ enum Capabilities {
   private static var rawFormats: [String] {
     FormatCatalog.readableImageTypes
       .filter { $0.identifier.hasSuffix("-raw-image") || $0.identifier == "com.adobe.raw-image" }
-      .compactMap { $0.preferredFilenameExtension?.uppercased() }
+      .compactMap { FormatCatalog.fileExtension(for: $0)?.uppercased() }
       .sorted()
   }
 
   private static func writable(_ types: Set<UTType>) -> String {
     types
-      .compactMap { $0.preferredFilenameExtension?.uppercased() }
+      .compactMap { FormatCatalog.fileExtension(for: $0)?.uppercased() }
       .sorted()
       .joined(separator: ", ")
   }

@@ -130,7 +130,7 @@ struct PresetCard: View {
         if !deliverable {
           Image(systemName: "exclamationmark.triangle.fill")
             .foregroundStyle(.orange)
-            .help("This Mac cannot write \(preset.targetFormat?.preferredFilenameExtension?.uppercased() ?? "that format"). Edit or delete this preset.")
+            .help("This Mac cannot write \(preset.targetFormat.flatMap(FormatCatalog.fileExtension(for:))?.uppercased() ?? "that format"). Edit or delete this preset.")
         }
       }
       Text(preset.description)
@@ -165,7 +165,7 @@ struct PresetCard: View {
   static func chip(_ action: Operation) -> String {
     switch action {
     case .convertFormat(let to):
-      return (to.preferredFilenameExtension ?? "fmt").uppercased()
+      return (FormatCatalog.fileExtension(for: to) ?? "fmt").uppercased()
     case .resize(let width, let height, _):
       switch (width, height) {
       case let (width?, height?): return "\(width)×\(height)"

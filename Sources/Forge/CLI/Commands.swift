@@ -109,7 +109,7 @@ struct Presets: AsyncParsableCommand {
     private static func describe(_ operation: Operation) -> String {
       switch operation {
       case .convertFormat(let to):
-        return (to.preferredFilenameExtension ?? to.identifier).uppercased()
+        return (FormatCatalog.fileExtension(for: to) ?? to.identifier).uppercased()
       case .resize(let width, let height, let mode):
         let size = "\(width.map(String.init) ?? "auto")×\(height.map(String.init) ?? "auto")"
         return "\(size) \(mode.rawValue)"
@@ -159,7 +159,7 @@ extension ForgeCommand {
     }
 
     private static func list(_ types: Set<UTType>) -> String {
-      Set(types.compactMap { $0.preferredFilenameExtension?.lowercased() })
+      Set(types.compactMap { FormatCatalog.fileExtension(for: $0)?.lowercased() })
         .sorted()
         .joined(separator: " ")
     }

@@ -89,7 +89,7 @@ enum ImageFrames {
       nil
     ) else {
       throw ProcessingError.conversionFailed(
-        reason: "Cannot write \(type.preferredFilenameExtension ?? type.identifier)"
+        reason: "Cannot write \(FormatCatalog.fileExtension(for: type) ?? type.identifier)"
       )
     }
 
