@@ -32,6 +32,6 @@ enum ProcessingError: LocalizedError, Sendable {
   }
 
   private static func name(_ type: UTType) -> String {
-    type.preferredFilenameExtension?.uppercased() ?? type.identifier
+    FormatCatalog.fileExtension(for: type)?.uppercased() ?? type.identifier
   }
 }

@@ -223,6 +223,17 @@ final class DataConversionTests: BaseTestCase {
     XCTAssertThrowsError(try Toml.text(from: ["chiave": NSNull()]))
   }
 
+  /// A format is named the same way wherever it is said to a person: in the
+  /// menu, in an error, in `forge presets`, in `forge formats`. It used to be
+  /// named by whatever extension the system preferred, so TOML was CFG in
+  /// some places and TOML in others.
+  func test_anErrorCallsAFormatWhatPeopleCallIt() throws {
+    guard let toml = UTType("public.toml") else { throw XCTSkip("no TOML type on this macOS") }
+    let said = ProcessingError.unsupportedConversion(from: .png, to: toml).localizedDescription
+    XCTAssertTrue(said.contains("TOML"), said)
+    XCTAssertFalse(said.contains("CFG"), said)
+  }
+
   /// `public.toml` prefers the extension `cfg`, which nobody calls a TOML
   /// file, and `public.yaml` prefers `yml`. A type named after one of the
   /// extensions it declares uses that one instead.

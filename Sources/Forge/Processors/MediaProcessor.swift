@@ -264,7 +264,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       fileType: fileType
     ) else {
       throw ProcessingError.conversionFailed(
-        reason: "Cannot write \(outputType.preferredFilenameExtension ?? outputType.identifier) from this video"
+        reason: "Cannot write \(FormatCatalog.fileExtension(for: outputType) ?? outputType.identifier) from this video"
       )
     }
 
@@ -420,7 +420,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     if let chosen, !FormatCatalog.canEncodeAudio(type: outputType, formatID: chosen) {
       throw ProcessingError.conversionFailed(
         reason: "\(Self.chosenCodec(in: operations)?.title ?? "That codec") does not fit in "
-          + "\(outputType.preferredFilenameExtension?.uppercased() ?? outputType.identifier)."
+          + "\(FormatCatalog.fileExtension(for: outputType)?.uppercased() ?? outputType.identifier)."
       )
     }
 
