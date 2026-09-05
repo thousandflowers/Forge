@@ -305,10 +305,26 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
   /// which is true, is about a flag the user never typed, and does not say the
   /// film has no subtitles in it.
   static func explain(_ error: Error, about input: URL) -> Error {
-    guard error.localizedDescription.contains("matches no streams") else { return error }
-    return ProcessingError.conversionFailed(
-      reason: "There are no subtitles in \(input.lastPathComponent)"
-    )
+    let said = error.localizedDescription
+
+    if said.contains("matches no streams") {
+      return ProcessingError.conversionFailed(
+        reason: "There are no subtitles in \(input.lastPathComponent)"
+      )
+    }
+
+    // fonttools reads a WOFF2 with what Python has; writing one needs the
+    // brotli module, which pip does not install alongside it. Its answer is a
+    // traceback ending in "No module named brotli", which says nothing about
+    // what to do next.
+    if said.contains("No module named brotli") {
+      return ProcessingError.conversionFailed(
+        reason: "fonttools is here but cannot write WOFF2 without its brotli module. "
+          + "`pip3 install --user brotli` adds it."
+      )
+    }
+
+    return error
   }
 
   /// Move what a tool wrote under its own name to where the conversion wanted

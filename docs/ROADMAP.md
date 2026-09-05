@@ -203,9 +203,22 @@ possible without changing what an MP4 to MOV does.
       failure when a tool writes nothing, and that a spreadsheet is offered to
       whichever tool is actually present.
 - [ ] **The OCR languages Vision does not have, through tesseract.**
-- [ ] **Font conversion through fonttools** - and a way to find it: it installs
-      into a Python user directory that a GUI app's PATH does not include, so
-      Forge currently reports it missing on a Mac that has it.
+- [x] **Font conversion through fonttools** - TTF and OTF to WOFF2 and back,
+      which is the pair fonttools has a command of its own for. WOFF version 1
+      is left out: fonttools exposes no command for it, and driving its library
+      through `python3 -c` is a different promise from running a tool somebody
+      installed. TTF to OTF is not offered either - that is a change of outline
+      format rather than of container, and nothing here does it.
+
+      Finding it is fixed: a `pip install --user` puts its commands in
+      `~/Library/Python/<version>/bin`, which no shell profile mentions and no
+      GUI app inherits. Those directories are now searched, read rather than
+      guessed at, since the version in that path is Python's business.
+
+      **Writing a WOFF2 is unverified on the machine this was built on**:
+      fonttools is here and its brotli module is not, which is a separate pip
+      package. Forge says exactly that now rather than passing on a Python
+      traceback.
 - [ ] **A size ceiling on video and audio** - today only images are written,
       measured and written again lower until they fit. A video asked to come in
       under a size is not refused; the ceiling is simply not offered for it.
