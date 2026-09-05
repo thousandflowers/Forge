@@ -407,10 +407,11 @@ here so nobody has to rediscover them.
   AVFoundation writes no metadata into them and Forge does not hand-roll a
   metadata chunk. Which containers can is asked of an export session rather
   than listed, so this follows the system rather than a table here.
-- **No retry.** A conversion that fails because a file was still being written,
-  or a device was briefly busy, is reported as failed. Everything else about
-  transient failure is handled - nothing is half-written, nothing is destroyed -
-  but the attempt is not repeated.
+- **No retry on its own.** A conversion that fails because a file was still
+  being written, or a device was briefly busy, is reported as failed and not
+  attempted again. Everything else about transient failure is handled - nothing
+  is half-written, nothing is destroyed - and history now offers Convert again
+  on the row, which is a retry somebody has to ask for.
 - **Cancel and per-file progress have no automated test.** Both are wired and
   work in the window, but they live in the SwiftUI view model, and testing them
   would need scaffolding out of proportion to the risk. The engine underneath
@@ -423,8 +424,6 @@ here so nobody has to rediscover them.
 - **The size ceiling is images only.** `ImageProcessor` writes, measures and
   rewrites. Video and audio have no such loop, so the ceiling is not offered for
   them rather than being offered and ignored.
-- **A multi-format conversion records one output in history.** Both files are
-  written and both are on disk; history keeps the first.
 - **The app is unsigned and not notarized.** First launch needs right click,
   Open. The Finder extension waits on the same thing.
 - **Not measured:** memory on a batch of thousands of files, and behaviour on
