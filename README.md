@@ -4,7 +4,7 @@
 
 # Forge
 
-**Batch file conversion for macOS. Native, no dependencies, nothing to install alongside it.**
+**Batch file conversion for macOS. Every conversion is Apple's own frameworks — nothing to install alongside it.**
 
 Drop in a folder of photos, a video, a stack of PDFs. Forge asks what they should become, in the terms of what they are, and converts them in parallel without loading them all into memory.
 
@@ -65,7 +65,13 @@ The size ceiling is a promise about the result, not a setting handed to an encod
 
 The Capabilities screen is computed at run time, so it describes your Mac rather than a claim written months ago. Search it, filter it by status, and ask it to **look at the files you actually have**: it counts the kinds of file in your own folders and puts the capabilities that would help you at the top. Only filenames are read, never contents, and only when you press the button.
 
-For the handful of jobs macOS cannot do alone, Forge names the tool that can and installs it with Homebrew from inside the app, with the exact command shown once before it runs and its output live on the card. Forge does not host, bundle or download anyone's binaries. Your Mac installs them, which keeps other people's licences off this project and means nothing unsigned arrives from us.
+For the handful of jobs macOS cannot do alone, Forge names the tool that can and offers to add it — as an **extension**, which is a separate download and never part of the app.
+
+Two ways one arrives. Forge hosts builds of a few of these tools on its own releases: press Download and you are told the version, the licence, the project it comes from and how large it is before anything happens. What arrives is checked against a SHA-256 checksum in a signed release manifest and thrown away if it does not match, then it is unpacked into `~/Library/Application Support/Forge/Extensions/` — not into the app, not onto your `PATH` — and it can be removed from the same card. Or Homebrew, for anything Forge hosts no build of: the exact command is shown once before it runs, with its output live on the card, and the tool is your Mac's rather than Forge's.
+
+What stays true either way: **the core converts with Apple's frameworks and nothing else**, no extension is needed for any of it, and no third-party binary is bundled inside the `.app` — which keeps other people's licences off this project. What is no longer true is the older claim that Forge downloads nobody's binaries. It downloads the ones you ask it for, from its own releases, with the checksum checked.
+
+Set `FORGE_EXTENSIONS_MANIFEST` to point the app at a different manifest, if you would rather host your own.
 
 WebP is the one wired all the way through today. Install `cwebp` and images really do convert to WebP, with the format appearing only where an image processor will do the writing.
 
