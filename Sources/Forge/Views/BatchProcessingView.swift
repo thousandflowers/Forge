@@ -430,6 +430,9 @@ final class BatchViewModel: ObservableObject {
   @Published var throttle: String?
 
   private let cancellation = CancellationFlag()
+  /// Rows somebody stopped by hand. A row waiting its turn has no task to
+  /// cancel yet, so the batch asks this before starting it.
+  private let stopped = StoppedFiles()
 
   func add(_ urls: [URL]) {
     // What the last batch cost describes files that are no longer the ones on
@@ -508,6 +511,7 @@ final class BatchViewModel: ObservableObject {
   func cancel(_ file: ProcessableFile, model: AppModel) {
     statusMap[file.id] = .cancelled
     fileProgress.removeValue(forKey: file.id)
+    stopped.add(file.id)
     let coordinator = model.coordinator
     Task { await coordinator.cancel(file.id) }
   }
@@ -528,6 +532,8 @@ final class BatchViewModel: ObservableObject {
 
     let cancellation = self.cancellation
     cancellation.reset()
+    let stopped = self.stopped
+    stopped.clear()
     isPaused = false
     await BatchEngine.shared.resume()
     isProcessing = true
@@ -566,7 +572,8 @@ final class BatchViewModel: ObservableObject {
       destination: destination,
       limit: limit,
       coordinator: coordinator,
-      shouldContinue: { !cancellation.isSet }
+      shouldContinue: { !cancellation.isSet },
+      isCancelled: { stopped.contains($0) }
     ) { [weak self] event in
       if case .progress(let id, let fraction) = event {
         guard gates.advance(id: id, to: (fraction * 100).rounded() / 100) else { return }
@@ -664,6 +671,30 @@ private final class ProgressGates: @unchecked Sendable {
 }
 
 /// A cancel flag both the main actor and the conversion tasks can see.
+/// The rows somebody stopped by hand, readable from the conversion tasks.
+private final class StoppedFiles: @unchecked Sendable {
+  private let lock = NSLock()
+  private var ids: Set<UUID> = []
+
+  func add(_ id: UUID) {
+    lock.lock()
+    ids.insert(id)
+    lock.unlock()
+  }
+
+  func contains(_ id: UUID) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return ids.contains(id)
+  }
+
+  func clear() {
+    lock.lock()
+    ids.removeAll()
+    lock.unlock()
+  }
+}
+
 private final class CancellationFlag: @unchecked Sendable {
   private let lock = NSLock()
   private var value = false

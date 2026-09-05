@@ -43,6 +43,7 @@ enum Batch {
     coordinator: ProcessingCoordinator,
     engine: BatchEngine = .shared,
     shouldContinue: @escaping @Sendable () -> Bool = { true },
+    isCancelled: @escaping @Sendable (UUID) -> Bool = { _ in false },
     onEvent: @escaping @Sendable (Event) -> Void
   ) async -> Report {
     var report = Report()
@@ -56,8 +57,11 @@ enum Batch {
           defer { Task { await engine.release(workload) } }
 
           // Asked after waiting rather than before: a batch cancelled while
-          // this was in the queue must not start now.
-          guard shouldContinue() else {
+          // this was in the queue must not start now - and neither must a file
+          // somebody stopped while it was still waiting its turn. Cancelling a
+          // queued row used to mark it cancelled on screen and convert it
+          // anyway, because there was no task yet to cancel.
+          guard shouldContinue(), !isCancelled(file.id) else {
             return .finished(id: file.id, status: .cancelled, output: nil, outputs: [], error: nil)
           }
 

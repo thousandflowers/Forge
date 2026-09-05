@@ -207,6 +207,36 @@ final class BatchEngineTests: BaseTestCase {
     XCTAssertGreaterThanOrEqual(report.converted, 2, "its siblings finished")
   }
 
+  /// A row stopped while it was still waiting its turn never runs.
+  ///
+  /// There is no task to cancel yet at that point, so the batch has to be told
+  /// rather than the coordinator.
+  func test_stoppingAQueuedFile_meansItNeverConverts() async throws {
+    let sources = try (1...3).map { try Fixture.image(at: path("shot-\($0).png")) }
+    let destination = try folder("out")
+    let files = try sources.map { try ProcessableFile(url: $0) }
+    let stopped = files[2].id
+
+    let report = await Batch.run(
+      files,
+      preset: .make(format: .jpeg, category: .image),
+      mode: .copyTo,
+      destination: destination,
+      limit: 1,
+      coordinator: coordinator(),
+      engine: engine(),
+      isCancelled: { $0 == stopped }
+    ) { _ in }
+
+    XCTAssertEqual(report.converted, 2)
+    XCTAssertEqual(report.cancelled, 1)
+    let written = try FileManager.default
+      .contentsOfDirectory(at: destination, includingPropertiesForKeys: nil)
+      .map(\.lastPathComponent)
+      .sorted()
+    XCTAssertEqual(written, ["shot-1.jpeg", "shot-2.jpeg"], "the stopped one was never written")
+  }
+
   // MARK: - Which hardware a file is for
 
   func test_workload_isReadFromWhatTheFileIs() throws {
