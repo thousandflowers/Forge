@@ -78,6 +78,123 @@ struct Convert: AsyncParsableCommand {
 
 extension ForgeCommand {
   @available(macOS 13, *)
+struct Extensions: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    abstract: "The optional tools Forge hosts builds of.",
+    discussion: """
+      Forge converts with Apple's frameworks and needs none of these. An \
+      extension adds what no framework on the Mac can do. It is downloaded on \
+      request, checked against the checksum in Forge's manifest, and kept in \
+      Forge's own folder rather than on your PATH.
+      """,
+    subcommands: [List.self, Add.self, Remove.self],
+    defaultSubcommand: List.self
+  )
+
+  struct List: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "What is on offer, and what is already here."
+    )
+
+    func run() async throws {
+      let manager = ExtensionManager.shared
+      let installed = Dictionary(
+        manager.installedExtensions().map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }
+      )
+      let offered = try await manager.availableExtensions()
+
+      guard !offered.isEmpty else {
+        print("The manifest lists no tools.")
+        return
+      }
+
+      for tool in offered {
+        let build = tool.build(for: .current)
+        let size = build.map { ByteCountFormatter.string(fromByteCount: $0.sizeBytes, countStyle: .file) }
+        let state: String
+        if let here = installed[tool.id] {
+          state = here.version == tool.version ? "installed" : "installed \(here.version), \(tool.version) offered"
+        } else if build == nil {
+          state = "no build for this Mac"
+        } else {
+          state = "available, \(size ?? "unknown size")"
+        }
+        print("\(tool.id)  \(tool.version)  \(state)")
+        print("  \(tool.description). \(tool.license). \(tool.sourceURL)")
+      }
+    }
+  }
+
+  struct Add: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "Download a tool and put it where Forge will find it."
+    )
+
+    @Argument(help: "The tool's name, as `forge extensions list` prints it.")
+    var tool: String
+
+    @Flag(name: .customLong("yes"), help: "Agree to the download without being asked.")
+    var agreed = false
+
+    func run() async throws {
+      let manager = ExtensionManager.shared
+      guard let offer = try await manager.availableExtensions().first(where: { $0.id == tool }) else {
+        throw ValidationError("Forge does not offer a tool called \(tool).")
+      }
+      guard let build = offer.build(for: .current) else {
+        throw ValidationError("There is no \(offer.displayName) build for this Mac's processor.")
+      }
+
+      // A download writes to the user's machine, so what is about to arrive is
+      // printed first and agreed to explicitly - the same rule the app follows
+      // before it runs a Homebrew command.
+      print("\(offer.displayName) \(offer.version), \(offer.license)")
+      print("  \(offer.description)")
+      print("  \(build.url.absoluteString)")
+      print("  \(ByteCountFormatter.string(fromByteCount: build.sizeBytes, countStyle: .file)), sha256 \(build.sha256)")
+      guard agreed else {
+        throw ValidationError("Pass --yes to download it.")
+      }
+
+      let reported = LastPercent()
+      let installed = try await manager.install(offer.id) { fraction in
+        if let step = reported.crossed(fraction) { print("  \(step)%") }
+      }
+      print("Installed \(installed.id) \(installed.version) in \(installed.path.path)")
+    }
+  }
+
+  struct Remove: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "Delete a tool Forge fetched. Only Forge's own copy is touched."
+    )
+
+    @Argument(help: "The tool's name.")
+    var tool: String
+
+    func run() async throws {
+      try await ExtensionManager.shared.remove(tool)
+      print("Removed \(tool).")
+    }
+  }
+
+  /// Prints every tenth of a download rather than every packet.
+  private final class LastPercent: @unchecked Sendable {
+    private let lock = NSLock()
+    private var last = 0
+
+    func crossed(_ fraction: Double) -> Int? {
+      let step = Int(fraction * 10) * 10
+      lock.lock()
+      defer { lock.unlock() }
+      guard step > last else { return nil }
+      last = step
+      return step
+    }
+  }
+}
+
+@available(macOS 13, *)
 struct Presets: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
       abstract: "List the presets Forge knows about.",
