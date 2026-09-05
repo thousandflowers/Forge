@@ -184,19 +184,48 @@ struct BatchProcessingView: View {
       }
       TableColumn("Status") { f in
         let status = vm.statusMap[f.id] ?? .pending
-        if status == .processing, let fraction = vm.fileProgress[f.id] {
-          ProgressView(value: fraction).progressViewStyle(.linear).frame(maxWidth: 120)
-        } else {
-          status.label
+        HStack(spacing: 6) {
+          if status == .processing, let fraction = vm.fileProgress[f.id] {
+            ProgressView(value: fraction).progressViewStyle(.linear).frame(maxWidth: 120)
+          } else {
+            status.label
+          }
+          // One file taking too long is a file, not a batch.
+          if vm.isProcessing, status == .processing || status == .pending {
+            Button { vm.cancel(f, model: model) } label: {
+              Image(systemName: "xmark.circle.fill")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .help("Stop converting this one")
+          }
         }
       }
     }
   }
 
   private var processingBar: some View {
-    HStack(spacing: 14) {
-      ProgressView(value: vm.progress).progressViewStyle(.linear)
-      Button("Cancel") { vm.cancel(model: model) }
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 14) {
+        ProgressView(value: vm.progress).progressViewStyle(.linear)
+        Button(vm.isPaused ? "Resume" : "Pause") {
+          if vm.isPaused { vm.resume() } else { vm.pause() }
+        }
+        Button("Cancel") { vm.cancel(model: model) }
+      }
+      if vm.isPaused {
+        Label(
+          "Paused. Files already converting finish; nothing new starts.",
+          systemImage: "pause.circle"
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+      if let throttle = vm.throttle {
+        Label(throttle, systemImage: "thermometer.medium")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
     }
     .padding()
   }
@@ -390,6 +419,11 @@ final class BatchViewModel: ObservableObject {
   /// which three were missing or what was wrong with them.
   @Published var skipped: String?
 
+  /// Whether the queue is holding back new files.
+  @Published var isPaused = false
+  /// Why the engine has backed off, when it has, in the user's words.
+  @Published var throttle: String?
+
   private let cancellation = CancellationFlag()
 
   func add(_ urls: [URL]) {
@@ -452,6 +486,27 @@ final class BatchViewModel: ObservableObject {
     lastSaving = nil
   }
 
+  /// Stop starting new files. The ones already converting finish: a native
+  /// encode cannot be frozen halfway, and a button that claimed to would be
+  /// lying about what happened to the file.
+  func pause() {
+    isPaused = true
+    Task { await BatchEngine.shared.pause() }
+  }
+
+  func resume() {
+    isPaused = false
+    Task { await BatchEngine.shared.resume() }
+  }
+
+  /// Stop one file. The rest of the batch carries on.
+  func cancel(_ file: ProcessableFile, model: AppModel) {
+    statusMap[file.id] = .cancelled
+    fileProgress.removeValue(forKey: file.id)
+    let coordinator = model.coordinator
+    Task { await coordinator.cancel(file.id) }
+  }
+
   func cancel(model: AppModel) {
     // The flag stops new files from being started; cancelling the coordinator
     // stops the ones already running. Doing only the second let the loop keep
@@ -466,6 +521,8 @@ final class BatchViewModel: ObservableObject {
 
     let cancellation = self.cancellation
     cancellation.reset()
+    isPaused = false
+    await BatchEngine.shared.resume()
     isProcessing = true
     progress = 0
     fileProgress.removeAll()
@@ -481,6 +538,19 @@ final class BatchViewModel: ObservableObject {
     // coalesced before hopping to the main actor rather than after.
     let gates = ProgressGates()
     let outputs = OutputSizes()
+
+    // What the engine is doing about the state of the Mac, asked for rather
+    // than pushed: it changes on the order of seconds, and a batch that
+    // redrew the screen every time the temperature moved would be worse than
+    // one that noticed a moment late.
+    let watching = Task { [weak self] in
+      while !Task.isCancelled {
+        let pressure = await BatchEngine.shared.currentPressure
+        await MainActor.run { self?.throttle = pressure == .none ? nil : pressure.reason }
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+      }
+    }
+    defer { watching.cancel() }
 
     _ = await Batch.run(
       files,
@@ -503,6 +573,8 @@ final class BatchViewModel: ObservableObject {
       Task { @MainActor [weak self] in self?.apply(event, of: total, in: model) }
     }
 
+    watching.cancel()
+    throttle = nil
     lastSaving = Self.saving(from: outputs.paths(), sources: files)
     await model.refreshHistory()
 
