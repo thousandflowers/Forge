@@ -19,6 +19,12 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
   /// handed to the encoder: the file is written, measured, and written again
   /// lower until it fits.
   case limitSize(bytes: Int)
+  /// Leave out what the file says about the person, the device and the moment.
+  ///
+  /// A step in the chain like any other, so it can come from Settings, from a
+  /// preset, from a batch, or from the filename - and so history records that
+  /// it happened.
+  case stripMetadata(policy: PrivacyPolicy)
 
   /// A short name for the action, as the editor lists it.
   var title: String {
@@ -30,6 +36,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .recognizeText: return "Read text"
     case .encode: return "Choose codec"
     case .limitSize: return "Fit within a size"
+    case .stripMetadata: return "Remove metadata"
     }
   }
 
@@ -42,6 +49,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .recognizeText: return "text.viewfinder"
     case .encode: return "cpu"
     case .limitSize: return "arrow.down.right.and.arrow.up.left"
+    case .stripMetadata(let policy): return policy.symbol
     }
   }
 
@@ -54,6 +62,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .recognizeText: return "ocr"
     case .encode: return "codec"
     case .limitSize: return "limitSize"
+    case .stripMetadata: return "privacy"
     }
   }
 }
@@ -62,11 +71,11 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
 
 extension Operation {
   private enum CodingKeys: String, CodingKey {
-    case kind, format, width, height, fitMode, level, filter, languages, codec, bytes
+    case kind, format, width, height, fitMode, level, filter, languages, codec, bytes, privacy
   }
 
   private enum Kind: String, Codable {
-    case convertFormat, resize, quality, filter, recognizeText, encode, limitSize
+    case convertFormat, resize, quality, filter, recognizeText, encode, limitSize, stripMetadata
   }
 
   init(from decoder: Decoder) throws {
@@ -90,6 +99,8 @@ extension Operation {
       self = .encode(codec: try container.decode(Codec.self, forKey: .codec))
     case .limitSize:
       self = .limitSize(bytes: try container.decode(Int.self, forKey: .bytes))
+    case .stripMetadata:
+      self = .stripMetadata(policy: try container.decode(PrivacyPolicy.self, forKey: .privacy))
     }
   }
 
@@ -119,6 +130,9 @@ extension Operation {
     case .limitSize(let bytes):
       try container.encode(Kind.limitSize, forKey: .kind)
       try container.encode(bytes, forKey: .bytes)
+    case .stripMetadata(let policy):
+      try container.encode(Kind.stripMetadata, forKey: .kind)
+      try container.encode(policy, forKey: .privacy)
     }
   }
 }

@@ -23,6 +23,12 @@ struct SettingsView: View {
         Stepper(value: $model.settings.defaultQuality, in: 1...100) {
           LabeledContent("Quality when a preset says none", value: "\(model.settings.defaultQuality)")
         }
+        Picker("Metadata", selection: $model.settings.privacy) {
+          ForEach(PrivacyPolicy.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        Text(model.settings.privacy.summary + " A preset, a batch, or a file named _privacy can ask for more.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
         TextField("Name new files", text: $model.settings.nameTemplate)
         Text("{name} is the original's name. A preset that asks a question adds its own token, so {name}_{maxsize} writes holiday_10MB.jpg. Any preset can override all of this.")
           .font(.caption)

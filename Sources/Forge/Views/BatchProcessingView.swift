@@ -18,6 +18,10 @@ struct BatchProcessingView: View {
   /// be looked up by id, and it stands until the user opens the sheet and says
   /// something else.
   @State private var adhoc: RulePreset?
+  /// The file being looked through for things to cover up. Redaction is not
+  /// part of a conversion: it is irreversible, it needs a person to agree to
+  /// every region, and it writes a copy of its own.
+  @State private var reviewing: ProcessableFile?
 
   /// The kinds of file in the list. What the sheet offers is decided from this,
   /// so a PDF is asked different questions than a video.
@@ -98,6 +102,7 @@ struct BatchProcessingView: View {
         fileCount: vm.files.count,
         totalSize: totalSize,
         presets: model.usablePresets,
+        defaultPrivacy: model.settings.privacy,
         choice: $choice,
         onConvert: {
           // Overwrite and Move both change what is already on disk, so they are
@@ -105,6 +110,12 @@ struct BatchProcessingView: View {
           if choice.destinationMode == .copyTo { start() } else { confirming = true }
         }
       )
+    }
+    .sheet(item: $reviewing) { file in
+      RedactionReviewSheet(file: file) { written in
+        model.remember(written)
+        vm.lastSaving = "Covered copy written to \(written.lastPathComponent)."
+      }
     }
     .sheet(isPresented: Binding(get: { !asking.isEmpty }, set: { if !$0 { asking = [] } })) {
       ConfirmationSheet(
@@ -148,7 +159,18 @@ struct BatchProcessingView: View {
 
   private var fileTable: some View {
     Table(vm.files) {
-      TableColumn("File") { f in Text(f.fileName).lineLimit(1).truncationMode(.middle) }
+      TableColumn("File") { f in
+        Text(f.fileName)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .contextMenu {
+            // Images only: Vision reads pictures, and offering this for a CSV
+            // would be a menu item that finds nothing every time.
+            if FormatCatalog.isReadableImage(f.fileType) {
+              Button("Review for Redaction…") { reviewing = f }
+            }
+          }
+      }
       TableColumn("Type") { f in
         Text(f.fileType.localizedDescription ?? f.fileType.preferredFilenameExtension ?? "—")
           .foregroundStyle(.secondary)
