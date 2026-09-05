@@ -116,15 +116,16 @@ struct RecipeOptions: ParsableArguments {
 
   private func targetType() throws -> UTType? {
     guard let format else { return nil }
-    // The subtitle formats have no type on macOS and are written all the same,
-    // so they are named by the extension they are asked for.
-    if Subtitles.writes(format), let text = UTType(filenameExtension: format, conformingTo: .plainText) {
+    if let type = UTType(filenameExtension: format), !type.isDynamic { return type }
+    // Only then: the subtitle formats have no type on macOS and are written
+    // all the same, so they are named by the extension asked for. Taking this
+    // branch first would have handed back a dynamic type for `txt`, which has
+    // a perfectly good one of its own.
+    if Subtitles.writes(format),
+       let text = UTType(filenameExtension: format, conformingTo: .plainText) {
       return text
     }
-    guard let type = UTType(filenameExtension: format), !type.isDynamic else {
-      throw ValidationError("“\(format)” is not a format this Mac knows. Try `forge formats`.")
-    }
-    return type
+    throw ValidationError("“\(format)” is not a format this Mac knows. Try `forge formats`.")
   }
 
   private func resizeSpec() throws -> ResizeSpec? {
