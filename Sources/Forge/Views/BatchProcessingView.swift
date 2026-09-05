@@ -13,6 +13,11 @@ struct BatchProcessingView: View {
   /// The conversions worth one question, one per kind. Empty means there is
   /// nothing to ask.
   @State private var asking: [ConfirmationGroup] = []
+  /// A chain handed to this screen rather than chosen on it - a row in history
+  /// asking to be run again. It is not one of the saved presets, so it cannot
+  /// be looked up by id, and it stands until the user opens the sheet and says
+  /// something else.
+  @State private var adhoc: RulePreset?
 
   /// The kinds of file in the list. What the sheet offers is decided from this,
   /// so a PDF is asked different questions than a video.
@@ -24,7 +29,7 @@ struct BatchProcessingView: View {
     vm.files.reduce(0) { $0 + $1.fileSize }
   }
 
-  private var preset: RulePreset? { choice.resolved(against: model.presets) }
+  private var preset: RulePreset? { adhoc ?? choice.resolved(against: model.presets) }
 
   var body: some View {
     VStack(spacing: 0) {
@@ -68,6 +73,11 @@ struct BatchProcessingView: View {
       }
     }
     .animation(.easeOut(duration: 0.15), value: isTargeted)
+    // A run started from History arrives here. Both hooks are needed: the
+    // screen may already be showing, or may be about to appear because
+    // something set this.
+    .onAppear { if let pending = model.pending { take(pending) } }
+    .onChange(of: model.pending) { pending in if let pending { take(pending) } }
     .navigationTitle("Convert")
     .toolbar {
       ToolbarItemGroup {
@@ -77,7 +87,7 @@ struct BatchProcessingView: View {
         if !vm.files.isEmpty {
           Button(role: .destructive) { clear() } label: { Label("Clear", systemImage: "trash") }
             .disabled(vm.isProcessing)
-          Button { showingOptions = true } label: { Label("Convert…", systemImage: "slider.horizontal.3") }
+          Button { openOptions() } label: { Label("Convert…", systemImage: "slider.horizontal.3") }
             .disabled(vm.isProcessing)
         }
       }
@@ -174,7 +184,7 @@ struct BatchProcessingView: View {
     HStack(spacing: 14) {
       Text(saving).font(.callout).foregroundStyle(.secondary)
       Spacer()
-      Button("Convert Again…") { showingOptions = true }
+      Button("Convert Again…") { openOptions() }
     }
     .padding()
   }
@@ -219,7 +229,7 @@ struct BatchProcessingView: View {
       // Nothing says what these should become yet: that question is the sheet,
       // and the sheet is the whole answer to it.
       if plans.contains(where: \.hasUndefinedRequiredParams) {
-        showingOptions = true
+        openOptions()
       } else {
         asking = groups(from: plans)
       }
@@ -264,6 +274,28 @@ struct BatchProcessingView: View {
 
   private func clear() {
     vm.clear()
+    adhoc = nil
+  }
+
+  /// The sheet is the place where the user says what they want, so opening it
+  /// puts them back in charge of the chain.
+  private func openOptions() {
+    adhoc = nil
+    showingOptions = true
+  }
+
+  /// Take a conversion handed over from somewhere else in the app - the same
+  /// files or new ones, with the chain a past run used - and put it through the
+  /// ordinary route, gate and confirmations included.
+  private func take(_ pending: AppModel.PendingConversion) {
+    vm.clear()
+    vm.add(pending.files)
+    adhoc = pending.preset
+    choice.destinationMode = pending.mode
+    choice.destinationURL = pending.destination
+    model.pending = nil
+    guard !vm.files.isEmpty else { return }
+    route()
   }
 
   private func start() {

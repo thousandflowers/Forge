@@ -79,7 +79,9 @@ actor ProcessingCoordinator {
           duration: result.duration,
           outputURL: result.outputURL,
           additionalOutputs: result.additionalOutputs.isEmpty ? nil : result.additionalOutputs,
-          destinationFolder: destinationURL
+          destinationFolder: destinationURL,
+          actions: preset.toOperations(),
+          presetName: preset.name
         )
         try await self.persistence.appendHistory(history)
         return history
@@ -96,7 +98,9 @@ actor ProcessingCoordinator {
           duration: Date().timeIntervalSince(started),
           outputURL: nil,
           additionalOutputs: nil,
-          destinationFolder: destinationURL
+          destinationFolder: destinationURL,
+          actions: preset.toOperations(),
+          presetName: preset.name
         )
         try? await self.persistence.appendHistory(history)
         throw error
