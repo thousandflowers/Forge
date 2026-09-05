@@ -166,6 +166,14 @@ enum ConvertKind: String, CaseIterable, Sendable {
     }
   }
 
+  /// Whether a file of this kind can be asked for that format, taken from the
+  /// same list the sheet offers rather than from a second one kept beside it.
+  func offers(_ format: UTType) -> Bool {
+    outputGroups.contains { group in
+      group.formats.contains { $0.type == format }
+    }
+  }
+
   /// The formats worth offering as output, grouped the way they get chosen.
   ///
   /// A video can become another video, a still or an animation (a frame
@@ -217,6 +225,21 @@ enum ConvertKind: String, CaseIterable, Sendable {
 }
 
 /// One labelled row of output formats in the Convert sheet.
+extension RulePreset {
+  /// Whether this preset is worth offering for the kinds of file in hand.
+  ///
+  /// Judged by what it writes, not by the shelf it was filed on: a preset that
+  /// makes JPEGs and happens to be filed under Video was not offered for a
+  /// picture, and nothing anywhere said why. The category picks the icon and
+  /// stays the user's to choose.
+  func suits(_ kinds: Set<ConvertKind>) -> Bool {
+    // No format of its own: it resizes, or filters, or reads the text out.
+    // That suits anything which honours those.
+    guard let format = targetFormat else { return true }
+    return kinds.contains { $0.offers(format) }
+  }
+}
+
 struct OutputGroup: Identifiable {
   let title: String
   let formats: [OutputFormat]

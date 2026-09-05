@@ -1008,6 +1008,41 @@ final class AppModelTests: BaseTestCase {
     XCTAssertTrue(said.contains(".zzz"), said)
   }
 
+  /// The same folder could be added twice, which put two watchers on it and
+  /// converted everything twice - the second copy arriving as "photo 2.jpeg"
+  /// with nothing to say where it came from.
+  func test_aFolderIsNotWatchedTwice() async throws {
+    let model = AppModel(persistence: store)
+    let preset = RulePreset.make(format: .jpeg, category: .image)
+    model.savePreset(preset)
+    let watched = try folder("watched")
+    let out = try folder("out")
+
+    model.addFolder(url: watched, presetID: preset.id, mode: .copyTo, destination: out, includeSubfolders: false)
+    model.addFolder(url: watched, presetID: preset.id, mode: .copyTo, destination: out, includeSubfolders: false)
+
+    XCTAssertEqual(model.folders.count, 1, "the same folder is being watched twice")
+    XCTAssertEqual(model.lastError?.contains("already being watched"), true, model.lastError ?? "")
+  }
+
+  /// A folder inside one that already watches its subfolders is the same
+  /// double conversion wearing a different hat.
+  func test_aFolderInsideAWatchedTreeIsRefused() async throws {
+    let model = AppModel(persistence: store)
+    let preset = RulePreset.make(format: .jpeg, category: .image)
+    model.savePreset(preset)
+    let parent = try folder("parent")
+    let child = parent.appendingPathComponent("inside")
+    try FileManager.default.createDirectory(at: child, withIntermediateDirectories: true)
+    let out = try folder("out")
+
+    model.addFolder(url: parent, presetID: preset.id, mode: .copyTo, destination: out, includeSubfolders: true)
+    model.addFolder(url: child, presetID: preset.id, mode: .copyTo, destination: out, includeSubfolders: false)
+
+    XCTAssertEqual(model.folders.count, 1)
+    XCTAssertEqual(model.lastError?.contains("twice"), true, model.lastError ?? "")
+  }
+
   /// Deleting a preset left every folder watching with it looking active and
   /// doing nothing whatsoever with what landed in them.
   func test_deletingAPresetSwitchesOffTheFoldersUsingIt() async throws {
@@ -1198,6 +1233,40 @@ final class ConvertKindOfferingTests: XCTestCase {
     if FormatCatalog.isRasterizableVector(.svg) {
       XCTAssertEqual(try kind(of: "svg"), .image)
     }
+  }
+
+  /// A preset was offered by the shelf it was filed on rather than by what it
+  /// writes, so one that makes JPEGs and happens to be filed under Video was
+  /// not offered for a picture - and nothing anywhere said why. The roadmap
+  /// had this as a known trap; it is a trap no longer.
+  func test_aPresetIsOfferedForWhatItWritesNotForItsLabel() {
+    let mislabelled = RulePreset.make(format: .jpeg, category: .video)
+    XCTAssertTrue(mislabelled.suits([.image]), "a JPEG preset was withheld from pictures")
+
+    let film = RulePreset.make(format: .quickTimeMovie, category: .image)
+    XCTAssertTrue(film.suits([.video]), "a movie preset was withheld from films")
+    XCTAssertFalse(film.suits([.data]), "a movie preset has no business with a JSON file")
+  }
+
+  /// A preset with no format of its own resizes, filters or reads text out,
+  /// which suits anything that honours those.
+  func test_aPresetWithNoFormatSuitsAnything() {
+    let resizeOnly = RulePreset.make(
+      resize: ResizeSpec(width: 800, height: nil, fitMode: .proportional), category: .custom
+    )
+    XCTAssertNil(resizeOnly.targetFormat)
+    XCTAssertTrue(resizeOnly.suits([.image]))
+    XCTAssertTrue(resizeOnly.suits([.video]))
+  }
+
+  /// The kinds answer for themselves what they can be asked for, out of the
+  /// same list the sheet offers rather than a second one kept beside it.
+  func test_aKindKnowsWhatItCanBeAskedFor() {
+    XCTAssertTrue(ConvertKind.image.offers(.jpeg))
+    XCTAssertFalse(ConvertKind.image.offers(.quickTimeMovie))
+    XCTAssertTrue(ConvertKind.video.offers(.jpeg), "a film can give up a frame")
+    XCTAssertTrue(ConvertKind.data.offers(.json))
+    XCTAssertFalse(ConvertKind.data.offers(.jpeg), "a JSON file is not a picture")
   }
 
   /// `public.toml` prefers the extension `cfg`, so the menu used to list TOML

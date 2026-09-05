@@ -66,7 +66,10 @@ struct RecipeOptions: ParsableArguments {
   var quality: Int?
 
   @Option(help: "Fit mode when resizing: proportional, cropCenter, stretch, pad.")
-  var fit: ResizeFitMode = .proportional
+  /// No default of its own: unset means "whatever the app is set to", so
+  /// changing "Resizing means" in Settings changes what `forge` does too. A
+  /// fixed default here made that setting mean nothing outside the window.
+  var fit: ResizeFitMode?
 
   @Option(help: "Filter to apply: grayscale, sepia, blur, sharpen, invert.")
   var filter: FilterType?
@@ -143,7 +146,7 @@ struct RecipeOptions: ParsableArguments {
     guard width != nil || height != nil else {
       throw ValidationError("--resize needs at least one side, e.g. 1280x or x720.")
     }
-    return ResizeSpec(width: width, height: height, fitMode: fit)
+    return ResizeSpec(width: width, height: height, fitMode: fit ?? AppSettings.load().defaultFitMode)
   }
 
   private func validatedQuality() throws -> Int? {

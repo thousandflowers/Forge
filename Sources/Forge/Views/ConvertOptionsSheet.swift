@@ -168,9 +168,13 @@ struct ConvertOptionsSheet: View {
 
   /// Presets for what was dropped. A mixed batch sees the presets for every
   /// kind in it, since each file goes to its own processor anyway.
+  ///
+  /// Judged by what a preset writes, not by the shelf it was filed on. The
+  /// category picks the icon and it is the user's to choose; a preset that
+  /// makes JPEGs and happens to be filed under Video was not being offered for
+  /// a picture, and nothing anywhere said why.
   private var offeredPresets: [RulePreset] {
-    let categories = Set(kinds.map(\.presetCategory))
-    let fitting = presets.filter { categories.contains($0.category) || $0.category == .custom }
+    let fitting = presets.filter { $0.suits(kinds) }
     return fitting.isEmpty ? presets : fitting
   }
 
