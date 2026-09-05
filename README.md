@@ -6,9 +6,7 @@
 
 **Batch file conversion for macOS. Photos, video, audio and PDFs, converted by the frameworks already on your Mac.**
 
-<!-- TODO: demo GIF goes here. Drop the file at docs/screens/demo.gif and uncomment the line below.
-<img src="docs/screens/demo.gif" alt="Dropping a folder of photos into Forge and converting it" width="820">
--->
+<img src="docs/screens/demo.gif" alt="Forge: the Convert, Presets, Gallery and Capabilities screens" width="820">
 
 Drop in a folder of photos, a video, a stack of PDFs. Forge asks what they should become, in the terms of what they are, and converts them in parallel without loading them all into memory. It is one binary that is both a Mac app and a command line tool, it works with Core Image, AVFoundation, PDFKit and Vision, and it asks macOS what this particular machine can read and write — so it never offers a conversion it cannot finish.
 
@@ -21,9 +19,13 @@ Drop in a folder of photos, a video, a stack of PDFs. Forge asks what they shoul
 
 </div>
 
-## Drop the files, then answer one question
+## Drop the files, and answer a question only when there is one
 
-The Convert screen is a drop zone. The moment files land, Forge opens a sheet that asks what they should become, and it asks the right question for the files in hand:
+The Convert screen is a drop zone. The first time, Forge asks what the files should become. After that it mostly does not ask at all: **drop a folder onto the preset you chose a minute ago and it just runs.**
+
+Every conversion is read as five facts — is something being thrown away, did you ask for that yourself, is anything still undefined, does this make a different kind of thing or more files than it was given, does it touch the originals — and those five decide between running it, asking once, and the confirmation that has always guarded your originals. A size you typed into a filename counts as your own answer, so `holiday_10MB.jpg` runs without a word. The same ceiling arriving from a preset does not: that gets one sober popup which converts a single representative file into a scratch folder and shows you the before and the after, measured rather than guessed.
+
+When it does ask, it asks the right question for the files in hand:
 
 - a **photo** gets format, size, quality, a look, and reading the text out of it
 - a **video** gets format, resolution, codec, frame export and a transcript
@@ -67,11 +69,11 @@ The Capabilities screen is computed at run time, so it describes your Mac rather
 
 Every conversion above is Apple's frameworks and nothing else: no ImageMagick, no FFmpeg, no LibreOffice, and nothing to install before Forge is useful. For the handful of jobs macOS cannot do alone, Forge names the tool that can and offers to add it — as an **extension**, which is a separate download and never part of the app.
 
-Two ways one arrives. Forge hosts builds of a few of these tools on its own releases: press Download and you are told the version, the licence, the project it comes from and how large it is before anything happens. What arrives is checked against a SHA-256 checksum from the manifest and thrown away if it does not match, then it is unpacked into `~/Library/Application Support/Forge/Extensions/` — not into the app, not onto your `PATH` — and it can be removed from the same card. Or Homebrew, for anything Forge hosts no build of: the exact command is shown once before it runs, with its output live on the card, and the tool is your Mac's rather than Forge's.
+Two ways one can arrive. **Homebrew**, which works today: the exact command is shown once before it runs, with its output live on the card, and the tool is your Mac's rather than Forge's. Or an **extension** Forge hosts and pins — the machinery for that is built and tested, and it turns on for a tool the day a build for it is published on the Releases page. When one is, the card tells you the version, the licence, the project it comes from and how large it is before anything happens; what arrives is checked against a SHA-256 checksum from the manifest and thrown away if it does not match, then unpacked into `~/Library/Application Support/Forge/Extensions/` — not into the app, not onto your `PATH` — and removable from the same card. `forge extensions list | add | remove` does the same from a script, and `FORGE_EXTENSIONS_MANIFEST` points it at a manifest of your own.
 
-What stays true either way: **the core converts with Apple's frameworks and nothing else**, no extension is needed for any of it, and no third-party binary is bundled inside the `.app`. What is no longer true is the older claim that Forge downloads nobody's binaries. It downloads the ones you ask it for, from its own releases, with the checksum checked. `FORGE_EXTENSIONS_MANIFEST` points the app at a different manifest, if you would rather host your own.
+What stays true either way: **the core converts with Apple's frameworks and nothing else**, no extension is needed for any of it, and no third-party binary is bundled inside the `.app`. What is no longer true is the older claim that Forge downloads nobody's binaries — it will download the ones you ask it for, from its own releases, with the checksum checked.
 
-WebP is the one wired all the way through today. Install `cwebp` and images really do convert to WebP, with the format appearing only where an image processor will do the writing.
+Install `cwebp`, `pandoc`, `ffmpeg` or `tesseract` and the formats they add appear where a processor will really do the writing: WebP out of the image path, EPUB and the office formats out of pandoc, the containers macOS cannot write out of ffmpeg. The cards say which of the two facts is true for each — whether the tool is here, and whether Forge calls it — because those are different things.
 
 ## How it compares
 
@@ -83,10 +85,11 @@ Forge is not trying to out-encode a specialist. HandBrake has spent twenty years
 | Where the converters come from | macOS itself, plus optional extensions you ask for | bundled with the app | bundled with the app | bundled with the app |
 | What it offers is read from your Mac at run time | yes | no | no | no |
 | Presets you can export, import and browse in a gallery | yes | presets, kept local | presets, importable files | no |
+| Strips location and device metadata on conversion | yes, three levels | no | no | keeps or strips, all or nothing |
 | Command line | the same binary | no | separate `HandBrakeCLI` | no official one |
 | Licence | MIT | paid, closed | GPL-2.0 | GPL-2.0 |
 
-Removing metadata on conversion — location, device, serial numbers, author — is a setting here, overridable per preset, per batch, and by naming a file `_privacy`.
+
 
 ## A gallery you can search
 
@@ -96,9 +99,31 @@ Presets other people published, searchable by name, by author, by topic, and by 
 
 A preset is data, not code. It is a name and a list of actions Forge already knows how to run, so installing one cannot make the app do anything it could not already do.
 
+## Names that say what the file turned out to be
+
+A template names the files a conversion writes, and the field shows you what they will be called as you type it:
+
+`{name}` `{parent}` `{date}` or `{date:yyyy-MM-dd}` `{counter}` or `{counter:03}` `{format}` `{quality}` `{codec}` `{width}` `{height}` `{dimensions}` `{size}`
+
+The last few are only true once the file exists, so they are filled in afterwards: `{name}_{dimensions}` gives `holiday_400x300.jpeg`, measured from the file that was actually written. A token Forge does not recognise is left where it is, because a typo you can see is one you can fix.
+
 ## General preferences, and overriding them
 
-Settings holds what resizing means (fit inside, fill and crop, stretch, pad out), the quality to use when a preset names none, and how new files are named. Each one is what happens when nothing else says otherwise. A preset overrides the general preference, a batch overrides the preset, and a size written into a filename overrides all of it.
+Settings holds what resizing means (fit inside, fill and crop, stretch, pad out), the quality to use when a preset names none, how much of the metadata survives, and how new files are named. Each one is what happens when nothing else says otherwise. A preset overrides the general preference, a batch overrides the preset, and what you write into a filename overrides all of it.
+
+## What leaves with your files
+
+A photograph carries where it was taken, which camera took it, and often the serial number of the lens. A PDF carries who wrote it. None of that is the picture or the document, and all of it travels when you send the file to somebody.
+
+Three levels — keep everything, remove the location, remove what identifies a person, a device or a moment — available from Settings, from a preset, from a batch, or by naming a file `contract_privacy.pdf`. They combine: `holiday_10MB_privacy.jpg` compresses **and** strips.
+
+What is never removed, at any level, is the colour profile and the orientation. Those are not information about you: without them the photograph arrives on its side, in the wrong colours.
+
+Separately, and never automatically: Forge can look through a picture with Vision and Natural Language and **suggest** faces and names to cover up. It misses things — a face turned away, handwriting, a name in a reflection — so every box starts unticked, nothing is covered until you tick it, and the copy is written somewhere you choose. It is assistance, not anonymisation, and the app says so where you cannot miss it.
+
+## History you can run again
+
+A row in History knows what it did, not just which preset did it, so it can be **saved as a preset** — the same thing said the other way round, indistinguishable from one you made by hand — or run again on files you pick now, or run again on the same files. That last one is careful: an original that has moved is named rather than skipped in silence, and a run that replaced its original goes through the replace confirmation again rather than around it.
 
 ## Careful with your files
 
@@ -107,6 +132,13 @@ Settings holds what resizing means (fit inside, fill and crop, stretch, pad out)
 - Converting in place keeps a copy of the original in Backups, unless you turn that off.
 - Replacing or moving originals asks first, and says how many files and whether anything can be got back.
 - A watched folder ignores the files Forge itself writes, so pointing the output back at the input does not start a loop.
+- A cancel reaches the work, not just the queue: the scratch file goes with it and the original is untouched. One file can be stopped without stopping its siblings.
+
+## It does not take the Mac down with it
+
+How much runs at once is worked out per kind of work, from the cores, the memory and whether this is Apple silicon. Two videos at a time is one too many — the media engine is a single piece of hardware and asking it for two only makes heat — while two images at a time is far too few on a machine with ten cores, and images are bounded by memory rather than cores, because a decoded photograph is a quarter of a gigabyte.
+
+It backs off while a batch is running. A warm Mac, Low Power Mode or memory pressure shrinks the limits, and the screen says so rather than just getting slower. **Pause** stops new files starting and lets the ones in flight finish; a native encode cannot be frozen halfway, and a button claiming otherwise would be lying.
 
 ## Install
 
@@ -191,7 +223,8 @@ Tests build their fixtures at run time and keep everything in a scratch director
 ## What is not here yet
 
 - Translating subtitles into another language. macOS 13 has no offline translation API, and sending your files to somebody's server is not something this app is going to start doing quietly.
-- FFmpeg, pandoc and tesseract are detected and installable, but only WebP is wired through to a real conversion so far. The cards say exactly that rather than pretending otherwise.
+- No extension builds are published yet. The whole path — manifest, checksum, install, removal — is built and tested, and the Capabilities cards offer Homebrew until there is something to download.
+- Redaction suggests; it never decides. There is no mode that covers faces without you looking at each one, and there will not be.
 - Signing and notarization.
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the longer list, including what Forge will not do and why.
