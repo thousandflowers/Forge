@@ -18,6 +18,9 @@ final class AppModel: ObservableObject {
   /// Files put on the Convert screen by something other than a drop - a row in
   /// history asking to be run again. Cleared as soon as that screen takes them.
   @Published var pending: PendingConversion?
+  /// The preset being written, when the editor is up. It covers the whole
+  /// window, so the window owns it rather than the Presets screen.
+  @Published var presetEditor: PresetEditorRequest?
 
   let coordinator: ProcessingCoordinator
   private let persistence: PersistenceManager

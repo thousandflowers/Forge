@@ -17,6 +17,19 @@ struct ContentView: View {
     }
     .task { await model.bootstrap() }
     .preferredColorScheme(model.settings.appearance.colorScheme)
+    // A preset is a program, and a program is not written in a sheet: the
+    // editor takes the window, sidebar included, the way Shortcuts does.
+    .overlay {
+      if let request = model.presetEditor {
+        PresetEditorView(
+          preset: request.preset,
+          onSave: { model.savePreset($0) },
+          onClose: { model.presetEditor = nil }
+        )
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+      }
+    }
+    .animation(.easeInOut(duration: 0.2), value: model.presetEditor?.id)
     // Running something again from History is a conversion, so the Convert
     // screen is where it happens.
     .onChange(of: model.pending) { pending in if pending != nil { section = .process } }

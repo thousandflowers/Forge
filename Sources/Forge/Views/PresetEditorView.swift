@@ -1,185 +1,162 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Builds a preset by stacking actions, the way Shortcuts does.
+/// A request to open the editor: a preset to change, or nil for a new one.
+struct PresetEditorRequest: Identifiable {
+  let id = UUID()
+  let preset: RulePreset?
+}
+
+/// The preset editor, laid out the way Shortcuts lays out an automation: the
+/// files that come in at the top, the steps they go through stacked under it,
+/// and on the right the library of blocks that can be added.
 ///
-/// The old editor was a form with one slot per idea: one format, one resize,
-/// one quality. Order was fixed, a second filter was impossible, and a new kind
-/// of action meant a new row nailed to the form. A preset is a list now, and
-/// this edits the list.
+/// It takes the whole window. The first block is the input and cannot be
+/// removed: a preset with nothing coming in is not a preset.
 struct PresetEditorView: View {
-  @Environment(\.dismiss) private var dismiss
   private let existing: RulePreset?
   private let onSave: (RulePreset) -> Void
+  private let onClose: () -> Void
 
   @State private var name: String
   @State private var description: String
   @State private var category: PresetCategory
-  @State private var actions: [Action]
-  @State private var selection: Action.ID?
-  /// What this preset asks for instead of deciding.
+  /// The formats the files come out as. Kept apart from the steps so the
+  /// steps can be reordered by index without the format rows in the way.
+  @State private var formats: [OutputFormat]
+  @State private var steps: [Action]
   @State private var parameters: [PresetParameter]
   /// Empty means "use the general one from Settings".
   @State private var nameTemplate: String
-  /// The format block is a step like any other: added from the menu, removed
-  /// with its own button. It starts on screen when the preset writes a format.
   @State private var showsFormats: Bool
   @State private var showsTemplate: Bool
+  @State private var search = ""
 
-  /// What the preview should call its sample file: whatever this preset is
-  /// about to write, so the line under the field is about this preset.
-  private var outputExtension: String {
-    actions.compactMap { action -> String? in
-      guard case .convertFormat(let to) = action.operation else { return nil }
-      return FormatCatalog.fileExtension(for: to)
-    }.first ?? "jpeg"
-  }
-
-  init(preset: RulePreset?, onSave: @escaping (RulePreset) -> Void) {
+  init(preset: RulePreset?, onSave: @escaping (RulePreset) -> Void, onClose: @escaping () -> Void) {
     self.existing = preset
     self.onSave = onSave
+    self.onClose = onClose
+    let actions = preset?.actions ?? []
+    let chosen = actions.compactMap { action -> OutputFormat? in
+      guard case .convertFormat(let to) = action else { return nil }
+      return OutputFormat(type: to)
+    }
     _name = State(initialValue: preset?.name ?? "")
     _description = State(initialValue: preset?.description ?? "")
     _category = State(initialValue: preset?.category ?? .image)
-    _actions = State(initialValue: (preset?.actions ?? []).map(Action.init))
+    _formats = State(initialValue: chosen)
+    _steps = State(initialValue: actions.filter { if case .convertFormat = $0 { return false } else { return true } }.map(Action.init))
     _parameters = State(initialValue: preset?.parameters ?? [])
     _nameTemplate = State(initialValue: preset?.nameTemplate ?? "")
-    let formats = (preset?.actions ?? []).contains { if case .convertFormat = $0 { return true } else { return false } }
-    _showsFormats = State(initialValue: formats)
+    _showsFormats = State(initialValue: !chosen.isEmpty)
     _showsTemplate = State(initialValue: !(preset?.nameTemplate ?? "").isEmpty)
   }
 
   var body: some View {
     VStack(spacing: 0) {
-      details
+      topBar
       Divider()
-      actionList
-      Divider()
-      footer
-    }
-    .frame(width: 560, height: 700)
-    .translucentSheet()
-  }
-
-  private var details: some View {
-    VStack(spacing: 0) {
-      detailRow { TextField("Name", text: $name) }
-      Divider().padding(.leading, 12)
-      detailRow { TextField("Description", text: $description) }
-      Divider().padding(.leading, 12)
-      detailRow {
-        Text("Category")
-        Spacer()
-        Picker("Category", selection: $category) {
-          ForEach(PresetCategory.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
-        }
-        .labelsHidden()
-        .fixedSize()
+      HStack(spacing: 0) {
+        canvas
+        Divider()
+        library
       }
     }
-    .textFieldStyle(.plain)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
-    .padding(16)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color(nsColor: .windowBackgroundColor))
   }
 
-  private func detailRow<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-    HStack(spacing: 8) { content() }
-      .padding(.horizontal, 12)
-      .frame(height: 34)
-  }
+  // MARK: - Top bar
 
-  /// A question needs a key nothing else is using, since the key is what a
-  /// name template spends.
-  private func add(_ kind: PresetParameter.Kind) {
-    var key = kind.rawValue.lowercased()
-    var attempt = 2
-    while parameters.contains(where: { $0.key == key }) {
-      key = "\(kind.rawValue.lowercased())\(attempt)"
-      attempt += 1
+  private var topBar: some View {
+    HStack(spacing: 16) {
+      Button("Cancel", action: onClose)
+        .keyboardShortcut(.cancelAction)
+
+      Spacer()
+
+      VStack(spacing: 2) {
+        TextField("Name this preset", text: $name)
+          .font(.title3.weight(.semibold))
+          .multilineTextAlignment(.center)
+        TextField("What it does, in a line", text: $description)
+          .font(.callout)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+      }
+      .textFieldStyle(.plain)
+      .frame(maxWidth: 440)
+
+      Spacer()
+
+      Button("Save", action: save)
+        .buttonStyle(.borderedProminent)
+        .keyboardShortcut(.defaultAction)
+        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || (steps.isEmpty && formats.isEmpty))
+        .help(steps.isEmpty && formats.isEmpty ? "Add a block first: a preset with none would copy the file and call it a conversion." : "")
     }
-    parameters.append(PresetParameter(key: key, label: kind.title, kind: kind))
+    .padding(.horizontal, 20)
+    .padding(.vertical, 12)
   }
 
-  @ViewBuilder
-  private var actionList: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 14) {
-        if showsFormats { formatsBlock }
+  // MARK: - Canvas
+
+  /// The chain, top to bottom: what comes in, what is asked, what is done,
+  /// what comes out, what it is called. Steps can be dragged into order.
+  private var canvas: some View {
+    List {
+      Group {
+        inputBlock
 
         ForEach($parameters) { $parameter in
           questionBlock($parameter)
         }
+        .onDelete { parameters.remove(atOffsets: $0) }
 
+        ForEach($steps) { $step in
+          stepBlock($step)
+        }
+        .onMove { steps.move(fromOffsets: $0, toOffset: $1) }
+        .onDelete { steps.remove(atOffsets: $0) }
+
+        if showsFormats { formatsBlock }
         if showsTemplate { templateBlock }
 
-        ForEach($actions) { $action in
-          if !$action.wrappedValue.isFormat {
-            stepBlock($action)
-          }
-        }
-
-        // The + belongs under the steps, where the next one would go, and in
-        // the middle of the sheet rather than tucked into a corner.
-        HStack {
-          Spacer()
-          addStepMenu
-          Spacer()
+        if steps.isEmpty, !showsFormats, parameters.isEmpty {
+          Text("Add blocks from the library on the right. They run top to bottom.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 8)
         }
       }
-      .padding(16)
+      .listRowSeparator(.hidden)
+      .listRowBackground(Color.clear)
+      .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
+    }
+    .listStyle(.plain)
+    .scrollContentBackground(.hidden)
+    .frame(maxWidth: .infinity)
+    .padding(.horizontal, 24)
+    .padding(.vertical, 12)
+  }
+
+  /// The files this preset takes. Always first, never removed.
+  private var inputBlock: some View {
+    block(title: "Files that come in", symbol: category.icon, remove: nil) {
+      HStack(spacing: 10) {
+        Picker("Kind", selection: $category) {
+          ForEach(PresetCategory.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
+        }
+        .labelsHidden()
+        .fixedSize()
+        Text("Every file of this kind dropped on Forge, or into a folder it watches, goes through the blocks below.")
+          .font(.callout)
+          .foregroundStyle(.secondary)
+      }
     }
   }
 
-  private var addStepMenu: some View {
-    Menu {
-      Button {
-        showsFormats = true
-      } label: {
-        Label("Comes out as", systemImage: "arrow.triangle.2.circlepath")
-      }
-      .disabled(showsFormats)
-
-      Menu {
-        ForEach(PresetParameter.Kind.allCases, id: \.self) { kind in
-          Button(kind.title) { add(kind) }
-        }
-      } label: {
-        Label("Asks a question", systemImage: "questionmark.circle")
-      }
-
-      Button {
-        showsTemplate = true
-      } label: {
-        Label("Names files", systemImage: "textformat")
-      }
-      .disabled(showsTemplate)
-
-      Divider()
-
-      ForEach(offeredKinds) { kind in
-        Button {
-          actions.append(Action(kind.blank(for: category)))
-        } label: {
-          Label(kind.title, systemImage: kind.symbol)
-        }
-      }
-    } label: {
-      Label("Add a step", systemImage: "plus")
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
-    .menuStyle(.borderlessButton)
-    .fixedSize()
-    .background(
-      RoundedRectangle(cornerRadius: 8)
-        .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5]))
-        .foregroundStyle(Color.secondary.opacity(0.3))
-    )
-  }
-
-  /// One question the preset asks, as a block: what it is called, the key a
-  /// name template spends, and the unit the answer comes in.
   private func questionBlock(_ parameter: Binding<PresetParameter>) -> some View {
     block(title: "Asks for", symbol: "questionmark.circle", remove: {
       parameters.removeAll { $0.id == parameter.wrappedValue.id }
@@ -196,8 +173,34 @@ struct PresetEditorView: View {
     }
   }
 
-  /// What the preset calls what it writes, as a block. Removing it hands the
-  /// naming back to the general template in Settings.
+  private func stepBlock(_ step: Binding<Action>) -> some View {
+    block(title: step.wrappedValue.operation.title, symbol: step.wrappedValue.operation.symbol, remove: {
+      steps.removeAll { $0.id == step.wrappedValue.id }
+    }) {
+      ActionRow(action: step)
+        .padding(.leading, 22)
+    }
+  }
+
+  private var formatsBlock: some View {
+    block(title: "Comes out as", symbol: "arrow.triangle.2.circlepath", remove: {
+      formats.removeAll()
+      showsFormats = false
+    }) {
+      FlowLayout(spacing: 6) {
+        chip("Same format", selected: formats.isEmpty) { formats.removeAll() }
+        ForEach(offeredFormats) { format in
+          chip(format.label, selected: formats.contains(format)) { toggle(format) }
+        }
+      }
+      if formats.count > 1 {
+        Text("\(formats.count) copies of every file, one per format.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    }
+  }
+
   private var templateBlock: some View {
     block(title: "Names files", symbol: "textformat", remove: {
       nameTemplate = ""
@@ -207,68 +210,116 @@ struct PresetEditorView: View {
     }
   }
 
-  /// The shape every block shares: a titled header with its own remove
-  /// button, and the controls underneath.
-  private func block<Content: View>(title: String, symbol: String, remove: @escaping () -> Void, @ViewBuilder content: () -> Content) -> some View {
+  /// The shape every block shares: a titled header, its remove button when
+  /// it has one, and the controls underneath.
+  private func block<Content: View>(title: String, symbol: String, remove: (() -> Void)?, @ViewBuilder content: () -> Content) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
         Label(title, systemImage: symbol)
           .font(.callout.weight(.medium))
         Spacer()
-        Button(action: remove) {
-          Image(systemName: "minus.circle")
+        if let remove {
+          Button(action: remove) {
+            Image(systemName: "minus.circle")
+          }
+          .buttonStyle(.borderless)
+          .foregroundStyle(.secondary)
+          .accessibilityLabel(Text("Remove \(title)"))
         }
-        .buttonStyle(.borderless)
-        .foregroundStyle(.secondary)
-        .accessibilityLabel(Text("Remove \(title)"))
       }
       content()
     }
     .padding(12)
-    .frame(maxWidth: .infinity, alignment: .leading)
+    .frame(maxWidth: 640, alignment: .leading)
+    .frame(maxWidth: .infinity)
     .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
     .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
   }
 
-  /// What the files come out as. One or several: picking a second format does
-  /// not replace the first, it makes a second copy — which is how one photo
-  /// becomes a JPEG for the web and a PNG to keep.
-  private var formatsBlock: some View {
-    block(title: "Comes out as", symbol: "arrow.triangle.2.circlepath", remove: {
-      actions.removeAll { $0.isFormat }
-      showsFormats = false
-    }) {
-      FlowLayout(spacing: 6) {
-        chip("Same format", selected: chosenFormats.isEmpty) {
-          actions.removeAll { $0.isFormat }
-        }
-        ForEach(offeredFormats) { format in
-          chip(format.label, selected: chosenFormats.contains(format)) { toggle(format) }
-        }
-      }
+  // MARK: - Library
 
-      if chosenFormats.count > 1 {
-        Text("\(chosenFormats.count) copies of every file, one per format.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+  /// Every block that can be added, one click each. Grouped by what it is
+  /// for, and narrowed by the search field.
+  private var library: some View {
+    VStack(spacing: 0) {
+      TextField("Search blocks", text: $search)
+        .textFieldStyle(.roundedBorder)
+        .padding(12)
+      Divider()
+      List {
+        ForEach(LibraryEntry.Group.allCases, id: \.self) { group in
+          let entries = offered.filter { $0.group == group }
+          if !entries.isEmpty {
+            Section(group.rawValue) {
+              ForEach(entries) { entry in
+                Button {
+                  add(entry)
+                } label: {
+                  Label {
+                    VStack(alignment: .leading, spacing: 1) {
+                      Text(entry.title)
+                      Text(entry.summary).font(.caption).foregroundStyle(.secondary)
+                    }
+                  } icon: {
+                    Image(systemName: entry.symbol)
+                  }
+                }
+                .buttonStyle(.plain)
+                .disabled(!available(entry))
+                .opacity(available(entry) ? 1 : 0.45)
+              }
+            }
+          }
+        }
       }
+      .listStyle(.inset)
+      .scrollContentBackground(.hidden)
+    }
+    .frame(width: 280)
+    .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+  }
+
+  private var offered: [LibraryEntry] {
+    let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
+    return LibraryEntry.all(for: category).filter {
+      needle.isEmpty || $0.title.lowercased().contains(needle) || $0.summary.lowercased().contains(needle)
     }
   }
 
-  private func stepBlock(_ action: Binding<Action>) -> some View {
-    block(title: action.wrappedValue.operation.title, symbol: action.wrappedValue.operation.symbol, remove: {
-      actions.removeAll { $0.id == action.wrappedValue.id }
-    }) {
-      ActionRow(action: action)
-        .padding(.leading, 22)
+  /// A block that can only be on the canvas once is offered once.
+  private func available(_ entry: LibraryEntry) -> Bool {
+    switch entry.kind {
+    case .formats: return !showsFormats
+    case .template: return !showsTemplate
+    case .question, .step: return true
     }
   }
 
-  private var chosenFormats: [OutputFormat] {
-    actions.compactMap { action in
-      guard case .convertFormat(let to) = action.operation else { return nil }
-      return OutputFormat(type: to)
+  private func add(_ entry: LibraryEntry) {
+    switch entry.kind {
+    case .formats: showsFormats = true
+    case .template: showsTemplate = true
+    case .question(let kind): add(kind)
+    case .step(let kind): steps.append(Action(kind.blank(for: category)))
     }
+  }
+
+  /// A question needs a key nothing else is using, since the key is what a
+  /// name template spends.
+  private func add(_ kind: PresetParameter.Kind) {
+    var key = kind.rawValue.lowercased()
+    var attempt = 2
+    while parameters.contains(where: { $0.key == key }) {
+      key = "\(kind.rawValue.lowercased())\(attempt)"
+      attempt += 1
+    }
+    parameters.append(PresetParameter(key: key, label: kind.title, kind: kind))
+  }
+
+  // MARK: - Formats
+
+  private var outputExtension: String {
+    formats.compactMap { $0.type.flatMap(FormatCatalog.fileExtension(for:)) }.first ?? "jpeg"
   }
 
   /// The formats worth offering for what this preset is about. An audio preset
@@ -284,20 +335,11 @@ struct PresetEditorView: View {
     }
   }
 
-  /// The steps that mean something for this kind of file, so an audio preset
-  /// is never offered a crop.
-  private var offeredKinds: [ActionKind] {
-    ActionKind.allCases.filter { $0.suits(category) }
-  }
-
   private func toggle(_ format: OutputFormat) {
-    guard let type = format.type else { return }
-    if let index = actions.firstIndex(where: {
-      if case .convertFormat(let to) = $0.operation { return to == type } else { return false }
-    }) {
-      actions.remove(at: index)
+    if let index = formats.firstIndex(of: format) {
+      formats.remove(at: index)
     } else {
-      actions.insert(Action(.convertFormat(to: type)), at: 0)
+      formats.append(format)
     }
   }
 
@@ -318,24 +360,7 @@ struct PresetEditorView: View {
     .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
   }
 
-  private var footer: some View {
-    HStack {
-      Text(actions.isEmpty ? "Does nothing yet" : "Steps run top to bottom")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-
-      Spacer()
-      Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-      Button("Save") { save() }
-        .buttonStyle(.borderedProminent)
-        .keyboardShortcut(.defaultAction)
-        // A preset with no steps could be saved, and converting with it copied
-        // the file and reported "1 converted" - work that looks like work.
-        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || actions.isEmpty)
-        .help(actions.isEmpty ? "Add a step first: a preset with none would copy the file and call it a conversion." : "")
-    }
-    .padding()
-  }
+  // MARK: - Saving
 
   private func save() {
     var preset = RulePreset(
@@ -343,14 +368,82 @@ struct PresetEditorView: View {
       name: name.trimmingCharacters(in: .whitespaces),
       description: description,
       category: category,
-      actions: actions.map(\.operation)
+      actions: formats.compactMap { $0.type.map { Operation.convertFormat(to: $0) } } + steps.map(\.operation)
     )
     preset.parameters = parameters.filter { !$0.key.trimmingCharacters(in: .whitespaces).isEmpty }
     let template = nameTemplate.trimmingCharacters(in: .whitespaces)
     preset.nameTemplate = showsTemplate && !template.isEmpty ? template : nil
 
     onSave(preset)
-    dismiss()
+    onClose()
+  }
+}
+
+/// One entry in the block library.
+struct LibraryEntry: Identifiable {
+  enum Group: String, CaseIterable {
+    case output = "Comes out"
+    case ask = "Asks"
+    case transform = "Changes"
+    case encode = "Encodes"
+    case privacy = "Privacy"
+  }
+
+  enum Kind {
+    case formats
+    case template
+    case question(PresetParameter.Kind)
+    case step(ActionKind)
+  }
+
+  let kind: Kind
+  let group: Group
+  let title: String
+  let symbol: String
+  let summary: String
+
+  /// Two blocks can share a title - "Quality" is both a question and a step -
+  /// so the group is part of the identity.
+  var id: String { "\(group.rawValue)/\(title)" }
+
+  /// Everything the library offers for a kind of preset, in the order it is
+  /// shown. Built from the same lists the app runs on, so a new step kind
+  /// shows up here without a second list to keep in step.
+  static func all(for category: PresetCategory) -> [LibraryEntry] {
+    var entries: [LibraryEntry] = [
+      LibraryEntry(kind: .formats, group: .output, title: "Comes out as", symbol: "arrow.triangle.2.circlepath", summary: "Which formats the files are written in"),
+      LibraryEntry(kind: .template, group: .output, title: "Names files", symbol: "textformat", summary: "What the finished files are called"),
+    ]
+    entries += PresetParameter.Kind.allCases.map {
+      LibraryEntry(kind: .question($0), group: .ask, title: $0.title, symbol: "questionmark.circle", summary: "Asked every time the preset runs")
+    }
+    entries += ActionKind.allCases.filter { $0.suits(category) }.map {
+      LibraryEntry(kind: .step($0), group: $0.libraryGroup, title: $0.title, symbol: $0.symbol, summary: $0.summary)
+    }
+    return entries
+  }
+}
+
+extension ActionKind {
+  var libraryGroup: LibraryEntry.Group {
+    switch self {
+    case .crop, .resize, .filter, .recognizeText: return .transform
+    case .quality, .limitSize, .encode: return .encode
+    case .privacy: return .privacy
+    }
+  }
+
+  var summary: String {
+    switch self {
+    case .crop: return "Fill a box and cut what does not fit"
+    case .resize: return "Fit inside a box, keeping the shape"
+    case .quality: return "How much to compress"
+    case .limitSize: return "Stay under a size you choose"
+    case .filter: return "Grayscale, sepia, blur, sharpen, invert"
+    case .recognizeText: return "Read the words in it into text"
+    case .encode: return "Which codec writes the file"
+    case .privacy: return "What the file stops saying about you"
+    }
   }
 }
 
