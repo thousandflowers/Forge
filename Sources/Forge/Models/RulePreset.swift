@@ -277,6 +277,21 @@ enum PresetCategory: String, Codable, CaseIterable, Sendable {
     }
   }
 
+  /// One file of this kind, for a sentence: "every image file".
+  var noun: String {
+    switch self {
+    case .image: return "image"
+    case .video: return "video"
+    case .audio: return "audio"
+    case .document: return "document"
+    case .data: return "data"
+    case .model: return "3D model"
+    case .subtitle: return "subtitle"
+    case .font: return "font"
+    case .custom: return "chosen"
+    }
+  }
+
   var title: String {
     switch self {
     case .image: return "Images"
