@@ -101,7 +101,7 @@ struct BatchProcessingView: View {
         kinds: kinds,
         fileCount: vm.files.count,
         totalSize: totalSize,
-        presets: model.usablePresets,
+        presets: model.usablePresets.filter { preset in vm.files.contains { preset.accepts($0.url) } },
         defaultPrivacy: model.settings.privacy,
         choice: $choice,
         onConvert: {

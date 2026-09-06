@@ -102,7 +102,11 @@ enum ConvertKind: String, CaseIterable, Sendable {
     case .image: return .image
     case .video: return .video
     case .audio: return .audio
-    case .document, .data, .model, .subtitle, .font: return .document
+    case .document: return .document
+    case .data: return .data
+    case .model: return .model
+    case .subtitle: return .subtitle
+    case .font: return .font
     }
   }
 

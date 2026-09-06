@@ -31,6 +31,10 @@ struct PresetEditorView: View {
   @State private var showsFormats: Bool
   @State private var showsTemplate: Bool
   @State private var search = ""
+  /// The extensions a custom preset takes. Empty means anything Forge opens.
+  @State private var inputFormats: Set<String>
+  @State private var choosingFormats = false
+  @State private var dropTargeted = false
 
   init(preset: RulePreset?, onSave: @escaping (RulePreset) -> Void, onClose: @escaping () -> Void) {
     self.existing = preset
@@ -50,6 +54,7 @@ struct PresetEditorView: View {
     _nameTemplate = State(initialValue: preset?.nameTemplate ?? "")
     _showsFormats = State(initialValue: !chosen.isEmpty)
     _showsTemplate = State(initialValue: !(preset?.nameTemplate ?? "").isEmpty)
+    _inputFormats = State(initialValue: Set(preset?.inputFormats ?? []))
   }
 
   var body: some View {
@@ -102,63 +107,156 @@ struct PresetEditorView: View {
   // MARK: - Canvas
 
   /// The chain, top to bottom: what comes in, what is asked, what is done,
-  /// what comes out, what it is called. Steps can be dragged into order.
+  /// what comes out, what it is called. A line runs from each block to the
+  /// next, so the canvas reads as the flow it is. Steps drag into order, and
+  /// blocks drop in from the library.
   private var canvas: some View {
     List {
       Group {
         inputBlock
 
         ForEach($parameters) { $parameter in
-          questionBlock($parameter)
+          connected { questionBlock($parameter) }
         }
         .onDelete { parameters.remove(atOffsets: $0) }
 
         ForEach($steps) { $step in
-          stepBlock($step)
+          connected { stepBlock($step) }
         }
         .onMove { steps.move(fromOffsets: $0, toOffset: $1) }
         .onDelete { steps.remove(atOffsets: $0) }
+        .onInsert(of: [.text]) { index, providers in insert(providers, at: index) }
 
-        if showsFormats { formatsBlock }
-        if showsTemplate { templateBlock }
+        if showsFormats { connected { formatsBlock } }
+        if showsTemplate { connected { templateBlock } }
 
-        if steps.isEmpty, !showsFormats, parameters.isEmpty {
-          Text("Add blocks from the library on the right. They run top to bottom.")
+        connected {
+          Text(steps.isEmpty && !showsFormats && parameters.isEmpty
+            ? "Drag a block here from the library, or click its +. They run top to bottom."
+            : "Drop the next block here")
             .font(.callout)
             .foregroundStyle(.secondary)
+            .frame(maxWidth: 640)
             .frame(maxWidth: .infinity)
-            .padding(.top, 8)
+            .padding(.vertical, 14)
+            .background(
+              RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
+                .foregroundStyle(dropTargeted ? Color.accentColor : Color.secondary.opacity(0.3))
+            )
+            .frame(maxWidth: 640)
+            .frame(maxWidth: .infinity)
         }
       }
       .listRowSeparator(.hidden)
       .listRowBackground(Color.clear)
-      .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
+      .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
     }
     .listStyle(.plain)
     .scrollContentBackground(.hidden)
     .frame(maxWidth: .infinity)
     .padding(.horizontal, 24)
     .padding(.vertical, 12)
+    .onDrop(of: [.text], isTargeted: $dropTargeted) { providers in
+      insert(providers, at: nil)
+      return true
+    }
+  }
+
+  /// A block with the line that leads down to it from the one above.
+  private func connected<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+    VStack(spacing: 0) {
+      VStack(spacing: 0) {
+        Rectangle().fill(Color.secondary.opacity(0.35)).frame(width: 2, height: 16)
+        Image(systemName: "arrowtriangle.down.fill")
+          .font(.system(size: 9))
+          .foregroundStyle(Color.secondary.opacity(0.5))
+          .offset(y: -3)
+      }
+      .frame(height: 22)
+      .accessibilityHidden(true)
+      content()
+    }
   }
 
   /// The files this preset takes. Always first, never removed.
   private var inputBlock: some View {
-    block(title: "Files that come in", symbol: category.icon, remove: nil) {
+    block(title: "Files that come in", symbol: category.icon, tint: .teal, remove: nil) {
       HStack(spacing: 10) {
         Picker("Kind", selection: $category) {
-          ForEach(PresetCategory.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
+          ForEach(PresetCategory.allCases, id: \.self) { Text($0.title).tag($0) }
         }
         .labelsHidden()
         .fixedSize()
-        Text("Every file of this kind dropped on Forge, or into a folder it watches, goes through the blocks below.")
-          .font(.callout)
-          .foregroundStyle(.secondary)
+
+        if category == .custom {
+          Button {
+            choosingFormats = true
+          } label: {
+            Label(inputFormats.isEmpty ? "Any file Forge opens" : "\(inputFormats.count) formats", systemImage: "line.3.horizontal.decrease.circle")
+          }
+          .popover(isPresented: $choosingFormats, arrowEdge: .bottom) { formatsPopover }
+          Text("Choose which formats this preset answers to.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        } else {
+          Text("Every \(category.title.lowercased()) file dropped on Forge, or into a folder it watches, goes through the blocks below.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        }
       }
     }
   }
 
+  /// Every format Forge reads, by kind, each one a switch.
+  private var formatsPopover: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      HStack {
+        Text("Formats this preset takes").font(.headline)
+        Spacer()
+        Button("Any") { inputFormats.removeAll() }
+          .disabled(inputFormats.isEmpty)
+      }
+      ScrollView {
+        VStack(alignment: .leading, spacing: 14) {
+          ForEach(InputFormats.groups) { group in
+            VStack(alignment: .leading, spacing: 6) {
+              HStack(spacing: 6) {
+                Image(systemName: group.kind.icon).foregroundStyle(.secondary)
+                Text(group.kind.plural.capitalized).font(.callout.weight(.semibold))
+                Spacer()
+                Button(group.extensions.allSatisfy(inputFormats.contains) ? "None" : "All") {
+                  if group.extensions.allSatisfy(inputFormats.contains) {
+                    inputFormats.subtract(group.extensions)
+                  } else {
+                    inputFormats.formUnion(group.extensions)
+                  }
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+              }
+              FlowLayout(spacing: 6) {
+                ForEach(group.extensions, id: \.self) { ext in
+                  chip(ext.uppercased(), selected: inputFormats.contains(ext)) {
+                    if inputFormats.contains(ext) { inputFormats.remove(ext) } else { inputFormats.insert(ext) }
+                  }
+                }
+              }
+            }
+          }
+        }
+        .padding(.trailing, 8)
+      }
+      Text(inputFormats.isEmpty ? "None chosen: any file Forge can open goes through." : "\(inputFormats.count) formats chosen.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+    .padding(16)
+    .frame(width: 520, height: 480)
+  }
+
   private func questionBlock(_ parameter: Binding<PresetParameter>) -> some View {
-    block(title: "Asks for", symbol: "questionmark.circle", remove: {
+    block(title: "Asks for", symbol: "questionmark.circle", tint: LibraryEntry.Group.ask.color, remove: {
       parameters.removeAll { $0.id == parameter.wrappedValue.id }
     }) {
       HStack(spacing: 8) {
@@ -174,7 +272,7 @@ struct PresetEditorView: View {
   }
 
   private func stepBlock(_ step: Binding<Action>) -> some View {
-    block(title: step.wrappedValue.operation.title, symbol: step.wrappedValue.operation.symbol, remove: {
+    block(title: step.wrappedValue.operation.title, symbol: step.wrappedValue.operation.symbol, tint: step.wrappedValue.tint, remove: {
       steps.removeAll { $0.id == step.wrappedValue.id }
     }) {
       ActionRow(action: step)
@@ -183,7 +281,7 @@ struct PresetEditorView: View {
   }
 
   private var formatsBlock: some View {
-    block(title: "Comes out as", symbol: "arrow.triangle.2.circlepath", remove: {
+    block(title: "Comes out as", symbol: "arrow.triangle.2.circlepath", tint: LibraryEntry.Group.output.color, remove: {
       formats.removeAll()
       showsFormats = false
     }) {
@@ -202,7 +300,7 @@ struct PresetEditorView: View {
   }
 
   private var templateBlock: some View {
-    block(title: "Names files", symbol: "textformat", remove: {
+    block(title: "Names files", symbol: "textformat", tint: LibraryEntry.Group.output.color, remove: {
       nameTemplate = ""
       showsTemplate = false
     }) {
@@ -210,13 +308,13 @@ struct PresetEditorView: View {
     }
   }
 
-  /// The shape every block shares: a titled header, its remove button when
-  /// it has one, and the controls underneath.
-  private func block<Content: View>(title: String, symbol: String, remove: (() -> Void)?, @ViewBuilder content: () -> Content) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        Label(title, systemImage: symbol)
-          .font(.callout.weight(.medium))
+  /// The shape every block shares: a coloured icon and a title, its remove
+  /// button when it has one, and the controls underneath.
+  private func block<Content: View>(title: String, symbol: String, tint: Color, remove: (() -> Void)?, @ViewBuilder content: () -> Content) -> some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(spacing: 8) {
+        blockIcon(symbol, tint: tint)
+        Text(title).font(.callout.weight(.semibold))
         Spacer()
         if let remove {
           Button(action: remove) {
@@ -233,66 +331,128 @@ struct PresetEditorView: View {
     .frame(maxWidth: 640, alignment: .leading)
     .frame(maxWidth: .infinity)
     .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
+    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(tint.opacity(0.35)))
+  }
+
+  /// The coloured square Shortcuts puts in front of an action.
+  private func blockIcon(_ symbol: String, tint: Color, size: CGFloat = 24) -> some View {
+    Image(systemName: symbol)
+      .font(.system(size: size * 0.5, weight: .semibold))
+      .foregroundStyle(.white)
+      .frame(width: size, height: size)
+      .background(RoundedRectangle(cornerRadius: size * 0.28).fill(tint))
   }
 
   // MARK: - Library
 
-  /// Every block that can be added, one click each. Grouped by what it is
-  /// for, and narrowed by the search field.
+  /// Every block that can be added: click its +, or drag it onto the canvas.
+  /// Grouped by what it is for, coloured by group, narrowed by the search.
   private var library: some View {
     VStack(spacing: 0) {
-      TextField("Search blocks", text: $search)
-        .textFieldStyle(.roundedBorder)
-        .padding(12)
+      HStack(spacing: 8) {
+        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+        TextField("Search blocks", text: $search)
+          .textFieldStyle(.plain)
+        if !search.isEmpty {
+          Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+        }
+      }
+      .font(.body)
+      .padding(.horizontal, 10)
+      .frame(height: 32)
+      .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+      .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.secondary.opacity(0.25)))
+      .padding(14)
+
       Divider()
-      // A palette, not a list: a List would spend the first click selecting
-      // the row and the block would never be added.
+
       ScrollView {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 24) {
           ForEach(LibraryEntry.Group.allCases, id: \.self) { group in
             let entries = offered.filter { $0.group == group }
             if !entries.isEmpty {
-              VStack(alignment: .leading, spacing: 2) {
-                Text(group.rawValue)
-                  .font(.caption.weight(.semibold))
-                  .foregroundStyle(.secondary)
-                  .padding(.horizontal, 8)
-                  .padding(.bottom, 4)
+              VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                  Circle().fill(group.color).frame(width: 8, height: 8)
+                  Text(group.rawValue.uppercased())
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 2)
+                .padding(.bottom, 2)
                 ForEach(entries) { entry in
-                  Button {
-                    add(entry)
-                  } label: {
-                    HStack(spacing: 8) {
-                      Image(systemName: entry.symbol)
-                        .foregroundStyle(.tint)
-                        .frame(width: 18)
-                      VStack(alignment: .leading, spacing: 1) {
-                        Text(entry.title)
-                        Text(entry.summary).font(.caption).foregroundStyle(.secondary)
-                      }
-                      Spacer(minLength: 0)
-                      Image(systemName: "plus.circle")
-                        .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .contentShape(RoundedRectangle(cornerRadius: 6))
-                  }
-                  .buttonStyle(.plain)
-                  .disabled(!available(entry))
-                  .opacity(available(entry) ? 1 : 0.45)
-                  .accessibilityLabel(Text("Add \(entry.title)"))
+                  libraryTile(entry)
                 }
               }
             }
           }
+          if offered.isEmpty {
+            Text("No block matches “\(search)”.")
+              .font(.callout)
+              .foregroundStyle(.secondary)
+              .frame(maxWidth: .infinity)
+              .padding(.top, 20)
+          }
         }
-        .padding(12)
+        .padding(14)
       }
     }
-    .frame(width: 280)
+    .frame(width: 300)
     .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+  }
+
+  /// One block in the library: coloured icon, name, what it does, a + to add
+  /// it, and the whole tile drags onto the canvas.
+  private func libraryTile(_ entry: LibraryEntry) -> some View {
+    let usable = available(entry)
+    return HStack(spacing: 10) {
+      blockIcon(entry.symbol, tint: entry.group.color, size: 30)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(entry.title).font(.body.weight(.medium))
+        Text(entry.summary).font(.caption).foregroundStyle(.secondary)
+      }
+      Spacer(minLength: 4)
+      Button {
+        add(entry)
+      } label: {
+        Image(systemName: "plus.circle.fill")
+          .font(.title3)
+          .foregroundStyle(usable ? entry.group.color : Color.secondary)
+      }
+      .buttonStyle(.borderless)
+      .disabled(!usable)
+      .accessibilityLabel(Text("Add \(entry.title)"))
+    }
+    .padding(10)
+    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
+    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(entry.group.color.opacity(0.35)))
+    .opacity(usable ? 1 : 0.45)
+    .contentShape(RoundedRectangle(cornerRadius: 10))
+    .onTapGesture { if usable { add(entry) } }
+    .onDrag { NSItemProvider(object: entry.id as NSString) }
+    .help(usable ? "Click, or drag onto the canvas" : "Already on the canvas")
+  }
+
+  /// Blocks dropped from the library: a step lands where it was dropped, the
+  /// rest go where they always go.
+  private func insert(_ providers: [NSItemProvider], at index: Int?) {
+    for provider in providers where provider.canLoadObject(ofClass: NSString.self) {
+      provider.loadObject(ofClass: NSString.self) { object, _ in
+        guard let id = object as? String else { return }
+        DispatchQueue.main.async { add(id: id, at: index) }
+      }
+    }
+  }
+
+  private func add(id: String, at index: Int?) {
+    guard let entry = LibraryEntry.all(for: category).first(where: { $0.id == id }), available(entry) else { return }
+    if case .step(let kind) = entry.kind, let index {
+      steps.insert(Action(kind.blank(for: category)), at: min(index, steps.count))
+    } else {
+      add(entry)
+    }
   }
 
   private var offered: [LibraryEntry] {
@@ -346,6 +506,10 @@ struct PresetEditorView: View {
     case .video: return OutputFormat.video + OutputFormat.images + OutputFormat.text
     case .audio: return OutputFormat.audio + OutputFormat.text
     case .document: return OutputFormat.documents + OutputFormat.images + OutputFormat.audio
+    case .data: return OutputFormat.data
+    case .model: return OutputFormat.models
+    case .subtitle: return OutputFormat.subtitles + OutputFormat.text
+    case .font: return OutputFormat.fonts
     case .custom:
       return OutputFormat.images + OutputFormat.audio + OutputFormat.video + OutputFormat.documents
     }
@@ -389,6 +553,7 @@ struct PresetEditorView: View {
     preset.parameters = parameters.filter { !$0.key.trimmingCharacters(in: .whitespaces).isEmpty }
     let template = nameTemplate.trimmingCharacters(in: .whitespaces)
     preset.nameTemplate = showsTemplate && !template.isEmpty ? template : nil
+    preset.inputFormats = category == .custom && !inputFormats.isEmpty ? inputFormats.sorted() : nil
 
     onSave(preset)
     onClose()
@@ -403,6 +568,17 @@ struct LibraryEntry: Identifiable {
     case transform = "Changes"
     case encode = "Encodes"
     case privacy = "Privacy"
+
+    /// One colour per group, the way Shortcuts colours its actions.
+    var color: Color {
+      switch self {
+      case .output: return .blue
+      case .ask: return .purple
+      case .transform: return .orange
+      case .encode: return .green
+      case .privacy: return .pink
+      }
+    }
   }
 
   enum Kind {
@@ -537,7 +713,7 @@ enum ActionKind: String, CaseIterable, Identifiable {
     case .limitSize:
       return [.image, .custom].contains(category)
     case .recognizeText:
-      return category != .audio || category == .custom
+      return [.image, .video, .document, .custom].contains(category)
     case .encode:
       return [.video, .audio, .custom].contains(category)
     case .privacy:
@@ -548,6 +724,16 @@ enum ActionKind: String, CaseIterable, Identifiable {
 }
 
 extension Action {
+  /// The colour of the group this step is filed under.
+  var tint: Color {
+    switch operation {
+    case .convertFormat: return LibraryEntry.Group.output.color
+    case .resize, .filter, .recognizeText: return LibraryEntry.Group.transform.color
+    case .quality, .limitSize, .encode: return LibraryEntry.Group.encode.color
+    case .stripMetadata: return LibraryEntry.Group.privacy.color
+    }
+  }
+
   /// Format steps live in their own block, so the step list skips them.
   var isFormat: Bool {
     if case .convertFormat = operation { return true }

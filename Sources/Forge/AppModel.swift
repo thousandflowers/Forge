@@ -422,6 +422,8 @@ final class AppModel: ObservableObject {
   private func processIncoming(_ url: URL, folder: MonitoredFolder) async {
     guard !wroteThis(url) else { return }
     guard let preset = presets.first(where: { $0.id == folder.ruleId }) else { return }
+    // A preset that names its formats leaves everything else in the folder alone.
+    guard preset.accepts(url) else { return }
 
     let file: ProcessableFile
     do {
