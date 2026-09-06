@@ -246,34 +246,50 @@ struct PresetEditorView: View {
         .textFieldStyle(.roundedBorder)
         .padding(12)
       Divider()
-      List {
-        ForEach(LibraryEntry.Group.allCases, id: \.self) { group in
-          let entries = offered.filter { $0.group == group }
-          if !entries.isEmpty {
-            Section(group.rawValue) {
-              ForEach(entries) { entry in
-                Button {
-                  add(entry)
-                } label: {
-                  Label {
-                    VStack(alignment: .leading, spacing: 1) {
-                      Text(entry.title)
-                      Text(entry.summary).font(.caption).foregroundStyle(.secondary)
+      // A palette, not a list: a List would spend the first click selecting
+      // the row and the block would never be added.
+      ScrollView {
+        VStack(alignment: .leading, spacing: 14) {
+          ForEach(LibraryEntry.Group.allCases, id: \.self) { group in
+            let entries = offered.filter { $0.group == group }
+            if !entries.isEmpty {
+              VStack(alignment: .leading, spacing: 2) {
+                Text(group.rawValue)
+                  .font(.caption.weight(.semibold))
+                  .foregroundStyle(.secondary)
+                  .padding(.horizontal, 8)
+                  .padding(.bottom, 4)
+                ForEach(entries) { entry in
+                  Button {
+                    add(entry)
+                  } label: {
+                    HStack(spacing: 8) {
+                      Image(systemName: entry.symbol)
+                        .foregroundStyle(.tint)
+                        .frame(width: 18)
+                      VStack(alignment: .leading, spacing: 1) {
+                        Text(entry.title)
+                        Text(entry.summary).font(.caption).foregroundStyle(.secondary)
+                      }
+                      Spacer(minLength: 0)
+                      Image(systemName: "plus.circle")
+                        .foregroundStyle(.secondary)
                     }
-                  } icon: {
-                    Image(systemName: entry.symbol)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .contentShape(RoundedRectangle(cornerRadius: 6))
                   }
+                  .buttonStyle(.plain)
+                  .disabled(!available(entry))
+                  .opacity(available(entry) ? 1 : 0.45)
+                  .accessibilityLabel(Text("Add \(entry.title)"))
                 }
-                .buttonStyle(.plain)
-                .disabled(!available(entry))
-                .opacity(available(entry) ? 1 : 0.45)
               }
             }
           }
         }
+        .padding(12)
       }
-      .listStyle(.inset)
-      .scrollContentBackground(.hidden)
     }
     .frame(width: 280)
     .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
