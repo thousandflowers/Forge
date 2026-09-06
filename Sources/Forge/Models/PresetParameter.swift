@@ -41,6 +41,16 @@ struct PresetParameter: Codable, Hashable, Identifiable, Sendable {
       }
     }
 
+    /// The key a new question starts with: what the docs and the name
+    /// tokens call it, so `{maxsize}` in a template just works.
+    var defaultKey: String {
+      switch self {
+      case .maxFileSize: return "maxsize"
+      case .width: return "width"
+      case .quality: return "quality"
+      }
+    }
+
     var suggestedDefault: Double {
       switch self {
       case .maxFileSize: return 10

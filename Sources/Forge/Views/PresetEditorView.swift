@@ -75,6 +75,14 @@ struct PresetEditorView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color(nsColor: .windowBackgroundColor))
+    // A crop on an audio preset would run and change nothing, and a JPEG
+    // chosen for images means nothing once the preset is about sound: the
+    // blocks that no longer apply come off the canvas where it can be seen.
+    .onChange(of: category) { kind in
+      steps.removeAll { !$0.kind.suits(kind) }
+      let offered = Set(offeredFormats)
+      formats.removeAll { !offered.contains($0) }
+    }
   }
 
   // MARK: - Top bar
@@ -100,14 +108,44 @@ struct PresetEditorView: View {
 
       Spacer()
 
+      if let reason = cannotSave {
+        Text(reason)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+      }
       Button("Save", action: save)
         .buttonStyle(.borderedProminent)
         .keyboardShortcut(.defaultAction)
-        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || (steps.isEmpty && formats.isEmpty))
-        .help(steps.isEmpty && formats.isEmpty ? "Add a block first: a preset with none would copy the file and call it a conversion." : "")
+        .disabled(cannotSave != nil)
+        .help(cannotSave ?? "")
     }
     .padding(.horizontal, 20)
     .padding(.vertical, 12)
+  }
+
+  /// Why Save is off, in the words the button shows. `nil` means it is on.
+  private var cannotSave: String? {
+    if name.trimmingCharacters(in: .whitespaces).isEmpty { return "Give it a name" }
+    if !keysAreSound { return "Every question needs its own key" }
+    let doesSomething = !steps.isEmpty || !formats.isEmpty || !parameters.isEmpty
+      || (showsTemplate && !nameTemplate.trimmingCharacters(in: .whitespaces).isEmpty)
+    if !doesSomething {
+      return showsFormats ? "Pick a format, or add a step" : "Add a block: with none it would only copy the file"
+    }
+    return nil
+  }
+
+  /// Every question has a key, and no two share one: the key is what a name
+  /// template spends, and two questions under one key answer as one.
+  private var keysAreSound: Bool {
+    let keys = parameters.map { $0.key.trimmingCharacters(in: .whitespaces).lowercased() }
+    return !keys.contains("") && Set(keys).count == keys.count
+  }
+
+  private func keyIsSound(_ parameter: PresetParameter) -> Bool {
+    let key = parameter.key.trimmingCharacters(in: .whitespaces).lowercased()
+    return !key.isEmpty && parameters.filter { $0.key.trimmingCharacters(in: .whitespaces).lowercased() == key }.count == 1
   }
 
   // MARK: - Canvas
@@ -321,6 +359,12 @@ struct PresetEditorView: View {
           TextField("key", text: parameter.key)
             .frame(width: 80)
             .font(.callout.monospaced())
+            .overlay(
+              RoundedRectangle(cornerRadius: 5)
+                .strokeBorder(Color.red.opacity(keyIsSound(parameter.wrappedValue) ? 0 : 0.8))
+                .padding(-2)
+            )
+            .help(keyIsSound(parameter.wrappedValue) ? "Spend it in a name template as {\(parameter.wrappedValue.key)}" : "Every question needs its own key")
           Text("}").foregroundStyle(.tertiary)
           Text(parameter.wrappedValue.kind.unit).foregroundStyle(.secondary).frame(width: 26)
         }
@@ -558,10 +602,10 @@ struct PresetEditorView: View {
   /// A question needs a key nothing else is using, since the key is what a
   /// name template spends.
   private func add(_ kind: PresetParameter.Kind) {
-    var key = kind.rawValue.lowercased()
+    var key = kind.defaultKey
     var attempt = 2
     while parameters.contains(where: { $0.key == key }) {
-      key = "\(kind.rawValue.lowercased())\(attempt)"
+      key = "\(kind.defaultKey)\(attempt)"
       attempt += 1
     }
     parameters.append(PresetParameter(key: key, label: kind.title, kind: kind))
@@ -816,6 +860,21 @@ enum ActionKind: String, CaseIterable, Identifiable {
 }
 
 extension Action {
+  /// The library kind this step came from, so the library's own rules can
+  /// say whether it still applies.
+  var kind: ActionKind {
+    switch operation {
+    case .convertFormat: return .resize  // never in the step list; formats have their own block
+    case .resize(_, _, let mode): return mode == .cropCenter ? .crop : .resize
+    case .quality: return .quality
+    case .filter: return .filter
+    case .recognizeText: return .recognizeText
+    case .encode: return .encode
+    case .limitSize: return .limitSize
+    case .stripMetadata: return .privacy
+    }
+  }
+
   /// The colour of the group this step is filed under.
   var tint: Color {
     switch operation {
