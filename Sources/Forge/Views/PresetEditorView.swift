@@ -21,6 +21,10 @@ struct PresetEditorView: View {
   @State private var parameters: [PresetParameter]
   /// Empty means "use the general one from Settings".
   @State private var nameTemplate: String
+  /// The format block is a step like any other: added from the menu, removed
+  /// with its own button. It starts on screen when the preset writes a format.
+  @State private var showsFormats: Bool
+  @State private var showsTemplate: Bool
 
   /// What the preview should call its sample file: whatever this preset is
   /// about to write, so the line under the field is about this preset.
@@ -40,13 +44,14 @@ struct PresetEditorView: View {
     _actions = State(initialValue: (preset?.actions ?? []).map(Action.init))
     _parameters = State(initialValue: preset?.parameters ?? [])
     _nameTemplate = State(initialValue: preset?.nameTemplate ?? "")
+    let formats = (preset?.actions ?? []).contains { if case .convertFormat = $0 { return true } else { return false } }
+    _showsFormats = State(initialValue: formats)
+    _showsTemplate = State(initialValue: !(preset?.nameTemplate ?? "").isEmpty)
   }
 
   var body: some View {
     VStack(spacing: 0) {
       details
-      Divider()
-      questions
       Divider()
       actionList
       Divider()
@@ -57,75 +62,31 @@ struct PresetEditorView: View {
   }
 
   private var details: some View {
-    Form {
-      TextField("Name", text: $name)
-      TextField("Description", text: $description)
-      Picker("Category", selection: $category) {
-        ForEach(PresetCategory.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
-      }
-    }
-    .formStyle(.grouped)
-    .frame(height: 130)
-  }
-
-  /// What the preset asks before it runs, and what it calls what it writes.
-  ///
-  /// A preset with no questions is a setting: the same thing every time. One
-  /// with questions is a shape — "fit under a size you choose" — and the answer
-  /// can be spent in the filename.
-  private var questions: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        Text("Asks for").font(.headline)
+    VStack(spacing: 0) {
+      detailRow { TextField("Name", text: $name) }
+      Divider().padding(.leading, 12)
+      detailRow { TextField("Description", text: $description) }
+      Divider().padding(.leading, 12)
+      detailRow {
+        Text("Category")
         Spacer()
-        Menu {
-          ForEach(PresetParameter.Kind.allCases, id: \.self) { kind in
-            Button(kind.title) { add(kind) }
-          }
-        } label: {
-          Label("Add Question", systemImage: "plus")
+        Picker("Category", selection: $category) {
+          ForEach(PresetCategory.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
         }
-        .menuStyle(.borderlessButton)
+        .labelsHidden()
         .fixedSize()
       }
-
-      if parameters.isEmpty {
-        Text("Nothing. This preset does the same thing every time.")
-          .font(.callout)
-          .foregroundStyle(.secondary)
-      } else {
-        ForEach($parameters) { $parameter in
-          HStack(spacing: 8) {
-            TextField("Question", text: $parameter.label)
-            Text("{").foregroundStyle(.tertiary)
-            TextField("key", text: $parameter.key)
-              .frame(width: 80)
-              .font(.callout.monospaced())
-            Text("}").foregroundStyle(.tertiary)
-            Text(parameter.kind.unit).foregroundStyle(.secondary).frame(width: 26)
-            Button {
-              parameters.removeAll { $0.id == parameter.id }
-            } label: {
-              Image(systemName: "minus.circle")
-            }
-            .buttonStyle(.borderless)
-            .accessibilityLabel(Text("Remove \(parameter.label)"))
-          }
-        }
-      }
-
-      HStack(alignment: .top, spacing: 8) {
-        Text("Names files").foregroundStyle(.secondary).padding(.top, 3)
-        TemplateField(
-          title: "Names files",
-          template: $nameTemplate,
-          sampleExtension: outputExtension
-        )
-      }
-      .padding(.top, 4)
     }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 12)
+    .textFieldStyle(.plain)
+    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
+    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
+    .padding(16)
+  }
+
+  private func detailRow<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+    HStack(spacing: 8) { content() }
+      .padding(.horizontal, 12)
+      .frame(height: 34)
   }
 
   /// A question needs a key nothing else is using, since the key is what a
@@ -144,7 +105,13 @@ struct PresetEditorView: View {
   private var actionList: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 14) {
-        formatsBlock
+        if showsFormats { formatsBlock }
+
+        ForEach($parameters) { $parameter in
+          questionBlock($parameter)
+        }
+
+        if showsTemplate { templateBlock }
 
         ForEach($actions) { $action in
           if !$action.wrappedValue.isFormat {
@@ -152,40 +119,125 @@ struct PresetEditorView: View {
           }
         }
 
-        // The + belongs under the steps, where the next one would go, not in a
-        // corner of the window that has nothing to do with the list.
-        Menu {
-          ForEach(offeredKinds) { kind in
-            Button {
-              actions.append(Action(kind.blank(for: category)))
-            } label: {
-              Label(kind.title, systemImage: kind.symbol)
-            }
-          }
-        } label: {
-          Label("Add a step", systemImage: "plus")
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
+        // The + belongs under the steps, where the next one would go, and in
+        // the middle of the sheet rather than tucked into a corner.
+        HStack {
+          Spacer()
+          addStepMenu
+          Spacer()
         }
-        .menuStyle(.borderlessButton)
-        .background(
-          RoundedRectangle(cornerRadius: 8)
-            .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5]))
-            .foregroundStyle(Color.secondary.opacity(0.3))
-        )
       }
       .padding(16)
     }
+  }
+
+  private var addStepMenu: some View {
+    Menu {
+      Button {
+        showsFormats = true
+      } label: {
+        Label("Comes out as", systemImage: "arrow.triangle.2.circlepath")
+      }
+      .disabled(showsFormats)
+
+      Menu {
+        ForEach(PresetParameter.Kind.allCases, id: \.self) { kind in
+          Button(kind.title) { add(kind) }
+        }
+      } label: {
+        Label("Asks a question", systemImage: "questionmark.circle")
+      }
+
+      Button {
+        showsTemplate = true
+      } label: {
+        Label("Names files", systemImage: "textformat")
+      }
+      .disabled(showsTemplate)
+
+      Divider()
+
+      ForEach(offeredKinds) { kind in
+        Button {
+          actions.append(Action(kind.blank(for: category)))
+        } label: {
+          Label(kind.title, systemImage: kind.symbol)
+        }
+      }
+    } label: {
+      Label("Add a step", systemImage: "plus")
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+    .menuStyle(.borderlessButton)
+    .fixedSize()
+    .background(
+      RoundedRectangle(cornerRadius: 8)
+        .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5]))
+        .foregroundStyle(Color.secondary.opacity(0.3))
+    )
+  }
+
+  /// One question the preset asks, as a block: what it is called, the key a
+  /// name template spends, and the unit the answer comes in.
+  private func questionBlock(_ parameter: Binding<PresetParameter>) -> some View {
+    block(title: "Asks for", symbol: "questionmark.circle", remove: {
+      parameters.removeAll { $0.id == parameter.wrappedValue.id }
+    }) {
+      HStack(spacing: 8) {
+        TextField("Question", text: parameter.label)
+        Text("{").foregroundStyle(.tertiary)
+        TextField("key", text: parameter.key)
+          .frame(width: 80)
+          .font(.callout.monospaced())
+        Text("}").foregroundStyle(.tertiary)
+        Text(parameter.wrappedValue.kind.unit).foregroundStyle(.secondary).frame(width: 26)
+      }
+    }
+  }
+
+  /// What the preset calls what it writes, as a block. Removing it hands the
+  /// naming back to the general template in Settings.
+  private var templateBlock: some View {
+    block(title: "Names files", symbol: "textformat", remove: {
+      nameTemplate = ""
+      showsTemplate = false
+    }) {
+      TemplateField(title: "Names files", template: $nameTemplate, sampleExtension: outputExtension)
+    }
+  }
+
+  /// The shape every block shares: a titled header with its own remove
+  /// button, and the controls underneath.
+  private func block<Content: View>(title: String, symbol: String, remove: @escaping () -> Void, @ViewBuilder content: () -> Content) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        Label(title, systemImage: symbol)
+          .font(.callout.weight(.medium))
+        Spacer()
+        Button(action: remove) {
+          Image(systemName: "minus.circle")
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel(Text("Remove \(title)"))
+      }
+      content()
+    }
+    .padding(12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
+    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
   }
 
   /// What the files come out as. One or several: picking a second format does
   /// not replace the first, it makes a second copy — which is how one photo
   /// becomes a JPEG for the web and a PNG to keep.
   private var formatsBlock: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Label("Comes out as", systemImage: "arrow.triangle.2.circlepath")
-        .font(.callout.weight(.medium))
-
+    block(title: "Comes out as", symbol: "arrow.triangle.2.circlepath", remove: {
+      actions.removeAll { $0.isFormat }
+      showsFormats = false
+    }) {
       FlowLayout(spacing: 6) {
         chip("Same format", selected: chosenFormats.isEmpty) {
           actions.removeAll { $0.isFormat }
@@ -201,28 +253,15 @@ struct PresetEditorView: View {
           .foregroundStyle(.secondary)
       }
     }
-    .padding(12)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
   }
 
   private func stepBlock(_ action: Binding<Action>) -> some View {
-    HStack(alignment: .top, spacing: 8) {
+    block(title: action.wrappedValue.operation.title, symbol: action.wrappedValue.operation.symbol, remove: {
+      actions.removeAll { $0.id == action.wrappedValue.id }
+    }) {
       ActionRow(action: action)
-      Spacer(minLength: 0)
-      Button {
-        actions.removeAll { $0.id == action.wrappedValue.id }
-      } label: {
-        Image(systemName: "minus.circle")
-      }
-      .buttonStyle(.borderless)
-      .foregroundStyle(.secondary)
-      .accessibilityLabel(Text("Remove \(action.wrappedValue.operation.title)"))
+        .padding(.leading, 22)
     }
-    .padding(12)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
   }
 
   private var chosenFormats: [OutputFormat] {
@@ -308,7 +347,7 @@ struct PresetEditorView: View {
     )
     preset.parameters = parameters.filter { !$0.key.trimmingCharacters(in: .whitespaces).isEmpty }
     let template = nameTemplate.trimmingCharacters(in: .whitespaces)
-    preset.nameTemplate = template.isEmpty ? nil : template
+    preset.nameTemplate = showsTemplate && !template.isEmpty ? template : nil
 
     onSave(preset)
     dismiss()
@@ -412,12 +451,7 @@ private struct ActionRow: View {
   @Binding var action: Action
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      Label(action.operation.title, systemImage: action.operation.symbol)
-        .font(.callout.weight(.medium))
-      settings
-        .padding(.leading, 22)
-    }
+    settings
   }
 
   @ViewBuilder
