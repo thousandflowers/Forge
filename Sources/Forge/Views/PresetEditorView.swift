@@ -181,7 +181,7 @@ struct PresetEditorView: View {
 
   /// The files this preset takes. Always first, never removed.
   private var inputBlock: some View {
-    block(title: "Files that come in", symbol: category.icon, tint: .teal, remove: nil) {
+    block(title: "Files that come in", symbol: category.icon, tint: Color(red: 0.38, green: 0.62, blue: 0.68), remove: nil) {
       HStack(spacing: 10) {
         Picker("Kind", selection: $category) {
           ForEach(PresetCategory.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -193,12 +193,15 @@ struct PresetEditorView: View {
           Button {
             choosingFormats = true
           } label: {
-            Label(inputFormats.isEmpty ? "Any file Forge opens" : "\(inputFormats.count) formats", systemImage: "line.3.horizontal.decrease.circle")
+            Label("Choose formats…", systemImage: "line.3.horizontal.decrease.circle")
           }
+          // The anchor keeps one width whatever is chosen: a label that grew
+          // with the count moved the popover under the pointer at every click.
           .popover(isPresented: $choosingFormats, arrowEdge: .bottom) { formatsPopover }
-          Text("Choose which formats this preset answers to.")
+          Text(inputFormats.isEmpty ? "Any file Forge opens." : "\(inputFormats.count) formats chosen.")
             .font(.callout)
             .foregroundStyle(.secondary)
+            .monospacedDigit()
         } else {
           Text("Every \(category.noun) file dropped on Forge, or into a folder it watches, goes through the blocks below.")
             .font(.callout)
@@ -255,18 +258,52 @@ struct PresetEditorView: View {
     .frame(width: 520, height: 480)
   }
 
+  /// One thing the preset asks for, and where the answer comes from: a
+  /// window once per batch, or the file's own name. Files that say nothing
+  /// use the default.
   private func questionBlock(_ parameter: Binding<PresetParameter>) -> some View {
     block(title: "Asks for", symbol: "questionmark.circle", tint: LibraryEntry.Group.ask.color, remove: {
       parameters.removeAll { $0.id == parameter.wrappedValue.id }
     }) {
-      HStack(spacing: 8) {
-        TextField("Question", text: parameter.label)
-        Text("{").foregroundStyle(.tertiary)
-        TextField("key", text: parameter.key)
+      VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 8) {
+          TextField("Question", text: parameter.label)
+          Text("{").foregroundStyle(.tertiary)
+          TextField("key", text: parameter.key)
+            .frame(width: 80)
+            .font(.callout.monospaced())
+          Text("}").foregroundStyle(.tertiary)
+          Text(parameter.wrappedValue.kind.unit).foregroundStyle(.secondary).frame(width: 26)
+        }
+
+        Picker("Answer", selection: parameter.source) {
+          ForEach(PresetParameter.Source.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(maxWidth: 340)
+
+        HStack(spacing: 10) {
+          Text("Default")
+            .foregroundStyle(.secondary)
+          TextField("Default", text: Binding(
+            get: { String(format: "%g", parameter.wrappedValue.defaultValue) },
+            set: { text in
+              let typed = Double(text.replacingOccurrences(of: ",", with: ".")) ?? parameter.wrappedValue.kind.suggestedDefault
+              let range = parameter.wrappedValue.kind.range
+              parameter.wrappedValue.defaultValue = min(max(typed, range.lowerBound), range.upperBound)
+            }
+          ))
           .frame(width: 80)
-          .font(.callout.monospaced())
-        Text("}").foregroundStyle(.tertiary)
-        Text(parameter.wrappedValue.kind.unit).foregroundStyle(.secondary).frame(width: 26)
+          Text(parameter.wrappedValue.kind.unit).foregroundStyle(.secondary)
+        }
+
+        Text(parameter.wrappedValue.source == .prompt
+          ? "A small window asks for it once per batch, before the files run."
+          : "Read from the file's own name: \(parameter.wrappedValue.nameExample) says it. A file that says nothing uses the default.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
       }
     }
   }
@@ -331,13 +368,13 @@ struct PresetEditorView: View {
     .frame(maxWidth: 640, alignment: .leading)
     .frame(maxWidth: .infinity)
     .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(tint.opacity(0.35)))
+    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(tint.opacity(0.25)))
   }
 
   /// The coloured square Shortcuts puts in front of an action.
-  private func blockIcon(_ symbol: String, tint: Color, size: CGFloat = 24) -> some View {
+  private func blockIcon(_ symbol: String, tint: Color, size: CGFloat = 20) -> some View {
     Image(systemName: symbol)
-      .font(.system(size: size * 0.5, weight: .semibold))
+      .font(.system(size: size * 0.52, weight: .medium))
       .foregroundStyle(.white)
       .frame(width: size, height: size)
       .background(RoundedRectangle(cornerRadius: size * 0.28).fill(tint))
@@ -408,9 +445,9 @@ struct PresetEditorView: View {
   private func libraryTile(_ entry: LibraryEntry) -> some View {
     let usable = available(entry)
     return HStack(spacing: 10) {
-      blockIcon(entry.symbol, tint: entry.group.color, size: 30)
+      blockIcon(entry.symbol, tint: entry.group.color, size: 22)
       VStack(alignment: .leading, spacing: 2) {
-        Text(entry.title).font(.body.weight(.medium))
+        Text(entry.title).font(.callout.weight(.medium))
         Text(entry.summary).font(.caption).foregroundStyle(.secondary)
       }
       Spacer(minLength: 4)
@@ -418,16 +455,16 @@ struct PresetEditorView: View {
         add(entry)
       } label: {
         Image(systemName: "plus.circle.fill")
-          .font(.title3)
+          .font(.body)
           .foregroundStyle(usable ? entry.group.color : Color.secondary)
       }
       .buttonStyle(.borderless)
       .disabled(!usable)
       .accessibilityLabel(Text("Add \(entry.title)"))
     }
-    .padding(10)
+    .padding(8)
     .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(entry.group.color.opacity(0.35)))
+    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(entry.group.color.opacity(0.25)))
     .opacity(usable ? 1 : 0.45)
     .contentShape(RoundedRectangle(cornerRadius: 10))
     .onTapGesture { if usable { add(entry) } }
@@ -572,11 +609,11 @@ struct LibraryEntry: Identifiable {
     /// One colour per group, the way Shortcuts colours its actions.
     var color: Color {
       switch self {
-      case .output: return .blue
-      case .ask: return .purple
-      case .transform: return .orange
-      case .encode: return .green
-      case .privacy: return .pink
+      case .output: return Color(red: 0.36, green: 0.53, blue: 0.80)
+      case .ask: return Color(red: 0.58, green: 0.48, blue: 0.76)
+      case .transform: return Color(red: 0.80, green: 0.58, blue: 0.34)
+      case .encode: return Color(red: 0.40, green: 0.64, blue: 0.50)
+      case .privacy: return Color(red: 0.78, green: 0.45, blue: 0.53)
       }
     }
   }
