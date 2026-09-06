@@ -26,6 +26,7 @@ struct ContentView: View {
           onSave: { model.savePreset($0) },
           onClose: { model.presetEditor = nil }
         )
+        .id(request.id)
         .transition(.move(edge: .bottom).combined(with: .opacity))
       }
     }

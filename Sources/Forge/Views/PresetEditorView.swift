@@ -34,6 +34,10 @@ struct PresetEditorView: View {
   /// The extensions a custom preset takes. Empty means anything Forge opens.
   @State private var inputFormats: Set<String>
   @State private var choosingFormats = false
+  @State private var confirmingDiscard = false
+  @FocusState private var focus: Field?
+
+  private enum Field { case name, description }
   /// Where a dragged block would land: a step's id, or `end`.
   @State private var dropTarget: DropSpot?
 
@@ -89,8 +93,16 @@ struct PresetEditorView: View {
 
   private var topBar: some View {
     HStack(spacing: 16) {
-      Button("Cancel", action: onClose)
-        .keyboardShortcut(.cancelAction)
+      Button("Cancel") {
+        if isDirty { confirmingDiscard = true } else { onClose() }
+      }
+      .keyboardShortcut(.cancelAction)
+      .confirmationDialog("Discard the changes to this preset?", isPresented: $confirmingDiscard) {
+        Button("Discard Changes", role: .destructive, action: onClose)
+        Button("Keep Editing", role: .cancel) {}
+      } message: {
+        Text("What you changed here has not been saved.")
+      }
 
       Spacer()
 
@@ -98,10 +110,14 @@ struct PresetEditorView: View {
         TextField("Name this preset", text: $name)
           .font(.title3.weight(.semibold))
           .multilineTextAlignment(.center)
+          .focused($focus, equals: .name)
+          .onSubmit { focus = .description }
         TextField("What it does, in a line", text: $description)
           .font(.callout)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
+          .focused($focus, equals: .description)
+          .onSubmit { focus = nil }
       }
       .textFieldStyle(.plain)
       .frame(maxWidth: 440)
@@ -114,9 +130,11 @@ struct PresetEditorView: View {
           .foregroundStyle(.secondary)
           .lineLimit(1)
       }
+      // ⌘S, not Return: Return in the name field used to save a preset that
+      // was not finished being written.
       Button("Save", action: save)
         .buttonStyle(.borderedProminent)
-        .keyboardShortcut(.defaultAction)
+        .keyboardShortcut("s", modifiers: .command)
         .disabled(cannotSave != nil)
         .help(cannotSave ?? "")
     }
@@ -661,7 +679,22 @@ struct PresetEditorView: View {
 
   // MARK: - Saving
 
-  private func save() {
+  /// Whether anything differs from what was opened. A new preset with
+  /// nothing typed is not dirty; a new preset with a name is.
+  private var isDirty: Bool {
+    let now = draft()
+    guard let existing else {
+      return !now.name.isEmpty || !now.description.isEmpty || !now.actions.isEmpty
+        || !now.parameters.isEmpty || now.nameTemplate != nil || now.inputFormats != nil
+    }
+    return now.name != existing.name || now.description != existing.description
+      || now.category != existing.category || now.actions != existing.actions
+      || now.parameters != existing.parameters || now.nameTemplate != existing.nameTemplate
+      || now.inputFormats != existing.inputFormats
+  }
+
+  /// The preset as it stands on the canvas.
+  private func draft() -> RulePreset {
     var preset = RulePreset(
       id: existing?.id ?? UUID(),
       name: name.trimmingCharacters(in: .whitespaces),
@@ -673,10 +706,17 @@ struct PresetEditorView: View {
     let template = nameTemplate.trimmingCharacters(in: .whitespaces)
     preset.nameTemplate = showsTemplate && !template.isEmpty ? template : nil
     preset.inputFormats = category == .custom && !inputFormats.isEmpty ? inputFormats.sorted() : nil
+    return preset
+  }
 
+  private func save() {
+    var preset = draft()
+    preset.position = existing?.position ?? 0
+    preset.isEnabled = existing?.isEnabled ?? true
     onSave(preset)
     onClose()
   }
+
 }
 
 private extension View {
