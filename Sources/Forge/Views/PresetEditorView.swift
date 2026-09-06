@@ -53,6 +53,7 @@ struct PresetEditorView: View {
       footer
     }
     .frame(width: 560, height: 700)
+    .translucentSheet()
   }
 
   private var details: some View {

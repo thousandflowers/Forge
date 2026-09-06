@@ -16,6 +16,7 @@ struct ContentView: View {
       detail
     }
     .task { await model.bootstrap() }
+    .preferredColorScheme(model.settings.appearance.colorScheme)
     // Running something again from History is a conversion, so the Convert
     // screen is where it happens.
     .onChange(of: model.pending) { pending in if pending != nil { section = .process } }

@@ -29,6 +29,7 @@ struct RedactionReviewSheet: View {
       footer
     }
     .frame(width: 720, height: 620)
+    .translucentSheet()
     .task { await look() }
   }
 

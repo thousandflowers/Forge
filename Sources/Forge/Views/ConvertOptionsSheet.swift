@@ -148,6 +148,7 @@ struct ConvertOptionsSheet: View {
       footer
     }
     .frame(width: 680, height: 600)
+    .translucentSheet()
   }
 
   // MARK: - Header
