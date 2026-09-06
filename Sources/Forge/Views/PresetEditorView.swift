@@ -200,7 +200,7 @@ struct PresetEditorView: View {
             .font(.callout)
             .foregroundStyle(.secondary)
         } else {
-          Text("Every \(category.title.lowercased()) file dropped on Forge, or into a folder it watches, goes through the blocks below.")
+          Text("Every \(category.noun) file dropped on Forge, or into a folder it watches, goes through the blocks below.")
             .font(.callout)
             .foregroundStyle(.secondary)
         }
