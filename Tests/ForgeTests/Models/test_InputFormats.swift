@@ -30,6 +30,17 @@ final class InputFormatsTests: XCTestCase {
     XCTAssertFalse(images.accepts(URL(fileURLWithPath: "/tmp/a.mp3")))
   }
 
+  func testDocumentPresetsStillTakeDataModelsSubtitlesAndFonts() {
+    let documents = preset(.document)
+
+    XCTAssertTrue(documents.accepts(URL(fileURLWithPath: "/tmp/table.csv")), "a CSV sat on the Documents shelf before it had its own")
+    XCTAssertTrue(documents.accepts(URL(fileURLWithPath: "/tmp/subs.srt")))
+    XCTAssertTrue(documents.accepts(URL(fileURLWithPath: "/tmp/page.pdf")))
+    XCTAssertFalse(documents.accepts(URL(fileURLWithPath: "/tmp/photo.png")))
+    XCTAssertTrue(preset(.data).accepts(URL(fileURLWithPath: "/tmp/table.csv")))
+    XCTAssertFalse(preset(.data).accepts(URL(fileURLWithPath: "/tmp/page.pdf")))
+  }
+
   func testInputFormatsRoundTripThroughJSON() throws {
     let saved = preset(.custom, formats: ["srt", "vtt"])
 

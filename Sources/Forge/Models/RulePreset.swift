@@ -238,8 +238,9 @@ extension RulePreset {
   /// the sheet and the watcher both ask this before offering it.
   func accepts(_ url: URL) -> Bool {
     guard let inputFormats, !inputFormats.isEmpty else {
-      guard category != .custom, let type = UTType(filenameExtension: url.pathExtension) else { return true }
-      return ConvertKind(fileType: type)?.presetCategory == category || ConvertKind(fileType: type) == nil
+      guard category != .custom, let type = UTType(filenameExtension: url.pathExtension),
+            let kind = ConvertKind(fileType: type) else { return true }
+      return category.covers(kind)
     }
     return inputFormats.contains(url.pathExtension.lowercased())
   }
@@ -290,6 +291,17 @@ enum PresetCategory: String, Codable, CaseIterable, Sendable {
     case .font: return "font"
     case .custom: return "chosen"
     }
+  }
+
+  /// Whether a file of this kind belongs to this category.
+  ///
+  /// Documents covers data files, 3D models, subtitles and fonts as well as
+  /// documents: those kinds sat on the Documents shelf until they had shelves
+  /// of their own, and a preset or a watched folder saved back then must keep
+  /// taking the files it always took.
+  func covers(_ kind: ConvertKind) -> Bool {
+    if kind.presetCategory == self { return true }
+    return self == .document && [.data, .model, .subtitle, .font].contains(kind)
   }
 
   var title: String {
