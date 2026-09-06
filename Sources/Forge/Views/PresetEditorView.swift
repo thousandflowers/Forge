@@ -34,7 +34,13 @@ struct PresetEditorView: View {
   /// The extensions a custom preset takes. Empty means anything Forge opens.
   @State private var inputFormats: Set<String>
   @State private var choosingFormats = false
-  @State private var dropTargeted = false
+  /// Where a dragged block would land: a step's id, or `end`.
+  @State private var dropTarget: DropSpot?
+
+  fileprivate enum DropSpot: Equatable {
+    case before(UUID)
+    case end
+  }
 
   init(preset: RulePreset?, onSave: @escaping (RulePreset) -> Void, onClose: @escaping () -> Void) {
     self.existing = preset
@@ -108,60 +114,103 @@ struct PresetEditorView: View {
 
   /// The chain, top to bottom: what comes in, what is asked, what is done,
   /// what comes out, what it is called. A line runs from each block to the
-  /// next, so the canvas reads as the flow it is. Steps drag into order, and
-  /// blocks drop in from the library.
+  /// next, so the canvas reads as the flow it is. Every block is a place to
+  /// drop: a library block lands there, a step dragged from elsewhere on the
+  /// canvas moves there.
+  ///
+  /// A plain scroll view, not a List: a List only took drops on rows it
+  /// already had, wanted a click to select a row before its fields would
+  /// take typing, and drew its own drag previews.
   private var canvas: some View {
-    List {
-      Group {
+    ScrollView {
+      VStack(spacing: 0) {
         inputBlock
 
-        ForEach($parameters) { $parameter in
-          connected { questionBlock($parameter) }
+        ForEach($parameters) { parameter in
+          questionRow(parameter)
         }
-        .onDelete { parameters.remove(atOffsets: $0) }
 
-        ForEach($steps) { $step in
-          connected { stepBlock($step) }
+        ForEach($steps) { step in
+          stepRow(step)
         }
-        .onMove { steps.move(fromOffsets: $0, toOffset: $1) }
-        .onDelete { steps.remove(atOffsets: $0) }
-        .onInsert(of: [.text]) { index, providers in insert(providers, at: index) }
 
-        if showsFormats { connected { formatsBlock } }
-        if showsTemplate { connected { templateBlock } }
+        if showsFormats { connected { formatsBlock }.dropSpot(.end, into: self) }
+        if showsTemplate { connected { templateBlock }.dropSpot(.end, into: self) }
 
         connected {
           Text(steps.isEmpty && !showsFormats && parameters.isEmpty
-            ? "Drag a block here from the library, or click its +. They run top to bottom."
+            ? "Drag a block here from the library, or click it. They run top to bottom."
             : "Drop the next block here")
             .font(.callout)
             .foregroundStyle(.secondary)
-            .frame(maxWidth: 640)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
             .background(
               RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
-                .foregroundStyle(dropTargeted ? Color.accentColor : Color.secondary.opacity(0.3))
+                .foregroundStyle(dropTarget == .end ? Color.accentColor : Color.secondary.opacity(0.3))
             )
             .frame(maxWidth: 640)
             .frame(maxWidth: .infinity)
         }
+        .dropSpot(.end, into: self)
       }
-      .listRowSeparator(.hidden)
-      .listRowBackground(Color.clear)
-      .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+      .padding(.horizontal, 24)
+      .padding(.vertical, 16)
     }
-    .listStyle(.plain)
-    .scrollContentBackground(.hidden)
     .frame(maxWidth: .infinity)
-    .padding(.horizontal, 24)
-    .padding(.vertical, 12)
-    .onDrop(of: [.text], isTargeted: $dropTargeted) { providers in
-      insert(providers, at: nil)
+    // Anywhere else on the canvas: the block goes on the end.
+    .onDrop(of: [.text], isTargeted: nil) { providers in
+      receive(providers, at: .end)
       return true
     }
   }
+
+  /// A question on the canvas: dropping a step on it puts the step first.
+  private func questionRow(_ parameter: Binding<PresetParameter>) -> some View {
+    connected { questionBlock(parameter) }
+      .dropSpot(steps.first.map { .before($0.id) } ?? .end, into: self)
+  }
+
+  /// A step on the canvas: drags to reorder, takes drops in front of itself.
+  private func stepRow(_ step: Binding<Action>) -> some View {
+    let id = step.wrappedValue.id
+    return connected { stepBlock(step) }
+      .onDrag { NSItemProvider(object: "step:\(id.uuidString)" as NSString) }
+      .dropSpot(.before(id), into: self)
+  }
+
+  /// What a drop means, once the payload has been read: a library block to
+  /// add at the spot, or a step already on the canvas to move there.
+  fileprivate func receive(_ providers: [NSItemProvider], at spot: DropSpot) {
+    for provider in providers where provider.canLoadObject(ofClass: NSString.self) {
+      provider.loadObject(ofClass: NSString.self) { object, _ in
+        guard let payload = object as? String else { return }
+        DispatchQueue.main.async { land(payload, at: spot) }
+      }
+    }
+  }
+
+  private func land(_ payload: String, at spot: DropSpot) {
+    let index: Int? = {
+      if case .before(let id) = spot { return steps.firstIndex { $0.id == id } }
+      return nil
+    }()
+    if payload.hasPrefix("step:"), let moving = steps.firstIndex(where: { $0.id.uuidString == payload.dropFirst(5) }) {
+      let step = steps.remove(at: moving)
+      var target = index ?? steps.count
+      if let index, moving < index { target = index - 1 }
+      steps.insert(step, at: min(target, steps.count))
+    } else {
+      add(id: payload, at: index)
+    }
+  }
+
+  fileprivate func setDropTarget(_ spot: DropSpot, _ on: Bool) {
+    if on { dropTarget = spot } else if dropTarget == spot { dropTarget = nil }
+  }
+
+  fileprivate func isDropTarget(_ spot: DropSpot) -> Bool { dropTarget == spot }
 
   /// A block with the line that leads down to it from the one above.
   private func connected<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -440,47 +489,36 @@ struct PresetEditorView: View {
     .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
   }
 
-  /// One block in the library: coloured icon, name, what it does, a + to add
-  /// it, and the whole tile drags onto the canvas.
+  /// One block in the library: coloured icon, name, what it does. The whole
+  /// tile is a button, and the whole tile drags onto the canvas.
   private func libraryTile(_ entry: LibraryEntry) -> some View {
     let usable = available(entry)
-    return HStack(spacing: 10) {
-      blockIcon(entry.symbol, tint: entry.group.color, size: 22)
-      VStack(alignment: .leading, spacing: 2) {
-        Text(entry.title).font(.callout.weight(.medium))
-        Text(entry.summary).font(.caption).foregroundStyle(.secondary)
-      }
-      Spacer(minLength: 4)
-      Button {
-        add(entry)
-      } label: {
-        Image(systemName: "plus.circle.fill")
+    return Button {
+      add(entry)
+    } label: {
+      HStack(spacing: 10) {
+        blockIcon(entry.symbol, tint: entry.group.color, size: 22)
+        VStack(alignment: .leading, spacing: 2) {
+          Text(entry.title).font(.callout.weight(.medium))
+          Text(entry.summary).font(.caption).foregroundStyle(.secondary)
+        }
+        Spacer(minLength: 4)
+        Image(systemName: usable ? "plus.circle.fill" : "checkmark.circle")
           .font(.body)
           .foregroundStyle(usable ? entry.group.color : Color.secondary)
       }
-      .buttonStyle(.borderless)
-      .disabled(!usable)
-      .accessibilityLabel(Text("Add \(entry.title)"))
+      .padding(8)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
+      .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(entry.group.color.opacity(0.25)))
+      .contentShape(RoundedRectangle(cornerRadius: 10))
     }
-    .padding(8)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(entry.group.color.opacity(0.25)))
+    .buttonStyle(.plain)
+    .disabled(!usable)
     .opacity(usable ? 1 : 0.45)
-    .contentShape(RoundedRectangle(cornerRadius: 10))
-    .onTapGesture { if usable { add(entry) } }
     .onDrag { NSItemProvider(object: entry.id as NSString) }
     .help(usable ? "Click, or drag onto the canvas" : "Already on the canvas")
-  }
-
-  /// Blocks dropped from the library: a step lands where it was dropped, the
-  /// rest go where they always go.
-  private func insert(_ providers: [NSItemProvider], at index: Int?) {
-    for provider in providers where provider.canLoadObject(ofClass: NSString.self) {
-      provider.loadObject(ofClass: NSString.self) { object, _ in
-        guard let id = object as? String else { return }
-        DispatchQueue.main.async { add(id: id, at: index) }
-      }
-    }
+    .accessibilityLabel(Text("Add \(entry.title)"))
   }
 
   private func add(id: String, at index: Int?) {
@@ -594,6 +632,23 @@ struct PresetEditorView: View {
 
     onSave(preset)
     onClose()
+  }
+}
+
+private extension View {
+  /// Makes a block a place to drop: a library block lands here, a step dragged
+  /// from elsewhere moves here. Highlights while something hovers.
+  func dropSpot(_ spot: PresetEditorView.DropSpot, into editor: PresetEditorView) -> some View {
+    self
+      .overlay(alignment: .top) {
+        if editor.isDropTarget(spot), spot != .end {
+          Rectangle().fill(Color.accentColor).frame(width: 640, height: 3).offset(y: 8)
+        }
+      }
+      .onDrop(of: [.text], isTargeted: Binding(get: { editor.isDropTarget(spot) }, set: { editor.setDropTarget(spot, $0) })) { providers in
+        editor.receive(providers, at: spot)
+        return true
+      }
   }
 }
 
