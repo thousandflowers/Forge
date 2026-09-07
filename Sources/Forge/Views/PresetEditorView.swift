@@ -303,11 +303,13 @@ struct PresetEditorView: View {
         .padding(.horizontal, 60)
         .padding(.top, 10)
 
-      ScrollView(.horizontal, showsIndicators: false) {
+      // The arms sit centred under the node, sharing the width between them.
+      HStack(alignment: .top, spacing: 16) {
+        Spacer(minLength: 0)
         HStack(alignment: .top, spacing: 16) {
           ForEach(step.branches) { branch in
             arm(branch, of: step, renamable: isSplit)
-              .frame(minWidth: 260, maxWidth: 420)
+              .frame(minWidth: 180, maxWidth: 420)
           }
           if isSplit {
             Button {
@@ -329,8 +331,10 @@ struct PresetEditorView: View {
             .padding(.top, 22)
           }
         }
-        .padding(.horizontal, 8)
+        Spacer(minLength: 0)
       }
+      .frame(maxWidth: .infinity)
+      .padding(.horizontal, 8)
     }
   }
 
@@ -963,32 +967,55 @@ extension View {
   }
 }
 
-/// A condition, as three controls in a row.
+/// A condition, as a row of controls that change with what is being tested.
 struct ConditionEditor: View {
   @Binding var condition: Condition
 
   var body: some View {
     HStack(spacing: 6) {
-      Picker("", selection: $condition.subject) {
+      Picker("", selection: Binding(
+        get: { condition.subject },
+        set: { subject in
+          condition.subject = subject
+          // A comparison the new subject cannot make is swapped for its first.
+          if !subject.comparisons.contains(condition.comparison), let first = subject.comparisons.first {
+            condition.comparison = first
+          }
+          if subject == .kind, condition.kind == nil { condition.kind = .image }
+        }
+      )) {
         ForEach(Condition.Subject.allCases, id: \.self) { Text($0.title).tag($0) }
       }
       .labelsHidden()
       .fixedSize()
-      Picker("", selection: $condition.comparison) {
-        ForEach(Condition.Comparison.allCases.filter { condition.subject.isNumeric || $0 == .equals || $0 == .differs }, id: \.self) { Text($0.title).tag($0) }
+
+      if !condition.subject.comparisons.isEmpty {
+        Picker("", selection: $condition.comparison) {
+          ForEach(condition.subject.comparisons, id: \.self) { Text($0.title).tag($0) }
+        }
+        .labelsHidden()
+        .fixedSize()
       }
-      .labelsHidden()
-      .fixedSize()
-      if condition.subject.isNumeric {
+
+      switch condition.subject {
+      case .any:
+        Text("every file passes").font(.callout).foregroundStyle(.secondary)
+      case .kind:
+        Picker("", selection: Binding(get: { condition.kind ?? .image }, set: { condition.kind = $0 })) {
+          ForEach(ConvertKind.allCases, id: \.self) { Text($0.plural.capitalized).tag($0) }
+        }
+        .labelsHidden()
+        .fixedSize()
+      case .name, .folder, .fileExtension:
+        TextField(condition.subject == .fileExtension ? "png" : "text", text: $condition.text)
+          .frame(width: 140)
+      case .fileSize, .longestSide, .width, .height:
         TextField("Value", text: Binding(
           get: { String(format: "%g", condition.value) },
           set: { condition.value = Double($0.replacingOccurrences(of: ",", with: ".")) ?? condition.value }
         ))
         .frame(width: 80)
         Text(condition.subject.unit).foregroundStyle(.secondary)
-      } else {
-        TextField("png", text: $condition.text)
-          .frame(width: 80)
       }
     }
   }

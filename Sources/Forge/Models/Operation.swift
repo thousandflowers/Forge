@@ -131,15 +131,19 @@ struct Branch: Codable, Hashable, Sendable {
 /// Something true or false about a file before it is converted.
 struct Condition: Codable, Hashable, Sendable {
   enum Subject: String, Codable, CaseIterable, Sendable {
-    case longestSide, width, height, fileSize, fileExtension
+    case any, name, folder, kind, fileExtension, fileSize, longestSide, width, height
 
     var title: String {
       switch self {
+      case .any: return "Any file"
+      case .name: return "Name"
+      case .folder: return "Folder"
+      case .kind: return "Kind"
+      case .fileExtension: return "Extension"
+      case .fileSize: return "File size"
       case .longestSide: return "Longest side"
       case .width: return "Width"
       case .height: return "Height"
-      case .fileSize: return "File size"
-      case .fileExtension: return "Extension"
       }
     }
 
@@ -147,15 +151,26 @@ struct Condition: Codable, Hashable, Sendable {
       switch self {
       case .longestSide, .width, .height: return "px"
       case .fileSize: return "MB"
-      case .fileExtension: return ""
+      default: return ""
       }
     }
 
-    var isNumeric: Bool { self != .fileExtension }
+    var isNumeric: Bool { [.fileSize, .longestSide, .width, .height].contains(self) }
+    var isText: Bool { [.name, .folder, .fileExtension].contains(self) }
+
+    /// The comparisons that make sense for this subject.
+    var comparisons: [Comparison] {
+      switch self {
+      case .any: return []
+      case .name, .folder: return [.equals, .differs, .contains, .startsWith, .endsWith]
+      case .fileExtension, .kind: return [.equals, .differs]
+      case .fileSize, .longestSide, .width, .height: return [.greaterThan, .lessThan, .equals, .differs]
+      }
+    }
   }
 
   enum Comparison: String, Codable, CaseIterable, Sendable {
-    case greaterThan, lessThan, equals, differs
+    case greaterThan, lessThan, equals, differs, contains, startsWith, endsWith
 
     var title: String {
       switch self {
@@ -163,6 +178,9 @@ struct Condition: Codable, Hashable, Sendable {
       case .lessThan: return "is less than"
       case .equals: return "is"
       case .differs: return "is not"
+      case .contains: return "contains"
+      case .startsWith: return "starts with"
+      case .endsWith: return "ends with"
       }
     }
   }
@@ -171,15 +189,25 @@ struct Condition: Codable, Hashable, Sendable {
   var comparison: Comparison = .greaterThan
   /// Pixels or megabytes, depending on the subject.
   var value: Double = 2000
-  /// The extension, for `.fileExtension`.
+  /// The text, for name, folder and extension. Case does not matter.
   var text: String = "png"
+  /// The kind, for `.kind`.
+  var kind: ConvertKind? = nil
 
   /// Whether the file passes. A measure the file cannot give - a video's
   /// width before its tracks are read - fails rather than guesses.
   func holds(for file: ProcessableFile) -> Bool {
     switch subject {
+    case .any:
+      return true
+    case .name:
+      return matches(file.url.deletingPathExtension().lastPathComponent)
+    case .folder:
+      return matches(file.url.deletingLastPathComponent().lastPathComponent)
     case .fileExtension:
-      let same = file.url.pathExtension.lowercased() == text.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+      return matches(file.url.pathExtension)
+    case .kind:
+      let same = ConvertKind(fileType: file.fileType) == kind
       return comparison == .differs ? !same : same
     case .fileSize:
       return compare(Double(file.fileSize) / 1_000_000)
@@ -195,20 +223,46 @@ struct Condition: Codable, Hashable, Sendable {
     }
   }
 
+  private var needle: String {
+    text.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+  }
+
+  private func matches(_ candidate: String) -> Bool {
+    let haystack = candidate.lowercased()
+    switch comparison {
+    case .equals: return haystack == needle
+    case .differs: return haystack != needle
+    case .contains: return haystack.contains(needle)
+    case .startsWith: return haystack.hasPrefix(needle)
+    case .endsWith: return haystack.hasSuffix(needle)
+    case .greaterThan, .lessThan: return false
+    }
+  }
+
   private func compare(_ measured: Double) -> Bool {
     switch comparison {
     case .greaterThan: return measured > value
     case .lessThan: return measured < value
     case .equals: return measured == value
     case .differs: return measured != value
+    case .contains, .startsWith, .endsWith: return false
     }
   }
 
   /// "longest side is more than 2000 px", as the block titles itself.
   var summary: String {
-    let number = value == value.rounded() ? String(Int(value)) : String(value)
-    let what = subject.isNumeric ? "\(number) \(subject.unit)" : ".\(text)"
-    return "\(subject.title.lowercased()) \(comparison.title) \(what)"
+    switch subject {
+    case .any:
+      return "any file"
+    case .kind:
+      return "kind \(comparison.title) \(kind?.title ?? "…")"
+    case .name, .folder, .fileExtension:
+      let what = subject == .fileExtension ? ".\(needle)" : "“\(text)”"
+      return "\(subject.title.lowercased()) \(comparison.title) \(what)"
+    case .fileSize, .longestSide, .width, .height:
+      let number = value == value.rounded() ? String(Int(value)) : String(value)
+      return "\(subject.title.lowercased()) \(comparison.title) \(number) \(subject.unit)"
+    }
   }
 }
 

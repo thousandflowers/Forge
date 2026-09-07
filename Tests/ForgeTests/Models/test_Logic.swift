@@ -108,3 +108,37 @@ final class LogicTests: BaseTestCase {
     XCTAssertEqual(ProcessingCoordinator.template("{name}", branch: "web"), "{name}_web")
   }
 }
+
+final class ConditionTests: BaseTestCase {
+  private func condition(_ subject: Condition.Subject, _ comparison: Condition.Comparison, text: String = "", value: Double = 0, kind: ConvertKind? = nil) -> Condition {
+    var c = Condition()
+    c.subject = subject; c.comparison = comparison; c.text = text; c.value = value; c.kind = kind
+    return c
+  }
+
+  func testNameFolderKindAndAnyAreTested() throws {
+    let file = try ProcessableFile(url: try Fixture.image(at: try folder("Holiday").appendingPathComponent("IMG_4821.png")))
+
+    XCTAssertTrue(condition(.any, .equals).holds(for: file))
+    XCTAssertTrue(condition(.name, .equals, text: "img_4821").holds(for: file), "case does not matter")
+    XCTAssertTrue(condition(.name, .contains, text: "4821").holds(for: file))
+    XCTAssertTrue(condition(.name, .startsWith, text: "IMG").holds(for: file))
+    XCTAssertFalse(condition(.name, .endsWith, text: "IMG").holds(for: file))
+    XCTAssertTrue(condition(.folder, .equals, text: "holiday").holds(for: file))
+    XCTAssertTrue(condition(.kind, .equals, kind: .image).holds(for: file))
+    XCTAssertTrue(condition(.kind, .differs, kind: .video).holds(for: file))
+    XCTAssertTrue(condition(.fileExtension, .equals, text: ".PNG").holds(for: file))
+    XCTAssertTrue(condition(.fileSize, .lessThan, value: 1).holds(for: file))
+  }
+
+  func testEverySubjectOffersOnlyComparisonsItCanMake() throws {
+    XCTAssertEqual(Condition.Subject.any.comparisons, [])
+    XCTAssertTrue(Condition.Subject.name.comparisons.contains(.contains))
+    XCTAssertFalse(Condition.Subject.fileSize.comparisons.contains(.contains))
+    XCTAssertEqual(condition(.name, .contains, text: "IMG").summary, "name contains “IMG”")
+    XCTAssertEqual(condition(.kind, .equals, kind: .image).summary, "kind is image")
+
+    let back = try JSONDecoder().decode(Condition.self, from: JSONEncoder().encode(condition(.kind, .equals, kind: .audio)))
+    XCTAssertEqual(back.kind, .audio)
+  }
+}
