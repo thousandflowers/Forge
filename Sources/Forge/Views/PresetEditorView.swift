@@ -226,6 +226,13 @@ struct PresetEditorView: View {
           questionRow(parameter)
         }
 
+        // With a fork on the main line, what every path shares - the formats,
+        // the naming - sits before the fork, where it reads as shared.
+        if hasFork {
+          if showsFormats { connected { formatsBlock }.dropSpot(steps.first.map { .before($0.id) } ?? .endOf(Self.rootID), into: self) }
+          if showsTemplate { connected { templateBlock }.dropSpot(steps.first.map { .before($0.id) } ?? .endOf(Self.rootID), into: self) }
+        }
+
         StepListView(
           actions: $steps,
           container: Self.rootID,
@@ -234,11 +241,15 @@ struct PresetEditorView: View {
             if case .join = step.wrappedValue.operation { return AnyView(joinNode(step)) }
             return AnyView(stepRow(step))
           },
-          endZone: { AnyView(endZone($0)) }
+          // A main line that ends in a fork nothing rejoins has no end of its
+          // own: the arms have theirs.
+          endZone: { container in mainLineOpen ? AnyView(endZone(container)) : AnyView(EmptyView()) }
         )
 
-        if showsFormats { connected { formatsBlock }.dropSpot(.endOf(Self.rootID), into: self) }
-        if showsTemplate { connected { templateBlock }.dropSpot(.endOf(Self.rootID), into: self) }
+        if !hasFork {
+          if showsFormats { connected { formatsBlock }.dropSpot(.endOf(Self.rootID), into: self) }
+          if showsTemplate { connected { templateBlock }.dropSpot(.endOf(Self.rootID), into: self) }
+        }
       }
       .padding(.horizontal, 24)
       .padding(.vertical, 16)
@@ -259,6 +270,16 @@ struct PresetEditorView: View {
   /// tail every copy runs, after the arms have done their own work.
   private var trailingSplit: Action? {
     steps.first { if case .split = $0.operation { return true } else { return false } }
+  }
+
+  /// Whether the main line forks anywhere.
+  private var hasFork: Bool { steps.contains { !$0.branches.isEmpty } }
+
+  /// Whether the main line still goes on after its last step: it does not
+  /// when that step is a fork nothing rejoins.
+  private var mainLineOpen: Bool {
+    guard let last = steps.last else { return true }
+    return last.branches.isEmpty
   }
 
   /// The node where the arms come back to the main line.
@@ -353,59 +374,24 @@ struct PresetEditorView: View {
       .frame(maxWidth: .infinity)
       .padding(.horizontal, 8)
 
-      // The arms come back to one line, and the line goes on: the next node
-      // - another if, a step, a join - goes in the slot that is always here.
-      Rectangle().fill(Color.secondary.opacity(0.35)).frame(height: 2)
-        .padding(.horizontal, 60)
-        .padding(.top, 6)
-      nextNodeSlot(after: step.wrappedValue.id)
+      // The arms are their own paths and stay apart. Only a join or a merge
+      // the user put after this fork brings them back to one line, and then
+      // the bar that says so is drawn.
+      if rejoins(after: step.wrappedValue.id) {
+        Rectangle().fill(Color.secondary.opacity(0.35)).frame(height: 2)
+          .padding(.horizontal, 60)
+          .padding(.top, 6)
+      }
     }
   }
 
-  /// The half-empty slot under a fork: where the next node lands.
-  private func nextNodeSlot(after id: UUID) -> some View {
-    let spot = steps.spotAfter(id, root: Self.rootID) ?? .endOf(Self.rootID)
-    return connected {
-      // A dashed slot with a plus reads as something to click, so it is: the
-      // menu offers what can go there. Dropping works as well.
-      Menu {
-        ForEach(LibraryEntry.Group.allCases, id: \.self) { group in
-          let entries = LibraryEntry.all(for: category).filter { $0.group == group && available($0) }
-          if !entries.isEmpty {
-            Section(group.rawValue) {
-              ForEach(entries) { entry in
-                Button {
-                  land(entry.id, at: spot)
-                } label: {
-                  Label(entry.title, systemImage: entry.symbol)
-                }
-              }
-            }
-          }
-        }
-      } label: {
-        HStack(spacing: 8) {
-          Image(systemName: "plus.circle.dashed").foregroundStyle(.secondary)
-          Text("Next node — another If, a step, or a join")
-            .font(.callout)
-            .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
-        .contentShape(Rectangle())
-      }
-      .menuStyle(.borderlessButton)
-      .menuIndicator(.hidden)
-      .background(
-        RoundedRectangle(cornerRadius: 10)
-          .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
-          .foregroundStyle(isDropTarget(spot) ? Color.accentColor : Color.secondary.opacity(0.3))
-      )
-      .frame(maxWidth: 640)
-      .frame(maxWidth: .infinity)
-      .help("Click for the blocks that can go here, or drop one")
+  /// Whether a join or a merge follows this fork in the chain it sits in.
+  private func rejoins(after id: UUID) -> Bool {
+    guard case .before(let nextID) = steps.spotAfter(id, root: Self.rootID), let next = steps.step(nextID) else { return false }
+    switch next.operation {
+    case .join, .merge: return true
+    default: return false
     }
-    .dropSpot(spot, into: self)
   }
 
   /// One arm of the fork: its name, its own chain, its own end.
@@ -444,7 +430,7 @@ struct PresetEditorView: View {
     let empty = root ? steps.isEmpty && !showsFormats && parameters.isEmpty : false
     return connected {
       Text(empty ? "Drag a block here from the library, or click it. They run top to bottom."
-        : root ? "Drop the next block here" : "Drop the next step of this copy here")
+        : root ? "Drop the next block here" : "Drop the next step of this path here")
         .font(root ? .callout : .caption)
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity)
@@ -515,7 +501,7 @@ struct PresetEditorView: View {
   /// that says so is put in front of it when nothing does yet. A merge is a
   /// join of its own kind.
   private func keepSplitLast() {
-    guard let index = steps.firstIndex(where: { if case .split = $0.operation { return true } else { return false } }),
+    guard let index = steps.lastIndex(where: { !$0.branches.isEmpty }),
           index + 1 < steps.count else { return }
     switch steps[index + 1].operation {
     case .join, .merge: return
