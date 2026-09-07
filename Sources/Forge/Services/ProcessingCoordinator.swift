@@ -185,8 +185,9 @@ actor ProcessingCoordinator {
 
     guard destinationMode != .overwrite else {
       throw ProcessingError.validationFailed(
-        message: "“\(preset.name)” writes \(chains.count) files per input, "
-          + "so it cannot replace the original. Choose a destination folder."
+        message: resolution.merge != nil
+          ? "“\(preset.name)” merges its copies into one file of another kind, so it cannot replace the original. Choose a destination folder."
+          : "“\(preset.name)” writes \(chains.count) files per input, so it cannot replace the original. Choose a destination folder."
       )
     }
 
@@ -226,9 +227,21 @@ actor ProcessingCoordinator {
       preset.nameTemplate ?? settings.nameTemplate,
       with: Self.nameContext(for: file, preset: preset, operations: [], extension: kind.rawValue, counter: counter)
     )
-    let merged = folder.appendingPathComponent("\((stem.isEmpty ? (file.fileName as NSString).deletingPathExtension : stem)).\(kind.rawValue)")
-    switch kind {
-    case .pdf: try Merger.pdf(from: written, to: merged)
+    // Claimed like every other output: a photo.pdf already in the folder is
+    // somebody's, and the merge takes the next free name instead.
+    let merged = try reserveUniqueURL(folder.appendingPathComponent("\((stem.isEmpty ? (file.fileName as NSString).deletingPathExtension : stem)).\(kind.rawValue)"))
+    do {
+      switch kind {
+      case .pdf: try Merger.pdf(from: written, to: merged)
+      }
+    } catch {
+      try? FileManager.default.removeItem(at: merged)
+      throw error
+    }
+    // A move is a move for a merge too: the original goes once the one file
+    // it became is safely written.
+    if destinationMode == .moveTo, merged != file.url, FileManager.default.fileExists(atPath: file.url.path) {
+      try FileManager.default.removeItem(at: file.url)
     }
     let size = (try? FileManager.default.attributesOfItem(atPath: merged.path)[.size] as? Int64) ?? 0
     return ProcessingResult(
