@@ -21,7 +21,7 @@ final class LogicTests: BaseTestCase {
     let back = try JSONDecoder().decode([Forge.Operation].self, from: JSONEncoder().encode(chain))
 
     XCTAssertEqual(back, chain)
-    XCTAssertEqual(back.first?.title, "If longest side is more than 2,000 px")
+    XCTAssertEqual(back.first?.title, "If longest side is more than 2000 px")
   }
 
   func testAnIfIsDecidedByTheFileAndASplitFansOut() throws {
