@@ -125,7 +125,6 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   }
 
   /// The actions, ready to run.
-  func toOperations() -> [Operation] { actions }
 
   /// Whether this preset would actually do anything.
   ///

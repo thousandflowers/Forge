@@ -85,7 +85,7 @@ actor ProcessingCoordinator {
           outputURL: result.outputURL,
           additionalOutputs: result.additionalOutputs.isEmpty ? nil : result.additionalOutputs,
           destinationFolder: destinationURL,
-          actions: preset.toOperations(),
+          actions: preset.actions,
           presetName: preset.name
         )
         try await self.persistence.appendHistory(history)
@@ -104,7 +104,7 @@ actor ProcessingCoordinator {
           outputURL: nil,
           additionalOutputs: nil,
           destinationFolder: destinationURL,
-          actions: preset.toOperations(),
+          actions: preset.actions,
           presetName: preset.name
         )
         try? await self.persistence.appendHistory(history)
@@ -350,7 +350,7 @@ actor ProcessingCoordinator {
     // written into the file's own name beats both, because somebody typed it
     // onto that file for this conversion.
     let operations = settings.applyingDefaults(
-      to: NameTokens.applying(to: preset.toOperations(), from: file.fileName),
+      to: NameTokens.applying(to: preset.actions, from: file.fileName),
       writing: preset.targetFormat ?? file.fileType
     )
 

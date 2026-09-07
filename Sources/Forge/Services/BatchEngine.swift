@@ -154,7 +154,6 @@ actor BatchEngine {
 
   var currentPressure: Pressure { pressure }
   var isPaused: Bool { paused }
-  var isThrottled: Bool { pressure != .none }
   func running(_ workload: Workload) -> Int { running[workload, default: 0] }
 
   /// Wait until this kind of work may start.

@@ -101,7 +101,7 @@ struct PresetEditorView: View {
     // chosen for images means nothing once the preset is about sound: the
     // blocks that no longer apply come off the canvas where it can be seen.
     .onChange(of: category) { kind in
-      steps.removeAll { !$0.kind.suits(kind) }
+      steps.removeAll { step in step.kind.map { !$0.suits(kind) } ?? false }
       let offered = Set(offeredFormats)
       formats.removeAll { !offered.contains($0) }
     }
@@ -292,24 +292,18 @@ struct PresetEditorView: View {
   /// Whether the main line forks anywhere.
   private var hasFork: Bool { steps.contains { !$0.branches.isEmpty } }
 
-  /// Whether the main line still goes on after its last step: it does not
-  /// when that step is a fork nothing rejoins.
-  private var mainLineOpen: Bool {
-    guard let last = steps.last else { return true }
-    return last.branches.isEmpty
-  }
 
   /// The node where the arms come back to the main line.
   private func joinNode(_ step: Binding<Action>) -> some View {
     connected {
       HStack(spacing: 8) {
-        blockIcon("arrow.triangle.merge", tint: LibraryEntry.Group.logic.color)
+        BlockIcon(symbol: "arrow.triangle.merge", tint: LibraryEntry.Group.logic.color)
         VStack(alignment: .leading, spacing: 1) {
           Text("Paths rejoin").font(.callout.weight(.semibold))
           Text("Every copy carries on from here, each still its own file.").font(.caption).foregroundStyle(.secondary)
         }
         Spacer()
-        removeButton("Remove the join") { _ = steps.removeStep(id: step.wrappedValue.id) }
+        RemoveButton("Remove the join") { _ = steps.removeStep(id: step.wrappedValue.id) }
       }
       .padding(.horizontal, 14)
       .padding(.vertical, 8)
@@ -329,7 +323,7 @@ struct PresetEditorView: View {
     return VStack(spacing: 0) {
       connected {
         HStack(spacing: 8) {
-          blockIcon(step.wrappedValue.operation.symbol, tint: LibraryEntry.Group.logic.color)
+          BlockIcon(symbol: step.wrappedValue.operation.symbol, tint: LibraryEntry.Group.logic.color)
           if isSplit {
             Text("Split into \(step.wrappedValue.branches.count) copies")
               .font(.callout.weight(.semibold))
@@ -341,7 +335,7 @@ struct PresetEditorView: View {
               set: { step.wrappedValue.operation = .when($0, then: then, otherwise: otherwise) }
             ))
           }
-          removeButton(isSplit ? "Remove the split; the arms go with it" : "Remove the if; both paths go with it") {
+          RemoveButton(isSplit ? "Remove the split; the arms go with it" : "Remove the if; both paths go with it") {
             // F. Arms with work in them are not thrown away on one click.
             let busy = step.wrappedValue.branches.contains { !$0.actions.isEmpty }
             if busy { removingFork = step.wrappedValue.id } else { _ = steps.removeStep(id: step.wrappedValue.id) }
@@ -428,7 +422,7 @@ struct PresetEditorView: View {
           Spacer()
         }
         if renamable, step.wrappedValue.branches.count > 2 {
-          removeButton("Remove this copy") {
+          RemoveButton("Remove this copy") {
             step.wrappedValue.branches.removeAll { $0.id == branch.wrappedValue.id }
           }
         }
@@ -481,7 +475,7 @@ struct PresetEditorView: View {
 
   /// What a drop means, once the payload has been read: a library block to
   /// add at the spot, or a step already on the canvas to move there.
-  fileprivate func receive(_ providers: [NSItemProvider], at spot: DropSpot) {
+  func receive(_ providers: [NSItemProvider], at spot: DropSpot) {
     for provider in providers where provider.canLoadObject(ofClass: NSString.self) {
       provider.loadObject(ofClass: NSString.self) { object, _ in
         guard let payload = object as? String else { return }
@@ -496,7 +490,7 @@ struct PresetEditorView: View {
       if let moving = steps.step(id), moving.contains(spot.target) { return }
       guard let moving = steps.removeStep(id: id) else { return }
       if !steps.insert(moving, at: spot, root: Self.rootID) { steps.append(moving) }
-      keepSplitLast()
+      steps.ensureJoins()
       return
     }
     guard let entry = LibraryEntry.all(for: category).first(where: { $0.id == payload }), available(entry) else { return }
@@ -504,7 +498,7 @@ struct PresetEditorView: View {
     case .step(let kind):
       let step = Action(kind.blank(for: category))
       if !steps.insert(step, at: spot, root: Self.rootID) { steps.append(step) }
-      keepSplitLast()
+      steps.ensureJoins()
     case .formats where spot.target != Self.rootID && !steps.contains(where: { $0.id == spot.target }):
       // Dropped into an arm: that copy gets a format of its own.
       if let type = offeredFormats.first?.type {
@@ -516,17 +510,12 @@ struct PresetEditorView: View {
     }
   }
 
-  /// A step after a fork runs on every path, so the join that says so is put
-  /// in front of it when nothing does yet - on the main line or in an arm.
-  private func keepSplitLast() {
-    steps.ensureJoins()
-  }
 
-  fileprivate func setDropTarget(_ spot: DropSpot, _ on: Bool) {
+  func setDropTarget(_ spot: DropSpot, _ on: Bool) {
     if on { dropTarget = spot } else if dropTarget == spot { dropTarget = nil }
   }
 
-  fileprivate func isDropTarget(_ spot: DropSpot) -> Bool { dropTarget == spot }
+  func isDropTarget(_ spot: DropSpot) -> Bool { dropTarget == spot }
 
   /// A block with the line that leads down to it from the one above.
   private func connected<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -547,7 +536,7 @@ struct PresetEditorView: View {
   /// The files this preset takes, what starts it, and the test they have to
   /// pass. Always first, never removed.
   private var inputBlock: some View {
-    block(title: "Files that come in", symbol: category.icon, tint: .teal, remove: nil) {
+    BlockCard(title: "Files that come in", symbol: category.icon, tint: .teal, remove: nil) {
       VStack(alignment: .leading, spacing: 10) {
         HStack(spacing: 10) {
           Picker("Kind", selection: $category) {
@@ -621,111 +610,18 @@ struct PresetEditorView: View {
     }
   }
 
-  /// Every format Forge reads, by kind, each one a switch.
   private var formatsPopover: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      HStack {
-        Text("Formats this preset takes").font(.headline)
-        Spacer()
-        Button("Any") { inputFormats.removeAll() }
-          .disabled(inputFormats.isEmpty)
-      }
-      ScrollView {
-        VStack(alignment: .leading, spacing: 14) {
-          ForEach(InputFormats.groups) { group in
-            VStack(alignment: .leading, spacing: 6) {
-              HStack(spacing: 6) {
-                Image(systemName: group.kind.icon).foregroundStyle(.secondary)
-                Text(group.kind.plural.capitalized).font(.callout.weight(.semibold))
-                Spacer()
-                Button(group.extensions.allSatisfy(inputFormats.contains) ? "None" : "All") {
-                  if group.extensions.allSatisfy(inputFormats.contains) {
-                    inputFormats.subtract(group.extensions)
-                  } else {
-                    inputFormats.formUnion(group.extensions)
-                  }
-                }
-                .buttonStyle(.borderless)
-                .font(.caption)
-              }
-              FlowLayout(spacing: 6) {
-                ForEach(group.extensions, id: \.self) { ext in
-                  chip(ext.uppercased(), selected: inputFormats.contains(ext)) {
-                    if inputFormats.contains(ext) { inputFormats.remove(ext) } else { inputFormats.insert(ext) }
-                  }
-                }
-              }
-            }
-          }
-        }
-        .padding(.trailing, 8)
-      }
-      Text(inputFormats.isEmpty ? "None chosen: any file Forge can open goes through." : "\(inputFormats.count) formats chosen.")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-    }
-    .padding(16)
-    .frame(width: 520, height: 480)
+    InputFormatsPopover(chosen: $inputFormats)
   }
 
-  /// One thing the preset asks for, and where the answer comes from: a
-  /// window once per batch, or the file's own name. Files that say nothing
-  /// use the default.
   private func questionBlock(_ parameter: Binding<PresetParameter>) -> some View {
-    block(title: "Asks for", symbol: "questionmark.circle", tint: LibraryEntry.Group.ask.color, remove: {
+    QuestionBlock(parameter: parameter, keyIsSound: keyIsSound(parameter.wrappedValue)) {
       parameters.removeAll { $0.id == parameter.wrappedValue.id }
-    }) {
-      VStack(alignment: .leading, spacing: 8) {
-        HStack(spacing: 8) {
-          TextField("Question", text: parameter.label)
-          Text("{").foregroundStyle(.tertiary)
-          TextField("key", text: parameter.key)
-            .frame(width: 80)
-            .font(.callout.monospaced())
-            .overlay(
-              RoundedRectangle(cornerRadius: 5)
-                .strokeBorder(Color.red.opacity(keyIsSound(parameter.wrappedValue) ? 0 : 0.8))
-                .padding(-2)
-            )
-            .help(keyIsSound(parameter.wrappedValue) ? "Spend it in a name template as {\(parameter.wrappedValue.key)}" : "Every question needs its own key")
-          Text("}").foregroundStyle(.tertiary)
-          Text(parameter.wrappedValue.kind.unit).foregroundStyle(.secondary).frame(width: 26)
-        }
-
-        Picker("Answer", selection: parameter.source) {
-          ForEach(PresetParameter.Source.allCases, id: \.self) { Text($0.title).tag($0) }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .frame(maxWidth: 340)
-
-        HStack(spacing: 10) {
-          Text("Default")
-            .foregroundStyle(.secondary)
-          TextField("Default", text: Binding(
-            get: { String(format: "%g", parameter.wrappedValue.defaultValue) },
-            set: { text in
-              let typed = Double(text.replacingOccurrences(of: ",", with: ".")) ?? parameter.wrappedValue.kind.suggestedDefault
-              let range = parameter.wrappedValue.kind.range
-              parameter.wrappedValue.defaultValue = min(max(typed, range.lowerBound), range.upperBound)
-            }
-          ))
-          .frame(width: 80)
-          Text(parameter.wrappedValue.kind.unit).foregroundStyle(.secondary)
-        }
-
-        Text(parameter.wrappedValue.source == .prompt
-          ? "A small window asks for it once per batch, before the files run."
-          : "Read from the file's own name: \(parameter.wrappedValue.nameExample) says it. A file that says nothing uses the default.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
-      }
     }
   }
 
   private func stepBlock(_ step: Binding<Action>) -> some View {
-    block(title: step.wrappedValue.title, symbol: step.wrappedValue.operation.symbol, tint: step.wrappedValue.tint, remove: {
+    BlockCard(title: step.wrappedValue.title, symbol: step.wrappedValue.operation.symbol, tint: step.wrappedValue.tint, remove: {
       _ = steps.removeStep(id: step.wrappedValue.id)
     }) {
       ActionRow(action: step)
@@ -734,14 +630,14 @@ struct PresetEditorView: View {
   }
 
   private var formatsBlock: some View {
-    block(title: "Comes out as", symbol: "arrow.triangle.2.circlepath", tint: LibraryEntry.Group.output.color, remove: {
+    BlockCard(title: "Comes out as", symbol: "arrow.triangle.2.circlepath", tint: LibraryEntry.Group.output.color, remove: {
       formats.removeAll()
       showsFormats = false
     }) {
       FlowLayout(spacing: 6) {
-        chip("Same format", selected: formats.isEmpty) { formats.removeAll() }
+        Chip("Same format", selected: formats.isEmpty) { formats.removeAll() }
         ForEach(offeredFormats) { format in
-          chip(format.label, selected: formats.contains(format)) { toggle(format) }
+          Chip(format.label, selected: formats.contains(format)) { toggle(format) }
         }
       }
       if formats.count > 1 {
@@ -753,7 +649,7 @@ struct PresetEditorView: View {
   }
 
   private var templateBlock: some View {
-    block(title: "Names files", symbol: "textformat", tint: LibraryEntry.Group.output.color, remove: {
+    BlockCard(title: "Names files", symbol: "textformat", tint: LibraryEntry.Group.output.color, remove: {
       nameTemplate = ""
       showsTemplate = false
     }) {
@@ -761,141 +657,12 @@ struct PresetEditorView: View {
     }
   }
 
-  /// The shape every block shares: a coloured icon and a title, its remove
-  /// button when it has one, and the controls underneath.
-  private func block<Content: View>(title: String, symbol: String, tint: Color, remove: (() -> Void)?, @ViewBuilder content: () -> Content) -> some View {
-    VStack(alignment: .leading, spacing: 10) {
-      HStack(spacing: 8) {
-        blockIcon(symbol, tint: tint)
-        Text(title).font(.callout.weight(.semibold))
-        Spacer()
-        if let remove {
-          removeButton("Remove \(title)", action: remove)
-        }
-      }
-      content()
-    }
-    .padding(12)
-    .frame(maxWidth: 640, alignment: .leading)
-    .frame(maxWidth: .infinity)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(tint.opacity(0.25)))
-  }
-
-  /// The ⊖ every removable thing shares. The glyph is 14pt; the hit area is
-  /// not, because a target the size of the glyph is a target people miss.
-  private func removeButton(_ help: String, action: @escaping () -> Void) -> some View {
-    Button(action: action) {
-      Image(systemName: "minus.circle")
-        .frame(width: 24, height: 24)
-        .contentShape(Rectangle())
-    }
-    .buttonStyle(.borderless)
-    .foregroundStyle(.secondary)
-    .help(help)
-    .accessibilityLabel(Text(help))
-  }
-
-  /// The coloured square Shortcuts puts in front of an action.
-  private func blockIcon(_ symbol: String, tint: Color, size: CGFloat = 20) -> some View {
-    Image(systemName: symbol)
-      .font(.system(size: size * 0.52, weight: .medium))
-      .foregroundStyle(.white)
-      .frame(width: size, height: size)
-      .background(RoundedRectangle(cornerRadius: size * 0.28).fill(tint))
-  }
 
   // MARK: - Library
 
-  /// Every block that can be added: click its +, or drag it onto the canvas.
-  /// Grouped by what it is for, coloured by group, narrowed by the search.
   private var library: some View {
-    VStack(spacing: 0) {
-      HStack(spacing: 8) {
-        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-        TextField("Search blocks", text: $search)
-          .textFieldStyle(.plain)
-          .focused($focus, equals: .search)
-          .accessibilityLabel(Text("Search blocks"))
-        if !search.isEmpty {
-          Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
-        }
-      }
-      .font(.body)
-      .padding(.horizontal, 10)
-      .frame(height: 32)
-      .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
-      .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.secondary.opacity(0.25)))
-      .padding(14)
-
-      Divider()
-
-      ScrollView {
-        VStack(alignment: .leading, spacing: 24) {
-          ForEach(LibraryEntry.Group.allCases, id: \.self) { group in
-            let entries = offered.filter { $0.group == group }
-            if !entries.isEmpty {
-              VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                  Circle().fill(group.color).frame(width: 8, height: 8)
-                  Text(group.rawValue.uppercased())
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 2)
-                .padding(.bottom, 2)
-                ForEach(entries) { entry in
-                  libraryTile(entry)
-                }
-              }
-            }
-          }
-          if offered.isEmpty {
-            Text("No block matches “\(search)”.")
-              .font(.callout)
-              .foregroundStyle(.secondary)
-              .frame(maxWidth: .infinity)
-              .padding(.top, 20)
-          }
-        }
-        .padding(14)
-      }
-    }
-    .frame(width: 300)
-    .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
-  }
-
-  /// One block in the library: coloured icon, name, what it does. The whole
-  /// tile is a button, and the whole tile drags onto the canvas.
-  private func libraryTile(_ entry: LibraryEntry) -> some View {
-    let usable = available(entry)
-    return LibraryTileButton(usable: usable) {
-      add(entry)
-    } label: {
-      HStack(spacing: 10) {
-        blockIcon(entry.symbol, tint: entry.group.color, size: 22)
-        VStack(alignment: .leading, spacing: 2) {
-          Text(entry.title).font(.callout.weight(.medium))
-          Text(entry.summary).font(.caption).foregroundStyle(.secondary)
-        }
-        Spacer(minLength: 4)
-        Image(systemName: usable ? "plus.circle.fill" : "checkmark.circle")
-          .font(.body)
-          .foregroundStyle(usable ? entry.group.color : Color.secondary)
-      }
-      .padding(8)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-      .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(entry.group.color.opacity(0.25)))
-      .contentShape(RoundedRectangle(cornerRadius: 10))
-    }
-    .disabled(!usable)
-    .opacity(usable ? 1 : 0.45)
-    .onDrag { NSItemProvider(object: entry.id as NSString) }
-    .help(usable ? "Click, or drag onto the canvas" : "Already on the canvas")
-    .accessibilityLabel(Text("Add \(entry.title)"))
+    BlockLibraryView(search: $search, entries: offered, available: available, add: add)
+      .focused($focus, equals: .search)
   }
 
   private var offered: [LibraryEntry] {
@@ -966,22 +733,6 @@ struct PresetEditorView: View {
     }
   }
 
-  private func chip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
-    Button(action: action) {
-      Text(title)
-        .font(.callout)
-        .padding(.horizontal, 11)
-        .padding(.vertical, 5)
-        .background(
-          RoundedRectangle(cornerRadius: 7)
-            .fill(selected ? Color.accentColor : Color.secondary.opacity(0.14))
-        )
-        .foregroundStyle(selected ? Color.white : Color.primary)
-    }
-    .buttonStyle(.plain)
-    .accessibilityLabel(Text(title))
-    .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
-  }
 
   // MARK: - Saving
 
@@ -1026,739 +777,4 @@ struct PresetEditorView: View {
     onClose()
   }
 
-}
-
-extension View {
-  /// Makes a block a place to drop: a library block lands here, a step dragged
-  /// from elsewhere moves here. Highlights while something hovers.
-  func dropSpot(_ spot: PresetEditorView.DropSpot, into editor: PresetEditorView) -> some View {
-    self
-      .overlay(alignment: .top) {
-        if editor.isDropTarget(spot), spot.isBefore {
-          Rectangle().fill(Color.accentColor).frame(maxWidth: 640).frame(height: 3).offset(y: 8)
-        }
-      }
-      .onDrop(of: [.text], isTargeted: Binding(get: { editor.isDropTarget(spot) }, set: { editor.setDropTarget(spot, $0) })) { providers in
-        editor.receive(providers, at: spot)
-        return true
-      }
-  }
-}
-
-/// A plain text field with a surface that says it can be typed in: faint at
-/// rest, plainer on hover, a ring when it has focus. Plain fields without it
-/// read as labels.
-private struct EditableSurface: ViewModifier {
-  @State private var hovering = false
-  @FocusState private var focused: Bool
-
-  func body(content: Content) -> some View {
-    content
-      .textFieldStyle(.plain)
-      .focused($focused)
-      .padding(.horizontal, 6)
-      .padding(.vertical, 3)
-      .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(hovering || focused ? 0.14 : 0.07)))
-      .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor.opacity(focused ? 0.8 : 0), lineWidth: 1.5))
-      .onHover { hovering = $0 }
-      .animation(.easeOut(duration: 0.12), value: hovering)
-  }
-}
-
-private extension View {
-  func editableSurface() -> some View { modifier(EditableSurface()) }
-}
-
-/// A condition, as a row of controls that change with what is being tested.
-struct ConditionEditor: View {
-  @Binding var condition: Condition
-
-  var body: some View {
-    HStack(spacing: 6) {
-      Picker("", selection: Binding(
-        get: { condition.subject },
-        set: { subject in
-          condition.subject = subject
-          // A comparison the new subject cannot make is swapped for its first.
-          if !subject.comparisons.contains(condition.comparison), let first = subject.comparisons.first {
-            condition.comparison = first
-          }
-          if subject == .kind, condition.kind == nil { condition.kind = .image }
-        }
-      )) {
-        ForEach(Condition.Subject.allCases, id: \.self) { Text($0.title).tag($0) }
-      }
-      .labelsHidden()
-      .fixedSize()
-
-      if !condition.subject.comparisons.isEmpty {
-        Picker("", selection: $condition.comparison) {
-          ForEach(condition.subject.comparisons, id: \.self) { Text($0.title).tag($0) }
-        }
-        .labelsHidden()
-        .fixedSize()
-      }
-
-      switch condition.subject {
-      case .any:
-        Text("every file passes").font(.callout).foregroundStyle(.secondary)
-      case .kind:
-        Picker("", selection: Binding(get: { condition.kind ?? .image }, set: { condition.kind = $0 })) {
-          ForEach(ConvertKind.allCases, id: \.self) { Text($0.plural.capitalized).tag($0) }
-        }
-        .labelsHidden()
-        .fixedSize()
-      case .name, .folder, .fileExtension:
-        TextField(condition.subject == .fileExtension ? "png" : "text", text: $condition.text)
-          .frame(width: 140)
-      case .fileSize, .longestSide, .width, .height:
-        TextField("Value", text: Binding(
-          get: { String(format: "%g", condition.value) },
-          set: { condition.value = Double($0.replacingOccurrences(of: ",", with: ".")) ?? condition.value }
-        ))
-        .frame(width: 80)
-        Text(condition.subject.unit).foregroundStyle(.secondary)
-      }
-    }
-  }
-}
-
-/// The formats a copy can come out as, one chosen.
-private struct FormatChips: View {
-  let chosen: UTType
-  let choose: (UTType) -> Void
-
-  private var offered: [OutputFormat] {
-    OutputFormat.images + OutputFormat.video + OutputFormat.audio + OutputFormat.documents
-  }
-
-  var body: some View {
-    FlowLayout(spacing: 6) {
-      ForEach(offered) { format in
-        if let type = format.type {
-          chip(format.label, on: type == chosen) { choose(type) }
-        }
-      }
-    }
-  }
-
-  private func chip(_ label: String, on: Bool, action: @escaping () -> Void) -> some View {
-    Button(action: action) {
-      Text(label)
-        .font(.callout)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 3)
-        .background(RoundedRectangle(cornerRadius: 6).fill(on ? Color.accentColor : Color.secondary.opacity(0.14)))
-        .foregroundStyle(on ? Color.white : Color.primary)
-    }
-    .buttonStyle(.plain)
-  }
-}
-
-/// A library tile as a button that lifts a little under the pointer and
-/// presses down under the click.
-private struct LibraryTileButton<Label: View>: View {
-  let usable: Bool
-  let action: () -> Void
-  @ViewBuilder let label: () -> Label
-  @State private var hovering = false
-
-  init(usable: Bool, action: @escaping () -> Void, @ViewBuilder label: @escaping () -> Label) {
-    self.usable = usable
-    self.action = action
-    self.label = label
-  }
-
-  var body: some View {
-    Button(action: action) {
-      label()
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(hovering && usable ? 0.06 : 0)))
-    }
-    .buttonStyle(PressableTile())
-    .onHover { hovering = $0 }
-    .animation(.easeOut(duration: 0.12), value: hovering)
-  }
-}
-
-private struct PressableTile: ButtonStyle {
-  func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .scaleEffect(configuration.isPressed ? 0.98 : 1)
-      .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
-  }
-}
-
-/// A chain of steps on the canvas, root or branch: every step rendered by the
-/// editor, and a drop zone at the end. A separate view so a fork's branches
-/// can hold the same thing without the type system chasing its own tail.
-struct StepListView: View {
-  @Binding var actions: [Action]
-  let container: UUID
-  let render: (Binding<Action>) -> AnyView
-  let endZone: (UUID) -> AnyView
-
-  var body: some View {
-    VStack(spacing: 0) {
-      ForEach($actions) { render($0) }
-      endZone(container)
-    }
-  }
-}
-
-/// One entry in the block library.
-struct LibraryEntry: Identifiable {
-  enum Group: String, CaseIterable {
-    case output = "Comes out"
-    case ask = "Asks"
-    case transform = "Changes"
-    case encode = "Encodes"
-    case privacy = "Privacy"
-    case logic = "Logic"
-
-    /// One colour per group, the way Shortcuts colours its actions.
-    var color: Color {
-      switch self {
-      // The system's own colours, the ones Shortcuts paints its actions
-      // with: alive on the small icon squares, and they follow light and dark.
-      case .logic: return .indigo
-      case .output: return .blue
-      case .ask: return .purple
-      case .transform: return .orange
-      case .encode: return .green
-      case .privacy: return .pink
-      }
-    }
-  }
-
-  enum Kind {
-    case formats
-    case template
-    case question(PresetParameter.Kind)
-    case step(ActionKind)
-  }
-
-  let kind: Kind
-  let group: Group
-  let title: String
-  let symbol: String
-  let summary: String
-
-  /// Two blocks can share a title - "Quality" is both a question and a step -
-  /// so the group is part of the identity.
-  var id: String { "\(group.rawValue)/\(title)" }
-
-  /// Everything the library offers for a kind of preset, in the order it is
-  /// shown. Built from the same lists the app runs on, so a new step kind
-  /// shows up here without a second list to keep in step.
-  static func all(for category: PresetCategory) -> [LibraryEntry] {
-    var entries: [LibraryEntry] = [
-      LibraryEntry(kind: .formats, group: .output, title: "Comes out as", symbol: "arrow.triangle.2.circlepath", summary: "Which formats the files are written in"),
-      LibraryEntry(kind: .template, group: .output, title: "Names files", symbol: "textformat", summary: "What the finished files are called"),
-    ]
-    entries += PresetParameter.Kind.allCases.map {
-      LibraryEntry(kind: .question($0), group: .ask, title: $0.title, symbol: "questionmark.circle", summary: "Asked every time the preset runs")
-    }
-    entries += ActionKind.allCases.filter { $0.suits(category) }.map {
-      LibraryEntry(kind: .step($0), group: $0.libraryGroup, title: $0.title, symbol: $0.symbol, summary: $0.summary)
-    }
-    return entries
-  }
-}
-
-extension ActionKind {
-  var libraryGroup: LibraryEntry.Group {
-    switch self {
-    case .crop, .resize, .filter, .recognizeText: return .transform
-    case .quality, .limitSize, .encode: return .encode
-    case .privacy: return .privacy
-    case .when, .split, .join, .merge: return .logic
-    }
-  }
-
-  var summary: String {
-    switch self {
-    case .crop: return "Fill a box and cut what does not fit"
-    case .resize: return "Fit inside a box, keeping the shape"
-    case .quality: return "How much to compress"
-    case .limitSize: return "Stay under a size you choose"
-    case .filter: return "Grayscale, sepia, blur, sharpen, invert"
-    case .recognizeText: return "Read the words in it into text"
-    case .encode: return "Which codec writes the file"
-    case .privacy: return "What the file stops saying about you"
-    case .when: return "One path if the file passes a test, another if not"
-    case .split: return "Several copies, each down its own path"
-    case .join: return "The copies carry on together, still separate files"
-    case .merge: return "The copies become one file, a page each"
-    }
-  }
-}
-
-/// An action with a stable identity, so a list can move it around without the
-/// rows swapping their contents underneath the user. A fork carries its
-/// branches as trees of the same, so every step everywhere can be dragged.
-struct Action: Identifiable, Hashable {
-  let id: UUID
-  /// The step itself. For a fork the nested chains here are empty: the
-  /// branches below hold them, with identities.
-  var operation: Operation
-  var branches: [ActionBranch]
-
-  init(_ operation: Operation) {
-    id = UUID()
-    switch operation {
-    case .when(let condition, let then, let otherwise):
-      self.operation = .when(condition, then: [], otherwise: [])
-      branches = [
-        ActionBranch(name: "If it passes", actions: then.map(Action.init)),
-        ActionBranch(name: "Otherwise", actions: otherwise.map(Action.init)),
-      ]
-    case .split(let split):
-      self.operation = .split([])
-      branches = split.map { ActionBranch(name: $0.name, actions: $0.actions.map(Action.init)) }
-    default:
-      self.operation = operation
-      branches = []
-    }
-  }
-
-  /// The operation with its branches folded back in, as the preset stores it.
-  var resolved: Operation {
-    switch operation {
-    case .when(let condition, _, _):
-      return .when(
-        condition,
-        then: branches.first?.actions.map(\.resolved) ?? [],
-        otherwise: branches.dropFirst().first?.actions.map(\.resolved) ?? []
-      )
-    case .split:
-      return .split(branches.map { Branch(name: $0.name, actions: $0.actions.map(\.resolved)) })
-    default:
-      return operation
-    }
-  }
-
-  /// What the block is called on the canvas. A split counts its branches
-  /// here, where they live, rather than the empty list the operation holds.
-  var title: String {
-    if case .split = operation { return "Split into \(branches.count) copies" }
-    return operation.title
-  }
-
-  /// Whether a step with this id is this one or lives somewhere under it.
-  func contains(_ other: UUID) -> Bool {
-    id == other || branches.contains { $0.id == other || $0.actions.contains { $0.contains(other) } }
-  }
-}
-
-/// One path out of a fork, on the canvas.
-struct ActionBranch: Identifiable, Hashable {
-  let id = UUID()
-  var name: String
-  var actions: [Action]
-}
-
-extension Array where Element == Action {
-  /// Takes the step with this id out of the tree, wherever it is.
-  mutating func removeStep(id: UUID) -> Action? {
-    if let index = firstIndex(where: { $0.id == id }) { return remove(at: index) }
-    for i in indices {
-      for b in self[i].branches.indices {
-        if let taken = self[i].branches[b].actions.removeStep(id: id) { return taken }
-      }
-    }
-    return nil
-  }
-
-  /// Puts a step where a drop said, anywhere in the tree. False when the spot
-  /// is nowhere to be found, which the caller treats as "at the end".
-  mutating func insert(_ step: Action, at spot: PresetEditorView.DropSpot, root: UUID) -> Bool {
-    switch spot {
-    case .before(let id):
-      if let index = firstIndex(where: { $0.id == id }) { insert(step, at: index); return true }
-    case .endOf(let container):
-      if container == root { append(step); return true }
-    }
-    for i in indices {
-      for b in self[i].branches.indices {
-        if case .endOf(let container) = spot, container == self[i].branches[b].id {
-          self[i].branches[b].actions.append(step)
-          return true
-        }
-        if self[i].branches[b].actions.insert(step, at: spot, root: root) { return true }
-      }
-    }
-    return false
-  }
-
-  /// The spot right after a step, wherever it lives: before the next step in
-  /// its chain, or the end of that chain when it is the last.
-  func spotAfter(_ id: UUID, root: UUID) -> PresetEditorView.DropSpot? {
-    if let index = firstIndex(where: { $0.id == id }) {
-      return index + 1 < count ? .before(self[index + 1].id) : .endOf(root)
-    }
-    for action in self {
-      for branch in action.branches {
-        if let spot = branch.actions.spotAfter(id, root: branch.id) { return spot }
-      }
-    }
-    return nil
-  }
-
-  /// The chain a branch holds, found by the branch's id.
-  func actions(in container: UUID) -> [Action]? {
-    for action in self {
-      for branch in action.branches {
-        if branch.id == container { return branch.actions }
-        if let found = branch.actions.actions(in: container) { return found }
-      }
-    }
-    return nil
-  }
-
-  /// A step after a fork, in any chain, gets a join in front of it when
-  /// nothing rejoins the arms yet.
-  mutating func ensureJoins() {
-    if let index = lastIndex(where: { !$0.branches.isEmpty }), index + 1 < count {
-      switch self[index + 1].operation {
-      case .join, .merge: break
-      default: insert(Action(.join), at: index + 1)
-      }
-    }
-    for i in indices {
-      for b in self[i].branches.indices { self[i].branches[b].actions.ensureJoins() }
-    }
-  }
-
-  func step(_ id: UUID) -> Action? {
-    for action in self {
-      if action.id == id { return action }
-      for branch in action.branches { if let found = branch.actions.step(id) { return found } }
-    }
-    return nil
-  }
-}
-
-/// The steps that can be added, what each one starts as, and which kinds of
-/// file it means anything for.
-///
-/// The format is not here: what a preset comes out as is its own block at the
-/// top, because it is the one thing every preset answers and the one thing that
-/// can be answered more than once.
-enum ActionKind: String, CaseIterable, Identifiable {
-  case crop, resize, quality, limitSize, filter, recognizeText, encode, privacy, when, split, join, merge
-  var id: String { rawValue }
-
-  var title: String {
-    switch self {
-    case .crop: return "Crop"
-    case .resize: return "Resize"
-    case .quality: return "Quality"
-    case .limitSize: return "Fit within a size"
-    case .filter: return "Filter"
-    case .recognizeText: return "Read the text"
-    case .encode: return "Codec"
-    case .privacy: return "Remove metadata"
-    case .when: return "If…"
-    case .split: return "Split into copies"
-    case .join: return "Join the paths"
-    case .merge: return "Merge into one file"
-    }
-  }
-
-  var symbol: String {
-    switch self {
-    case .crop: return "crop"
-    case .resize: return "aspectratio"
-    case .quality: return "dial.medium"
-    case .limitSize: return "arrow.down.right.and.arrow.up.left"
-    case .filter: return "camera.filters"
-    case .recognizeText: return "text.viewfinder"
-    case .encode: return "cpu"
-    case .privacy: return "eye.slash"
-    case .when: return "arrow.triangle.branch"
-    case .split: return "square.split.2x1"
-    case .join: return "arrow.triangle.merge"
-    case .merge: return "doc.on.doc"
-    }
-  }
-
-  /// What the step starts as. A crop starts square and cropping, because a
-  /// crop that fits inside is a resize by another name.
-  func blank(for category: PresetCategory) -> Operation {
-    switch self {
-    case .crop: return .resize(width: 1080, height: 1080, fitMode: .cropCenter)
-    case .resize: return .resize(width: 1920, height: nil, fitMode: .proportional)
-    case .quality: return .quality(level: ImageProcessor.defaultQuality)
-    case .limitSize: return .limitSize(bytes: 10_000_000)
-    case .filter: return .filter(type: .grayscale)
-    case .recognizeText: return .recognizeText(languages: [])
-    case .encode:
-      let codecs = category == .audio ? Codec.audioCodecs : Codec.videoCodecs
-      return .encode(codec: codecs.first ?? .h264)
-    case .privacy: return .stripMetadata(policy: .stripAll)
-    case .when: return .when(Condition(), then: [], otherwise: [])
-    case .split: return .split([Branch(name: "Copy 1"), Branch(name: "Copy 2")])
-    case .join: return .join
-    case .merge: return .merge(.pdf)
-    }
-  }
-
-  /// Which kinds of file this step does anything for, taken from what the
-  /// processors honour. Offering a crop on an audio preset would be a step
-  /// that runs and changes nothing.
-  func suits(_ category: PresetCategory) -> Bool {
-    switch self {
-    case .crop, .resize:
-      return [.image, .video, .document, .custom].contains(category)
-    case .quality, .filter:
-      return [.image, .video, .document, .custom].contains(category)
-    case .limitSize:
-      return [.image, .custom].contains(category)
-    case .recognizeText:
-      return [.image, .video, .document, .custom].contains(category)
-    case .encode:
-      return [.video, .audio, .custom].contains(category)
-    case .privacy:
-      // Every kind of file carries something about who made it.
-      return true
-    case .when, .split, .join, .merge:
-      return true
-    }
-  }
-}
-
-extension Action {
-  /// The library kind this step came from, so the library's own rules can
-  /// say whether it still applies.
-  var kind: ActionKind {
-    switch operation {
-    case .convertFormat: return .resize  // inside an arm it is a step; the top level keeps its block
-    case .resize(_, _, let mode): return mode == .cropCenter ? .crop : .resize
-    case .quality: return .quality
-    case .filter: return .filter
-    case .recognizeText: return .recognizeText
-    case .encode: return .encode
-    case .limitSize: return .limitSize
-    case .stripMetadata: return .privacy
-    case .when: return .when
-    case .split: return .split
-    case .join: return .join
-    case .merge: return .merge
-    }
-  }
-
-  /// The colour of the group this step is filed under.
-  var tint: Color {
-    switch operation {
-    case .convertFormat: return LibraryEntry.Group.output.color
-    case .resize, .filter, .recognizeText: return LibraryEntry.Group.transform.color
-    case .quality, .limitSize, .encode: return LibraryEntry.Group.encode.color
-    case .stripMetadata: return LibraryEntry.Group.privacy.color
-    case .when, .split, .join, .merge: return LibraryEntry.Group.logic.color
-    }
-  }
-
-  /// Format steps live in their own block, so the step list skips them.
-  var isFormat: Bool {
-    if case .convertFormat = operation { return true }
-    return false
-  }
-}
-
-/// One row: what the action is, and the few settings it needs.
-private struct ActionRow: View {
-  @Binding var action: Action
-
-  var body: some View {
-    settings
-  }
-
-  @ViewBuilder
-  private var settings: some View {
-    switch action.operation {
-    case .convertFormat(let to):
-      // At the top level formats have a block of their own; inside an arm a
-      // copy picks the one format it comes out as.
-      FormatChips(chosen: to) { action.operation = .convertFormat(to: $0) }
-
-    case .join:
-      Text("Every copy carries on from here, each still its own file.")
-        .font(.callout)
-        .foregroundStyle(.secondary)
-
-    case .merge(let kind):
-      Picker("", selection: Binding(get: { kind }, set: { action.operation = .merge($0) })) {
-        ForEach(MergeKind.allCases, id: \.self) { Text($0.title).tag($0) }
-      }
-      .labelsHidden()
-      .frame(maxWidth: 160, alignment: .leading)
-
-    case .resize(let width, let height, let mode):
-      HStack(spacing: 6) {
-        numberField("Width", value: width) {
-          action.operation = .resize(width: $0, height: height, fitMode: mode)
-        }
-        Text("×").foregroundStyle(.secondary)
-        numberField("Height", value: height) {
-          action.operation = .resize(width: width, height: $0, fitMode: mode)
-        }
-        Picker("", selection: Binding(
-          get: { mode },
-          set: { action.operation = .resize(width: width, height: height, fitMode: $0) }
-        )) {
-          ForEach(ResizeFitMode.allCases, id: \.self) { Text($0.title).tag($0) }
-        }
-        .labelsHidden()
-        .frame(maxWidth: 130)
-      }
-
-    case .quality(let level):
-      HStack {
-        Slider(
-          value: Binding(
-            get: { Double(level) },
-            set: { action.operation = .quality(level: Int($0)) }
-          ),
-          in: 1...100,
-          step: 1
-        )
-        Text("\(level)").monospacedDigit().frame(width: 32, alignment: .trailing)
-      }
-
-    case .filter(let type):
-      Picker("", selection: Binding(
-        get: { type },
-        set: { action.operation = .filter(type: $0) }
-      )) {
-        ForEach(FilterType.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
-      }
-      .labelsHidden()
-      .frame(maxWidth: 200, alignment: .leading)
-
-    case .encode(let codec):
-      Picker("", selection: Binding(
-        get: { codec },
-        set: { action.operation = .encode(codec: $0) }
-      )) {
-        Section("Video") { ForEach(Codec.videoCodecs, id: \.self) { Text($0.title).tag($0) } }
-        Section("Audio") { ForEach(Codec.audioCodecs, id: \.self) { Text($0.title).tag($0) } }
-      }
-      .labelsHidden()
-      .frame(maxWidth: 200, alignment: .leading)
-
-    case .when, .split:
-      EmptyView()
-
-    case .stripMetadata(let policy):
-      Picker("", selection: Binding(
-        get: { policy },
-        set: { action.operation = .stripMetadata(policy: $0) }
-      )) {
-        ForEach(PrivacyPolicy.allCases.filter(\.removesSomething), id: \.self) {
-          Text($0.title).tag($0)
-        }
-      }
-      .labelsHidden()
-      .frame(maxWidth: 260, alignment: .leading)
-
-    case .limitSize(let bytes):
-      HStack(spacing: 6) {
-        TextField("Megabytes", text: Binding(
-          get: { String(format: "%g", Double(bytes) / 1_000_000) },
-          set: { text in
-            let megabytes = Double(text.replacingOccurrences(of: ",", with: ".")) ?? 0
-            action.operation = .limitSize(bytes: Int(max(megabytes, 0) * 1_000_000))
-          }
-        ))
-        .frame(width: 80)
-        Text("MB").foregroundStyle(.secondary)
-      }
-
-    case .recognizeText(let languages):
-      Picker("", selection: Binding(
-        get: { languages.first ?? "" },
-        set: { action.operation = .recognizeText(languages: $0.isEmpty ? [] : [$0]) }
-      )) {
-        Text("Detect automatically").tag("")
-        ForEach(TextRecognizer.supportedLanguages, id: \.self) { Text($0).tag($0) }
-      }
-      .labelsHidden()
-      .frame(maxWidth: 220, alignment: .leading)
-    }
-  }
-
-  private func numberField(_ label: String, value: Int?, set: @escaping (Int?) -> Void) -> some View {
-    TextField(label, text: Binding(
-      get: { value.map(String.init) ?? "" },
-      set: { set(Int($0.trimmingCharacters(in: .whitespaces))) }
-    ))
-    .frame(width: 70)
-  }
-}
-
-/// The output formats offered, taken from what this machine can really write
-/// rather than a list typed out by hand.
-struct OutputFormat: Identifiable, Hashable {
-  /// `nil` means "keep the source format".
-  let type: UTType?
-
-  var id: String { type?.identifier ?? "keep" }
-
-  var label: String {
-    guard let type else { return "Keep original" }
-    // Not `preferredFilenameExtension`: `public.toml` prefers `cfg`, and a
-    // menu offering CFG is a menu nobody finds TOML in.
-    return FormatCatalog.fileExtension(for: type)?.uppercased() ?? type.identifier
-  }
-
-  static let keep = OutputFormat(type: nil)
-
-  static var images: [OutputFormat] { Self.sorted(FormatCatalog.writableImageTypes) }
-  static var audio: [OutputFormat] { Self.sorted(Set(FormatCatalog.writableAudioTypes.keys)) }
-  static var video: [OutputFormat] { Self.sorted(FormatCatalog.writableVideoTypes) }
-  static var documents: [OutputFormat] {
-    Self.sorted(Set(DocumentText.writable.keys).union([.pdf]))
-  }
-
-  /// The image formats, plus the ones a tool on this Mac adds. Offered only
-  /// where an image processor will do the writing: a PDF asked for WebP goes
-  /// to the document processor, which has no idea what cwebp is.
-  static var imagesWithTools: [OutputFormat] {
-    var types = FormatCatalog.writableImageTypes
-    if ExternalTools.locate("cwebp") != nil, let webp = UTType("org.webmproject.webp") {
-      types.insert(webp)
-    }
-    return Self.sorted(types)
-  }
-
-  /// Words out of a file: OCR for anything with pixels, transcription for
-  /// anything with a soundtrack. One format, because both paths write text.
-  static var text: [OutputFormat] { [OutputFormat(type: .plainText)] }
-
-  /// The subtitle formats Forge writes. They are named by extension because
-  /// macOS has no types for them - `.srt` is not in the type database at all.
-  static var subtitles: [OutputFormat] {
-    ["srt", "vtt", "sbv"].compactMap { ext in
-      UTType(filenameExtension: ext, conformingTo: .plainText).map { OutputFormat(type: $0) }
-    }
-  }
-
-  /// Fonts, offered only where the tool that writes them is installed, since
-  /// CoreText reads a font's tables and cannot write one.
-  static var fonts: [OutputFormat] {
-    guard ExternalTools.locate("fonttools") != nil else { return [] }
-    return ["ttf", "otf", "woff2"].compactMap { ext in
-      UTType(filenameExtension: ext, conformingTo: .font).map { OutputFormat(type: $0) }
-    }
-  }
-
-  /// What `DataProcessor` writes, which is exactly what it reads: it refuses
-  /// any other pairing rather than writing something nothing can open.
-  static var data: [OutputFormat] { Self.sorted(Set(DataProcessor.readable)) }
-
-  static var models: [OutputFormat] { Self.sorted(FormatCatalog.writableModelTypes) }
-
-  private static func sorted(_ types: Set<UTType>) -> [OutputFormat] {
-    types.map { OutputFormat(type: $0) }.sorted { $0.label < $1.label }
-  }
 }

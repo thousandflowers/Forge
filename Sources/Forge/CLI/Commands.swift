@@ -218,7 +218,7 @@ struct Presets: AsyncParsableCommand {
 
       let width = presets.map(\.name.count).max() ?? 0
       for preset in presets {
-        let recipe = preset.toOperations().map(Self.describe).joined(separator: " · ")
+        let recipe = preset.actions.map(Self.describe).joined(separator: " · ")
         print("\(preset.name.padding(toLength: width, withPad: " ", startingAt: 0))  \(recipe)")
       }
     }

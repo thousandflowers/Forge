@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import os
 import UniformTypeIdentifiers
 
 struct BatchProcessingView: View {
@@ -429,10 +430,10 @@ final class BatchViewModel: ObservableObject {
   /// Why the engine has backed off, when it has, in the user's words.
   @Published var throttle: String?
 
-  private let cancellation = CancellationFlag()
+  private let cancellation = OSAllocatedUnfairLock(initialState: false)
   /// Rows somebody stopped by hand. A row waiting its turn has no task to
   /// cancel yet, so the batch asks this before starting it.
-  private let stopped = StoppedFiles()
+  private let stopped = OSAllocatedUnfairLock(initialState: Set<UUID>())
 
   func add(_ urls: [URL]) {
     // What the last batch cost describes files that are no longer the ones on
@@ -511,7 +512,7 @@ final class BatchViewModel: ObservableObject {
   func cancel(_ file: ProcessableFile, model: AppModel) {
     statusMap[file.id] = .cancelled
     fileProgress.removeValue(forKey: file.id)
-    stopped.add(file.id)
+    stopped.withLock { _ = $0.insert(file.id) }
     let coordinator = model.coordinator
     Task { await coordinator.cancel(file.id) }
   }
@@ -520,7 +521,7 @@ final class BatchViewModel: ObservableObject {
     // The flag stops new files from being started; cancelling the coordinator
     // stops the ones already running. Doing only the second let the loop keep
     // queueing work after the user asked it to stop.
-    cancellation.set()
+    cancellation.withLock { $0 = true }
     let coordinator = model.coordinator
     Task { await coordinator.cancelAll() }
   }
@@ -531,9 +532,9 @@ final class BatchViewModel: ObservableObject {
     guard !files.isEmpty, !isProcessing else { return }
 
     let cancellation = self.cancellation
-    cancellation.reset()
+    cancellation.withLock { $0 = false }
     let stopped = self.stopped
-    stopped.clear()
+    stopped.withLock { $0.removeAll() }
     isPaused = false
     await BatchEngine.shared.resume()
     isProcessing = true
@@ -549,8 +550,8 @@ final class BatchViewModel: ObservableObject {
 
     // Progress arrives far more often than the screen can use, so it is
     // coalesced before hopping to the main actor rather than after.
-    let gates = ProgressGates()
-    let outputs = OutputSizes()
+    let gates = OSAllocatedUnfairLock(initialState: [UUID: Double]())
+    let outputs = OSAllocatedUnfairLock(initialState: [URL]())
 
     // What the engine is doing about the state of the Mac, asked for rather
     // than pushed: it changes on the order of seconds, and a batch that
@@ -572,27 +573,33 @@ final class BatchViewModel: ObservableObject {
       destination: destination,
       limit: limit,
       coordinator: coordinator,
-      shouldContinue: { !cancellation.isSet },
-      isCancelled: { stopped.contains($0) }
+      shouldContinue: { !cancellation.withLock { $0 } },
+      isCancelled: { id in stopped.withLock { $0.contains(id) } }
     ) { [weak self] event in
       if case .progress(let id, let fraction) = event {
-        guard gates.advance(id: id, to: (fraction * 100).rounded() / 100) else { return }
+        let rounded = (fraction * 100).rounded() / 100
+        // Only a value that moved gets through, per file.
+        guard gates.withLock({ last in
+          if last[id] == rounded { return false }
+          last[id] = rounded
+          return true
+        }) else { return }
       }
       // Every file written, not the first one: the measured saving at the end
       // of a batch counted one output of a two-format conversion and called it
       // the total.
       if case .finished(_, _, _, let written, _) = event, !written.isEmpty {
-        written.forEach(outputs.add)
+        outputs.withLock { $0.append(contentsOf: written) }
       }
       Task { @MainActor [weak self] in self?.apply(event, of: total, in: model) }
     }
 
     watching.cancel()
     throttle = nil
-    lastSaving = Self.saving(from: outputs.paths(), sources: files)
+    lastSaving = Self.saving(from: outputs.withLock { $0 }, sources: files)
     await model.refreshHistory()
 
-    if model.settings.notifyWhenFinished, !cancellation.isSet {
+    if model.settings.notifyWhenFinished, !cancellation.withLock({ $0 }) {
       let finished = statusMap.values
       await Notifier.batchFinished(
         converted: finished.filter { $0 == .completed }.count,
@@ -638,82 +645,3 @@ final class BatchViewModel: ObservableObject {
 
 }
 
-/// Collects the outputs a batch produced, from whichever thread reports them.
-private final class OutputSizes: @unchecked Sendable {
-  private let lock = NSLock()
-  private var urls: [URL] = []
-
-  func add(_ url: URL) {
-    lock.lock()
-    urls.append(url)
-    lock.unlock()
-  }
-
-  func paths() -> [URL] {
-    lock.lock()
-    defer { lock.unlock() }
-    return urls
-  }
-}
-
-/// Lets a progress value through only when it has actually moved, per file.
-private final class ProgressGates: @unchecked Sendable {
-  private let lock = NSLock()
-  private var last: [UUID: Double] = [:]
-
-  func advance(id: UUID, to value: Double) -> Bool {
-    lock.lock()
-    defer { lock.unlock() }
-    guard last[id] != value else { return false }
-    last[id] = value
-    return true
-  }
-}
-
-/// A cancel flag both the main actor and the conversion tasks can see.
-/// The rows somebody stopped by hand, readable from the conversion tasks.
-private final class StoppedFiles: @unchecked Sendable {
-  private let lock = NSLock()
-  private var ids: Set<UUID> = []
-
-  func add(_ id: UUID) {
-    lock.lock()
-    ids.insert(id)
-    lock.unlock()
-  }
-
-  func contains(_ id: UUID) -> Bool {
-    lock.lock()
-    defer { lock.unlock() }
-    return ids.contains(id)
-  }
-
-  func clear() {
-    lock.lock()
-    ids.removeAll()
-    lock.unlock()
-  }
-}
-
-private final class CancellationFlag: @unchecked Sendable {
-  private let lock = NSLock()
-  private var value = false
-
-  var isSet: Bool {
-    lock.lock()
-    defer { lock.unlock() }
-    return value
-  }
-
-  func set() {
-    lock.lock()
-    value = true
-    lock.unlock()
-  }
-
-  func reset() {
-    lock.lock()
-    value = false
-    lock.unlock()
-  }
-}

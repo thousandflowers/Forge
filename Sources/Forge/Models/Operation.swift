@@ -90,13 +90,6 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     }
   }
 
-  /// Whether this is a fork in the chain rather than a step that changes a file.
-  var isLogic: Bool {
-    switch self {
-    case .when, .split, .join, .merge: return true
-    default: return false
-    }
-  }
 
   /// Every step under this one, branches included, in order. For anything
   /// that reads a chain flat: what format it writes, which chips to show.
@@ -156,7 +149,6 @@ struct Condition: Codable, Hashable, Sendable {
     }
 
     var isNumeric: Bool { [.fileSize, .longestSide, .width, .height].contains(self) }
-    var isText: Bool { [.name, .folder, .fileExtension].contains(self) }
 
     /// The comparisons that make sense for this subject.
     var comparisons: [Comparison] {
