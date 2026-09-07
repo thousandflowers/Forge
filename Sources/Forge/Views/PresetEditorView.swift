@@ -41,7 +41,8 @@ struct PresetEditorView: View {
   @State private var removingFork: UUID?
   @FocusState private var focus: Field?
 
-  private enum Field { case name, description, search }
+  private enum Field { case name, description }
+  @State private var searchWantsFocus = false
   /// Where a dragged block would land: a step's id, or `end`.
   @State private var dropTarget: DropSpot?
 
@@ -161,7 +162,7 @@ struct PresetEditorView: View {
           .lineLimit(1)
       }
       // ⌘F goes to the library's search; a button nobody sees carries it.
-      Button("Find a block") { focus = .search }
+      Button("Find a block") { searchWantsFocus = true }
         .keyboardShortcut("f", modifiers: .command)
         .hidden()
         .frame(width: 0, height: 0)
@@ -305,7 +306,12 @@ struct PresetEditorView: View {
           Text("Every copy carries on from here, each still its own file.").font(.caption).foregroundStyle(.secondary)
         }
         Spacer()
-        RemoveButton("Remove the join") { _ = steps.removeStep(id: step.wrappedValue.id) }
+        if case .before = steps.spotAfter(step.wrappedValue.id, root: Self.rootID) ?? .endOf(Self.rootID) {
+          RemoveButton("Remove the steps after the join first") {}
+            .disabled(true)
+        } else {
+          RemoveButton("Remove the join") { _ = steps.removeStep(id: step.wrappedValue.id) }
+        }
       }
       .padding(.horizontal, 14)
       .padding(.vertical, 8)
@@ -663,8 +669,7 @@ struct PresetEditorView: View {
   // MARK: - Library
 
   private var library: some View {
-    BlockLibraryView(search: $search, entries: offered, available: available, add: add)
-      .focused($focus, equals: .search)
+    BlockLibraryView(search: $search, wantsFocus: $searchWantsFocus, entries: offered, available: available, add: add)
   }
 
   private var offered: [LibraryEntry] {

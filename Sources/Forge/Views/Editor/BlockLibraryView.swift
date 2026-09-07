@@ -4,9 +4,13 @@ import SwiftUI
 /// Grouped by what it is for, coloured by group, narrowed by the search.
 struct BlockLibraryView: View {
   @Binding var search: String
+  /// Set to true to put the pointer in the search field; the library sets it
+  /// back once it has.
+  @Binding var wantsFocus: Bool
   let entries: [LibraryEntry]
   let available: (LibraryEntry) -> Bool
   let add: (LibraryEntry) -> Void
+  @FocusState private var searching: Bool
 
   var body: some View {
     VStack(spacing: 0) {
@@ -14,6 +18,7 @@ struct BlockLibraryView: View {
         Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
         TextField("Search blocks", text: $search)
           .textFieldStyle(.plain)
+          .focused($searching)
           .accessibilityLabel(Text("Search blocks"))
         if !search.isEmpty {
           Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
@@ -63,6 +68,12 @@ struct BlockLibraryView: View {
     }
     .frame(width: 300)
     .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+    .onChange(of: wantsFocus) { wanted in
+      if wanted {
+        searching = true
+        wantsFocus = false
+      }
+    }
   }
 
   /// One block in the library: coloured icon, name, what it does. The whole
