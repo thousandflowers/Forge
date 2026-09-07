@@ -49,13 +49,6 @@ actor PersistenceManager {
     try data.write(to: fileURL, options: .atomic)
   }
 
-  func loadPreset(id: UUID) async throws -> RulePreset? {
-    let fileURL = presetsDir.appendingPathComponent("\(id.uuidString).json")
-    guard fileManager.fileExists(atPath: fileURL.path) else { return nil }
-    let data = try Data(contentsOf: fileURL)
-    return try JSONDecoder().decode(RulePreset.self, from: data)
-  }
-
   func loadAllPresets() async throws -> [RulePreset] {
     let files = try fileManager.contentsOfDirectory(at: presetsDir, includingPropertiesForKeys: nil)
     // Skip anything that will not decode. One stray file used to take every

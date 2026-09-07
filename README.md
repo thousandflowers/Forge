@@ -47,6 +47,14 @@ A preset can also **ask a question instead of deciding one**. Give it a paramete
 
 Choosing **more than one output format** does not replace the first with the second. It makes both, one copy per format, each with the rest of the chain applied.
 
+## Building a preset is drawing its flow
+
+The editor takes the whole window, the way Shortcuts does. At the top, **Files that come in**: which kind of file this preset takes — images, videos, audio, documents, data files, 3D models, subtitles, fonts, or a custom list of exact formats — and what starts it. A preset runs when a file is dropped on Forge or lands in a watched folder; give it a word and it also runs when you **rename a file to carry that word** — `foto.jpg` becomes `foto_web.jpg` in a watched folder and the `web` preset takes it, whatever the folder's own preset is. An **Only if** test on the whole preset leaves alone every file that fails it, and history says so.
+
+Under that, the chain: blocks dragged in from a library on the right, or clicked. Steps that change the file (crop, resize, filter, read the text, quality, size ceiling, codec, metadata), questions the preset asks (once per batch, or read from the file's own name), what it comes out as, what it is called.
+
+And forks. **If** tests the file — its name, folder, kind, extension, size, sides — and opens two arms, one for each answer. **Split into copies** opens as many arms as you want, each its own path with its own steps and its own format, the outputs named after the arm: `foto_web.jpg`, `foto_archivio.png`. Arms stay apart until you put a **Join** after them, where every copy carries on together, or a **Merge**, where the copies become one PDF. Every fork is decided for each file before anything runs, so the processors only ever see a straight chain.
+
 ## The magic conversions
 
 Some conversions are not settings, they are things Forge works out from what you asked:
@@ -108,6 +116,8 @@ A template names the files a conversion writes, and the field shows you what the
 The last few are only true once the file exists, so they are filled in afterwards: `{name}_{dimensions}` gives `holiday_400x300.jpeg`, measured from the file that was actually written. A token Forge does not recognise is left where it is, because a typo you can see is one you can fix.
 
 ## General preferences, and overriding them
+
+Settings also chooses the window's appearance — follow the Mac, light, or dark — and every sheet lets the window show through.
 
 Settings holds what resizing means (fit inside, fill and crop, stretch, pad out), the quality to use when a preset names none, how much of the metadata survives, and how new files are named. Each one is what happens when nothing else says otherwise. A preset overrides the general preference, a batch overrides the preset, and what you write into a filename overrides all of it.
 

@@ -12,7 +12,7 @@ import UniformTypeIdentifiers
 /// the coordinator hands the file to the first processor that claims it and the
 /// screen must offer what that same processor can do. Getting the order wrong
 /// would offer a CSV the document controls it will never honour.
-enum ConvertKind: String, CaseIterable, Sendable {
+enum ConvertKind: String, CaseIterable, Codable, Sendable {
   case image
   case video
   case audio
@@ -102,7 +102,11 @@ enum ConvertKind: String, CaseIterable, Sendable {
     case .image: return .image
     case .video: return .video
     case .audio: return .audio
-    case .document, .data, .model, .subtitle, .font: return .document
+    case .document: return .document
+    case .data: return .data
+    case .model: return .model
+    case .subtitle: return .subtitle
+    case .font: return .font
     }
   }
 

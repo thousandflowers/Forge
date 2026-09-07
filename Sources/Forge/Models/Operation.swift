@@ -25,10 +25,26 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
   /// preset, from a batch, or from the filename - and so history records that
   /// it happened.
   case stripMetadata(policy: PrivacyPolicy)
+  /// One of two chains, decided per file: too big goes one way, the rest the
+  /// other.
+  case when(Condition, then: [Operation], otherwise: [Operation])
+  /// Every branch on its own copy of the file. One preset, several outputs,
+  /// each down its own path.
+  case split([Branch])
+  /// The arms of a split rejoin here: what follows runs on every copy, the
+  /// copies staying separate files. A marker for the editor; the chain runs
+  /// the same with or without it.
+  case join
+  /// The copies from a split become one file.
+  case merge(MergeKind)
 
   /// A short name for the action, as the editor lists it.
   var title: String {
     switch self {
+    case .when(let condition, _, _): return "If \(condition.summary)"
+    case .split(let branches): return "Split into \(branches.count) copies"
+    case .join: return "Paths rejoin"
+    case .merge(let kind): return "Merge into \(kind.title)"
     case .convertFormat: return "Convert format"
     case .resize(_, _, let mode): return mode == .cropCenter ? "Crop" : "Resize"
     case .quality: return "Set quality"
@@ -50,6 +66,10 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .encode: return "cpu"
     case .limitSize: return "arrow.down.right.and.arrow.up.left"
     case .stripMetadata(let policy): return policy.symbol
+    case .when: return "arrow.triangle.branch"
+    case .split: return "square.split.2x1"
+    case .join: return "arrow.triangle.merge"
+    case .merge: return "doc.on.doc"
     }
   }
 
@@ -63,8 +83,225 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .encode: return "codec"
     case .limitSize: return "limitSize"
     case .stripMetadata: return "privacy"
+    case .when: return "when"
+    case .split: return "split"
+    case .join: return "join"
+    case .merge: return "merge"
     }
   }
+
+
+  /// Every step under this one, branches included, in order. For anything
+  /// that reads a chain flat: what format it writes, which chips to show.
+  var leaves: [Operation] {
+    switch self {
+    case .when(_, let then, let otherwise): return (then + otherwise).flatMap(\.leaves)
+    case .split(let branches): return branches.flatMap { $0.actions.flatMap(\.leaves) }
+    case .join, .merge: return []
+    default: return [self]
+    }
+  }
+}
+
+/// What the copies from a split become when they are merged.
+enum MergeKind: String, Codable, CaseIterable, Sendable {
+  case pdf
+
+  var title: String {
+    switch self {
+    case .pdf: return "one PDF"
+    }
+  }
+}
+
+/// One path out of a split: a name, so its output can be told apart, and
+/// the steps down it.
+struct Branch: Codable, Hashable, Sendable {
+  var name: String
+  var actions: [Operation] = []
+}
+
+/// Something true or false about a file before it is converted.
+struct Condition: Codable, Hashable, Sendable {
+  enum Subject: String, Codable, CaseIterable, Sendable {
+    case any, name, folder, kind, fileExtension, fileSize, longestSide, width, height
+
+    var title: String {
+      switch self {
+      case .any: return "Any file"
+      case .name: return "Name"
+      case .folder: return "Folder"
+      case .kind: return "Kind"
+      case .fileExtension: return "Extension"
+      case .fileSize: return "File size"
+      case .longestSide: return "Longest side"
+      case .width: return "Width"
+      case .height: return "Height"
+      }
+    }
+
+    var unit: String {
+      switch self {
+      case .longestSide, .width, .height: return "px"
+      case .fileSize: return "MB"
+      default: return ""
+      }
+    }
+
+    var isNumeric: Bool { [.fileSize, .longestSide, .width, .height].contains(self) }
+
+    /// The comparisons that make sense for this subject.
+    var comparisons: [Comparison] {
+      switch self {
+      case .any: return []
+      case .name, .folder: return [.equals, .differs, .contains, .startsWith, .endsWith]
+      case .fileExtension, .kind: return [.equals, .differs]
+      case .fileSize, .longestSide, .width, .height: return [.greaterThan, .lessThan, .equals, .differs]
+      }
+    }
+  }
+
+  enum Comparison: String, Codable, CaseIterable, Sendable {
+    case greaterThan, lessThan, equals, differs, contains, startsWith, endsWith
+
+    var title: String {
+      switch self {
+      case .greaterThan: return "is more than"
+      case .lessThan: return "is less than"
+      case .equals: return "is"
+      case .differs: return "is not"
+      case .contains: return "contains"
+      case .startsWith: return "starts with"
+      case .endsWith: return "ends with"
+      }
+    }
+  }
+
+  var subject: Subject = .longestSide
+  var comparison: Comparison = .greaterThan
+  /// Pixels or megabytes, depending on the subject.
+  var value: Double = 2000
+  /// The text, for name, folder and extension. Case does not matter.
+  var text: String = "png"
+  /// The kind, for `.kind`.
+  var kind: ConvertKind? = nil
+
+  /// Whether the file passes. A measure the file cannot give - a video's
+  /// width before its tracks are read - fails rather than guesses.
+  func holds(for file: ProcessableFile) -> Bool {
+    switch subject {
+    case .any:
+      return true
+    case .name:
+      return matches(file.url.deletingPathExtension().lastPathComponent)
+    case .folder:
+      return matches(file.url.deletingLastPathComponent().lastPathComponent)
+    case .fileExtension:
+      return matches(file.url.pathExtension)
+    case .kind:
+      let same = ConvertKind(fileType: file.fileType) == kind
+      return comparison == .differs ? !same : same
+    case .fileSize:
+      return compare(Double(file.fileSize) / 1_000_000)
+    case .width:
+      guard let size = file.dimensions else { return false }
+      return compare(Double(size.width))
+    case .height:
+      guard let size = file.dimensions else { return false }
+      return compare(Double(size.height))
+    case .longestSide:
+      guard let size = file.dimensions else { return false }
+      return compare(Double(max(size.width, size.height)))
+    }
+  }
+
+  private var needle: String {
+    text.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+  }
+
+  private func matches(_ candidate: String) -> Bool {
+    let haystack = candidate.lowercased()
+    switch comparison {
+    case .equals: return haystack == needle
+    case .differs: return haystack != needle
+    case .contains: return haystack.contains(needle)
+    case .startsWith: return haystack.hasPrefix(needle)
+    case .endsWith: return haystack.hasSuffix(needle)
+    case .greaterThan, .lessThan: return false
+    }
+  }
+
+  private func compare(_ measured: Double) -> Bool {
+    switch comparison {
+    case .greaterThan: return measured > value
+    case .lessThan: return measured < value
+    case .equals: return measured == value
+    case .differs: return measured != value
+    case .contains, .startsWith, .endsWith: return false
+    }
+  }
+
+  /// "longest side is more than 2000 px", as the block titles itself.
+  var summary: String {
+    switch subject {
+    case .any:
+      return "any file"
+    case .kind:
+      return "kind \(comparison.title) \(kind?.title ?? "…")"
+    case .name, .folder, .fileExtension:
+      let what = subject == .fileExtension ? ".\(needle)" : "“\(text)”"
+      return "\(subject.title.lowercased()) \(comparison.title) \(what)"
+    case .fileSize, .longestSide, .width, .height:
+      let number = value == value.rounded() ? String(Int(value)) : String(value)
+      return "\(subject.title.lowercased()) \(comparison.title) \(number) \(subject.unit)"
+    }
+  }
+}
+
+/// A chain made flat for one file: the chains that run, and whether what
+/// they write is merged into one file afterwards.
+struct Resolution {
+  var chains: [(branch: String?, actions: [Operation])]
+  var merge: MergeKind?
+}
+
+extension Array where Element == Operation {
+  /// The flat chains this chain becomes for one file: every `when` decided,
+  /// every `split` fanned out, a join passed over, a merge noted. One chain
+  /// and no branch name is the ordinary case; more than one means more than
+  /// one file comes out.
+  func resolved(for file: ProcessableFile) -> Resolution {
+    var merge: MergeKind?
+    var chains: [(branch: String?, actions: [Operation])] = [(nil, [])]
+    for operation in self {
+      switch operation {
+      case .join:
+        continue
+      case .merge(let kind):
+        merge = kind
+      case .when(let condition, let then, let otherwise):
+        let taken = (condition.holds(for: file) ? then : otherwise).resolved(for: file).chains
+        chains = chains.flatMap { chain in taken.map { (Self.join(chain.branch, $0.branch), chain.actions + $0.actions) } }
+      case .split(let branches):
+        chains = chains.flatMap { chain in
+          branches.flatMap { branch in
+            branch.actions.resolved(for: file).chains.map { (Self.join(Self.join(chain.branch, branch.name), $0.branch), chain.actions + $0.actions) }
+          }
+        }
+      default:
+        chains = chains.map { ($0.branch, $0.actions + [operation]) }
+      }
+    }
+    return Resolution(chains: chains, merge: merge)
+  }
+
+  private static func join(_ a: String?, _ b: String?) -> String? {
+    [a, b].compactMap { $0?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.joined(separator: "-").nilIfEmpty
+  }
+}
+
+private extension String {
+  var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 // MARK: - Codable
@@ -72,10 +309,12 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
 extension Operation {
   private enum CodingKeys: String, CodingKey {
     case kind, format, width, height, fitMode, level, filter, languages, codec, bytes, privacy
+    case condition, then, otherwise, branches, mergeKind
   }
 
   private enum Kind: String, Codable {
     case convertFormat, resize, quality, filter, recognizeText, encode, limitSize, stripMetadata
+    case when, split, join, merge
   }
 
   init(from decoder: Decoder) throws {
@@ -101,6 +340,18 @@ extension Operation {
       self = .limitSize(bytes: try container.decode(Int.self, forKey: .bytes))
     case .stripMetadata:
       self = .stripMetadata(policy: try container.decode(PrivacyPolicy.self, forKey: .privacy))
+    case .when:
+      self = .when(
+        try container.decode(Condition.self, forKey: .condition),
+        then: try container.decodeIfPresent([Operation].self, forKey: .then) ?? [],
+        otherwise: try container.decodeIfPresent([Operation].self, forKey: .otherwise) ?? []
+      )
+    case .split:
+      self = .split(try container.decodeIfPresent([Branch].self, forKey: .branches) ?? [])
+    case .join:
+      self = .join
+    case .merge:
+      self = .merge(try container.decodeIfPresent(MergeKind.self, forKey: .mergeKind) ?? .pdf)
     }
   }
 
@@ -133,6 +384,19 @@ extension Operation {
     case .stripMetadata(let policy):
       try container.encode(Kind.stripMetadata, forKey: .kind)
       try container.encode(policy, forKey: .privacy)
+    case .when(let condition, let then, let otherwise):
+      try container.encode(Kind.when, forKey: .kind)
+      try container.encode(condition, forKey: .condition)
+      try container.encode(then, forKey: .then)
+      try container.encode(otherwise, forKey: .otherwise)
+    case .split(let branches):
+      try container.encode(Kind.split, forKey: .kind)
+      try container.encode(branches, forKey: .branches)
+    case .join:
+      try container.encode(Kind.join, forKey: .kind)
+    case .merge(let kind):
+      try container.encode(Kind.merge, forKey: .kind)
+      try container.encode(kind, forKey: .mergeKind)
     }
   }
 }

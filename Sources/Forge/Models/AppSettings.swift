@@ -43,6 +43,10 @@ struct AppSettings: Codable, Sendable, Equatable {
   /// `{name}_{maxsize}` and produce `holiday_10MB.jpg`.
   var nameTemplate: String = "{name}"
 
+  /// Whether the window follows the Mac's appearance or picks one. Sheets and
+  /// panels are translucent either way.
+  var appearance: Appearance = .system
+
   /// The chain a preset asked for, with the general preferences filled in
   /// wherever it did not say. A preference is only a preference if something
   /// actually reads it when nobody overrides it.
@@ -85,5 +89,28 @@ struct AppSettings: Codable, Sendable, Equatable {
   func save() throws {
     let data = try JSONEncoder().encode(self)
     UserDefaults.standard.set(data, forKey: Self.settingsKey)
+  }
+}
+
+extension AppSettings {
+  private enum CodingKeys: String, CodingKey {
+    case maxConcurrentNative, createBackupBeforeOverwrite, notifyWhenFinished
+    case defaultFitMode, defaultQuality, privacy, nameTemplate, appearance
+  }
+
+  /// Every key is optional on the way in. A setting added in a later version
+  /// must not make an older settings file unreadable and throw the rest away.
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    let fresh = AppSettings()
+    self.init()
+    maxConcurrentNative = try c.decodeIfPresent(Int.self, forKey: .maxConcurrentNative) ?? fresh.maxConcurrentNative
+    createBackupBeforeOverwrite = try c.decodeIfPresent(Bool.self, forKey: .createBackupBeforeOverwrite) ?? fresh.createBackupBeforeOverwrite
+    notifyWhenFinished = try c.decodeIfPresent(Bool.self, forKey: .notifyWhenFinished) ?? fresh.notifyWhenFinished
+    defaultFitMode = try c.decodeIfPresent(ResizeFitMode.self, forKey: .defaultFitMode) ?? fresh.defaultFitMode
+    defaultQuality = try c.decodeIfPresent(Int.self, forKey: .defaultQuality) ?? fresh.defaultQuality
+    privacy = try c.decodeIfPresent(PrivacyPolicy.self, forKey: .privacy) ?? fresh.privacy
+    nameTemplate = try c.decodeIfPresent(String.self, forKey: .nameTemplate) ?? fresh.nameTemplate
+    appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? fresh.appearance
   }
 }

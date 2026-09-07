@@ -85,7 +85,7 @@ actor ProcessingCoordinator {
           outputURL: result.outputURL,
           additionalOutputs: result.additionalOutputs.isEmpty ? nil : result.additionalOutputs,
           destinationFolder: destinationURL,
-          actions: preset.toOperations(),
+          actions: preset.actions,
           presetName: preset.name
         )
         try await self.persistence.appendHistory(history)
@@ -104,7 +104,7 @@ actor ProcessingCoordinator {
           outputURL: nil,
           additionalOutputs: nil,
           destinationFolder: destinationURL,
-          actions: preset.toOperations(),
+          actions: preset.actions,
           presetName: preset.name
         )
         try? await self.persistence.appendHistory(history)
@@ -168,6 +168,116 @@ actor ProcessingCoordinator {
     counter: Int?,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
+    // A preset with a gate leaves alone whatever does not pass it, and says so.
+    if let gate = preset.gate, !gate.holds(for: file) {
+      throw ProcessingError.validationFailed(message: "Left alone: \(gate.summary) is not true of this file.")
+    }
+
+    // Every `if` decided for this file, every split fanned out: what is left
+    // is one flat chain per output, and the processors only ever see those.
+    let resolution = preset.actions.resolved(for: file)
+    let chains = resolution.chains
+    guard chains.count > 1 || chains.first?.branch != nil || resolution.merge != nil else {
+      var flat = preset
+      flat.actions = chains.first?.actions ?? []
+      return try await runFormats(file: file, preset: flat, destinationMode: destinationMode, destinationURL: destinationURL, counter: counter, progress: progress)
+    }
+
+    guard destinationMode != .overwrite else {
+      throw ProcessingError.validationFailed(
+        message: "“\(preset.name)” writes \(chains.count) files per input, "
+          + "so it cannot replace the original. Choose a destination folder."
+      )
+    }
+
+    // Copies that are about to be merged are written out of sight, and only
+    // the merged file lands where the user asked.
+    let scratch = resolution.merge == nil ? nil : FileManager.default.temporaryDirectory
+      .appendingPathComponent("forge-merge-\(UUID().uuidString)", isDirectory: true)
+    if let scratch { try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true) }
+    defer { if let scratch { try? FileManager.default.removeItem(at: scratch) } }
+
+    var results: [ProcessingResult] = []
+    for (index, chain) in chains.enumerated() {
+      try Task.checkCancellation()
+      var copy = preset
+      copy.actions = chain.actions
+      if let branch = chain.branch {
+        copy.nameTemplate = Self.template(preset.nameTemplate ?? settings.nameTemplate, branch: branch)
+      }
+      let step = 1.0 / Double(chains.count)
+      results.append(
+        try await runFormats(
+          file: file,
+          preset: copy,
+          destinationMode: scratch == nil ? destinationMode : .copyTo,
+          destinationURL: scratch ?? destinationURL,
+          counter: counter,
+          progress: { fraction in progress(Double(index) * step + fraction * step) }
+        )
+      )
+    }
+    let combined = try Self.merge(results)
+    guard let kind = resolution.merge else { return combined }
+
+    let written = [combined.outputURL] + combined.additionalOutputs
+    let folder = destinationURL ?? file.url.deletingLastPathComponent()
+    let stem = NameTemplate.resolve(
+      preset.nameTemplate ?? settings.nameTemplate,
+      with: Self.nameContext(for: file, preset: preset, operations: [], extension: kind.rawValue, counter: counter)
+    )
+    let merged = folder.appendingPathComponent("\((stem.isEmpty ? (file.fileName as NSString).deletingPathExtension : stem)).\(kind.rawValue)")
+    switch kind {
+    case .pdf: try Merger.pdf(from: written, to: merged)
+    }
+    let size = (try? FileManager.default.attributesOfItem(atPath: merged.path)[.size] as? Int64) ?? 0
+    return ProcessingResult(
+      outputURL: merged,
+      outputSize: size,
+      outputDimensions: nil,
+      duration: combined.duration,
+      additionalOutputs: [],
+      appliedQuality: combined.appliedQuality
+    )
+  }
+
+  /// The name template for one branch of a split: `{branch}` becomes the
+  /// branch's name; a template that never mentions it gets the name on the
+  /// end, so two copies of one file never fight over one name.
+  static func template(_ template: String, branch: String) -> String {
+    template.contains("{branch}")
+      ? template.replacingOccurrences(of: "{branch}", with: branch)
+      : template + "_" + branch
+  }
+
+  /// Several outputs of one input, reported as one result.
+  private static func merge(_ results: [ProcessingResult]) throws -> ProcessingResult {
+    guard let first = results.first else {
+      throw ProcessingError.conversionFailed(reason: "Nothing was written")
+    }
+    return ProcessingResult(
+      outputURL: first.outputURL,
+      outputSize: results.reduce(0) { $0 + $1.outputSize },
+      outputDimensions: first.outputDimensions,
+      duration: results.reduce(0) { $0 + $1.duration },
+      additionalOutputs: first.additionalOutputs + results.dropFirst().map(\.outputURL),
+      appliedQuality: first.appliedQuality
+    )
+  }
+
+  /// Run one flat chain once per format it asks for.
+  ///
+  /// A preset naming two formats is not a preset that changed its mind: it is
+  /// one that wants both, so the same file goes through twice and two files
+  /// come out. One format is the ordinary case and takes the ordinary path.
+  private func runFormats(
+    file: ProcessableFile,
+    preset: RulePreset,
+    destinationMode: DestinationMode,
+    destinationURL: URL?,
+    counter: Int?,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> ProcessingResult {
     let formats = Self.formats(of: preset)
     guard formats.count > 1 else {
       return try await executeProcessing(
@@ -205,18 +315,7 @@ actor ProcessingCoordinator {
       )
     }
 
-    guard let first = results.first else {
-      throw ProcessingError.conversionFailed(reason: "Nothing was written")
-    }
-
-    return ProcessingResult(
-      outputURL: first.outputURL,
-      outputSize: results.reduce(0) { $0 + $1.outputSize },
-      outputDimensions: first.outputDimensions,
-      duration: results.reduce(0) { $0 + $1.duration },
-      additionalOutputs: first.additionalOutputs + results.dropFirst().map(\.outputURL),
-      appliedQuality: first.appliedQuality
-    )
+    return try Self.merge(results)
   }
 
   /// Every format the preset asks for, in the order it asks.
@@ -251,7 +350,7 @@ actor ProcessingCoordinator {
     // written into the file's own name beats both, because somebody typed it
     // onto that file for this conversion.
     let operations = settings.applyingDefaults(
-      to: NameTokens.applying(to: preset.toOperations(), from: file.fileName),
+      to: NameTokens.applying(to: preset.actions, from: file.fileName),
       writing: preset.targetFormat ?? file.fileType
     )
 
@@ -576,7 +675,7 @@ actor ProcessingCoordinator {
     }.first
 
     return NameTemplate.Static(
-      name: (file.fileName as NSString).deletingPathExtension,
+      name: preset.untriggered(stem: (file.fileName as NSString).deletingPathExtension),
       parent: file.url.deletingLastPathComponent().lastPathComponent,
       // The file's own date where the filesystem knows one, since a template
       // asking for a date is asking about the photograph, not about now.

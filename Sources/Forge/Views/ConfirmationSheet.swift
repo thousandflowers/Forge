@@ -67,6 +67,7 @@ struct ConfirmationSheet: View {
       .padding(16)
     }
     .frame(width: 520)
+    .translucentSheet()
   }
 
   private var title: String {

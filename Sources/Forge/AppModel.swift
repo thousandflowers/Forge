@@ -18,6 +18,9 @@ final class AppModel: ObservableObject {
   /// Files put on the Convert screen by something other than a drop - a row in
   /// history asking to be run again. Cleared as soon as that screen takes them.
   @Published var pending: PendingConversion?
+  /// The preset being written, when the editor is up. It covers the whole
+  /// window, so the window owns it rather than the Presets screen.
+  @Published var presetEditor: PresetEditorRequest?
 
   let coordinator: ProcessingCoordinator
   private let persistence: PersistenceManager
@@ -418,7 +421,12 @@ final class AppModel: ObservableObject {
 
   private func processIncoming(_ url: URL, folder: MonitoredFolder) async {
     guard !wroteThis(url) else { return }
-    guard let preset = presets.first(where: { $0.id == folder.ruleId }) else { return }
+    // A file renamed to carry a preset's word asks for that preset by name;
+    // otherwise the folder's own preset takes it.
+    let triggered = presets.first { $0.isEnabled && $0.isTriggered(by: url) }
+    guard let preset = triggered ?? presets.first(where: { $0.id == folder.ruleId }) else { return }
+    // A preset that names its formats leaves everything else in the folder alone.
+    guard preset.accepts(url) else { return }
 
     let file: ProcessableFile
     do {

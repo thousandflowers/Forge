@@ -5,6 +5,14 @@ struct SettingsView: View {
 
   var body: some View {
     Form {
+      Section("Appearance") {
+        Picker("Window", selection: $model.settings.appearance) {
+          ForEach(Appearance.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        Text("Sheets and panels let the window show through either way.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
       Section("Performance") {
         Stepper(value: $model.settings.maxConcurrentNative, in: 1...8) {
           LabeledContent("Max concurrent conversions", value: "\(model.settings.maxConcurrentNative)")

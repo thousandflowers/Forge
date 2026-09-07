@@ -61,6 +61,7 @@ struct ConvertChoice: Equatable {
       case .recognizeText(let languages): updated.language = languages.first
       case .limitSize(let bytes): updated.maxBytes = bytes
       case .stripMetadata(let policy): updated.privacy = policy
+      case .when, .split, .join, .merge: break
       }
     }
 
@@ -148,6 +149,7 @@ struct ConvertOptionsSheet: View {
       footer
     }
     .frame(width: 680, height: 600)
+    .translucentSheet()
   }
 
   // MARK: - Header
@@ -190,7 +192,7 @@ struct ConvertOptionsSheet: View {
     VStack(alignment: .leading, spacing: 22) {
       if !offeredPresets.isEmpty { presetField }
 
-      if let preset = chosenPreset, !preset.parameters.isEmpty {
+      if let preset = chosenPreset, preset.parameters.contains(where: { $0.source == .prompt }) {
         parameterFields(preset)
       }
 
@@ -296,7 +298,7 @@ struct ConvertOptionsSheet: View {
   private func parameterFields(_ preset: RulePreset) -> some View {
     field("\(preset.name) asks") {
       VStack(alignment: .leading, spacing: 12) {
-        ForEach(preset.parameters) { parameter in
+        ForEach(preset.parameters.filter { $0.source == .prompt }) { parameter in
           HStack(spacing: 10) {
             Text(parameter.label.isEmpty ? parameter.kind.title : parameter.label)
               .frame(width: 150, alignment: .leading)

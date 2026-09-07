@@ -4,14 +4,13 @@ import UniformTypeIdentifiers
 
 struct PresetsView: View {
   @EnvironmentObject private var model: AppModel
-  @State private var editorItem: EditorItem?
 
   var body: some View {
     Group {
       if model.presets.isEmpty {
         EmptyStateView(icon: "slider.horizontal.3", title: "No presets",
                        message: "Create a preset to define how files are converted.",
-                       actionTitle: "New Preset") { editorItem = EditorItem(preset: nil) }
+                       actionTitle: "New Preset") { model.presetEditor = PresetEditorRequest(preset: nil) }
       } else {
         ScrollView {
           LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 16)], spacing: 16) {
@@ -26,9 +25,9 @@ struct PresetsView: View {
                 onShare: { share(preset) },
                 onDelete: { model.deletePreset(preset) }
               )
-                .onTapGesture { editorItem = EditorItem(preset: preset) }
+                .onTapGesture { model.presetEditor = PresetEditorRequest(preset: preset) }
                 .contextMenu {
-                  Button("Edit") { editorItem = EditorItem(preset: preset) }
+                  Button("Edit") { model.presetEditor = PresetEditorRequest(preset: preset) }
                   Button("Duplicate") { model.duplicatePreset(preset) }
                   Button("Share…") { share(preset) }
                   Divider()
@@ -45,18 +44,19 @@ struct PresetsView: View {
         }
       }
     }
-    .navigationTitle("Presets")
+    .navigationTitle(model.presetEditor == nil ? "Presets" : (model.presetEditor?.preset?.name ?? "New Preset"))
+    // The editor covers the screen, so the screen's own buttons step aside
+    // rather than sit above it doing things to a list nobody can see.
     .toolbar {
       ToolbarItemGroup(placement: .primaryAction) {
+        if model.presetEditor == nil {
         // Sharing hangs off each card: a single button up here could only
         // ever mean "all of them", which is never what somebody handing a
         // preset to a friend wants.
         Button { importPresets() } label: { Label("Import Presets…", systemImage: "square.and.arrow.down") }
-        Button { editorItem = EditorItem(preset: nil) } label: { Label("New Preset", systemImage: "plus") }
+        Button { model.presetEditor = PresetEditorRequest(preset: nil) } label: { Label("New Preset", systemImage: "plus") }
+        }
       }
-    }
-    .sheet(item: $editorItem) { item in
-      PresetEditorView(preset: item.preset) { model.savePreset($0) }
     }
   }
 
@@ -78,10 +78,6 @@ struct PresetsView: View {
     model.importPresets(from: url)
   }
 
-  struct EditorItem: Identifiable {
-    let id = UUID()
-    let preset: RulePreset?
-  }
 }
 
 struct PresetCard: View {
@@ -175,6 +171,14 @@ struct PresetCard: View {
       }
     case .stripMetadata(let policy):
       return policy == .stripLocation ? "no location" : "no metadata"
+    case .when(let condition, _, _):
+      return "if \(condition.subject.title.lowercased())"
+    case .split(let branches):
+      return "\(branches.count) copies"
+    case .join:
+      return "rejoin"
+    case .merge(let kind):
+      return kind.title
     case .quality(let level):
       return "Q\(level)"
     case .filter(let type):

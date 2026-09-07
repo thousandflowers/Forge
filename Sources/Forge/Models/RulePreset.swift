@@ -37,6 +37,20 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   /// Overrides the general name template for the files this preset writes.
   var nameTemplate: String? = nil
 
+  /// The file extensions this preset takes, when it names them. `nil` means
+  /// every file of its category. A custom preset with none named takes
+  /// anything Forge can open.
+  var inputFormats: [String]? = nil
+
+  /// A word that starts this preset from a file's name: rename `foto.jpg` to
+  /// `foto_web.jpg` in a watched folder and the preset with the word `web`
+  /// runs on it, whatever the folder's own preset is. The word is dropped
+  /// from the output's name.
+  var nameTrigger: String? = nil
+
+  /// A test the file has to pass, or the preset leaves it alone.
+  var gate: Condition? = nil
+
   /// What the parameters were answered with, for this run only.
   ///
   /// Deliberately outside `CodingKeys`: an answer belongs to one conversion,
@@ -111,7 +125,6 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   }
 
   /// The actions, ready to run.
-  func toOperations() -> [Operation] { actions }
 
   /// Whether this preset would actually do anything.
   ///
@@ -145,7 +158,7 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
 
   /// What the chain converts to, if it says.
   var targetFormat: UTType? {
-    actions.compactMap { if case .convertFormat(let to) = $0 { return to } else { return nil } }.first
+    actions.flatMap(\.leaves).compactMap { if case .convertFormat(let to) = $0 { return to } else { return nil } }.first
   }
 
   var resize: ResizeSpec? {
@@ -172,7 +185,7 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
 extension RulePreset {
   private enum CodingKeys: String, CodingKey {
     case id, name, description, category, position, isEnabled, actions
-    case parameters, nameTemplate
+    case parameters, nameTemplate, inputFormats, nameTrigger, gate
     // The shape presets were saved in before they became a chain.
     case targetFormat, resize, quality, filters, ocrLanguages
   }
@@ -196,6 +209,9 @@ extension RulePreset {
     // and means "asks for nothing" and "use the general name template".
     parameters = try container.decodeIfPresent([PresetParameter].self, forKey: .parameters) ?? []
     nameTemplate = try container.decodeIfPresent(String.self, forKey: .nameTemplate)
+    inputFormats = try container.decodeIfPresent([String].self, forKey: .inputFormats)
+    nameTrigger = try container.decodeIfPresent(String.self, forKey: .nameTrigger)
+    gate = try container.decodeIfPresent(Condition.self, forKey: .gate)
 
     if let actions = try container.decodeIfPresent([Operation].self, forKey: .actions) {
       self.actions = actions
@@ -222,6 +238,39 @@ extension RulePreset {
     try container.encode(actions, forKey: .actions)
     if !parameters.isEmpty { try container.encode(parameters, forKey: .parameters) }
     try container.encodeIfPresent(nameTemplate, forKey: .nameTemplate)
+    try container.encodeIfPresent(inputFormats, forKey: .inputFormats)
+    try container.encodeIfPresent(nameTrigger, forKey: .nameTrigger)
+    try container.encodeIfPresent(gate, forKey: .gate)
+  }
+
+  /// Whether the file's name carries this preset's trigger word, as `_word`
+  /// before the extension.
+  func isTriggered(by url: URL) -> Bool {
+    guard let word = nameTrigger?.trimmingCharacters(in: .whitespaces).lowercased(), !word.isEmpty else { return false }
+    let stem = url.deletingPathExtension().lastPathComponent.lowercased()
+    return stem.split(separator: "_").dropFirst().contains(Substring(word))
+  }
+
+  /// The stem with the trigger word taken out: `foto_web` becomes `foto`.
+  func untriggered(stem: String) -> String {
+    guard let word = nameTrigger?.trimmingCharacters(in: .whitespaces).lowercased(), !word.isEmpty else { return stem }
+    let pieces = stem.split(separator: "_").map(String.init)
+    guard pieces.count > 1 else { return stem }
+    return ([pieces[0]] + pieces.dropFirst().filter { $0.lowercased() != word }).joined(separator: "_")
+  }
+
+  /// Whether a file is one this preset takes.
+  ///
+  /// A preset that names formats takes only those. One that names none takes
+  /// every file of its category, and a custom one takes anything at all -
+  /// the sheet and the watcher both ask this before offering it.
+  func accepts(_ url: URL) -> Bool {
+    guard let inputFormats, !inputFormats.isEmpty else {
+      guard category != .custom, let type = UTType(filenameExtension: url.pathExtension),
+            let kind = ConvertKind(fileType: type) else { return true }
+      return category.covers(kind)
+    }
+    return inputFormats.contains(url.pathExtension.lowercased())
   }
 }
 
@@ -236,6 +285,11 @@ enum PresetCategory: String, Codable, CaseIterable, Sendable {
   case video
   case audio
   case document
+  case data
+  case model
+  case subtitle
+  case font
+  /// Any file, or the formats the preset names for itself.
   case custom
 
   var icon: String {
@@ -244,7 +298,51 @@ enum PresetCategory: String, Codable, CaseIterable, Sendable {
     case .video: return "film"
     case .audio: return "waveform"
     case .document: return "doc"
+    case .data: return "tablecells"
+    case .model: return "cube"
+    case .subtitle: return "captions.bubble"
+    case .font: return "textformat"
     case .custom: return "star"
+    }
+  }
+
+  /// One file of this kind, for a sentence: "every image file".
+  var noun: String {
+    switch self {
+    case .image: return "image"
+    case .video: return "video"
+    case .audio: return "audio"
+    case .document: return "document"
+    case .data: return "data"
+    case .model: return "3D model"
+    case .subtitle: return "subtitle"
+    case .font: return "font"
+    case .custom: return "chosen"
+    }
+  }
+
+  /// Whether a file of this kind belongs to this category.
+  ///
+  /// Documents covers data files, 3D models, subtitles and fonts as well as
+  /// documents: those kinds sat on the Documents shelf until they had shelves
+  /// of their own, and a preset or a watched folder saved back then must keep
+  /// taking the files it always took.
+  func covers(_ kind: ConvertKind) -> Bool {
+    if kind.presetCategory == self { return true }
+    return self == .document && [.data, .model, .subtitle, .font].contains(kind)
+  }
+
+  var title: String {
+    switch self {
+    case .image: return "Images"
+    case .video: return "Videos"
+    case .audio: return "Audio"
+    case .document: return "Documents"
+    case .data: return "Data files"
+    case .model: return "3D models"
+    case .subtitle: return "Subtitles"
+    case .font: return "Fonts"
+    case .custom: return "Custom"
     }
   }
 

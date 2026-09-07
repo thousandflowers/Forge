@@ -176,14 +176,6 @@ actor ExtensionManager {
     try await install(id, progress: progress)
   }
 
-  /// The manifest's version of a tool, when it differs from the installed one.
-  func updateAvailable(for id: String) async -> ExtensionInfo? {
-    guard let installed = installedExtensions().first(where: { $0.id == id }),
-          let offered = try? await description(of: id),
-          offered.version != installed.version else { return nil }
-    return offered
-  }
-
   /// Take a tool off the Mac, files and record together.
   func remove(_ id: String) async throws {
     var records = try await persistence.loadInstalledExtensions()

@@ -218,7 +218,7 @@ struct Presets: AsyncParsableCommand {
 
       let width = presets.map(\.name.count).max() ?? 0
       for preset in presets {
-        let recipe = preset.toOperations().map(Self.describe).joined(separator: " · ")
+        let recipe = preset.actions.map(Self.describe).joined(separator: " · ")
         print("\(preset.name.padding(toLength: width, withPad: " ", startingAt: 0))  \(recipe)")
       }
     }
@@ -240,6 +240,14 @@ struct Presets: AsyncParsableCommand {
         return codec.title
       case .limitSize(let bytes):
         return "under \(Int64(bytes).formatted(.byteCount(style: .file)))"
+      case .when(let condition, _, _):
+        return "if \(condition.summary)"
+      case .split(let branches):
+        return "\(branches.count) copies"
+      case .join:
+        return "join"
+      case .merge(let kind):
+        return "merge into \(kind.title)"
       case .stripMetadata(let policy):
         return policy == .stripLocation ? "no location" : "no metadata"
       }

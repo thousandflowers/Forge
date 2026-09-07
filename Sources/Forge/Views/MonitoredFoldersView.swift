@@ -108,6 +108,7 @@ private struct AddFolderSheet: View {
       .padding()
     }
     .frame(width: 460, height: 420)
+    .translucentSheet()
     .onAppear { if presetID == nil { presetID = model.presets.first?.id } }
   }
 

@@ -18,8 +18,12 @@ enum NameTokens {
     var ceiling: Int?
     /// How much metadata to leave behind.
     var privacy: PrivacyPolicy?
+    /// `_1920px` — how wide it should come out.
+    var width: Int?
+    /// `_q80` — the quality to write at.
+    var quality: Int?
 
-    var isEmpty: Bool { ceiling == nil && privacy == nil }
+    var isEmpty: Bool { ceiling == nil && privacy == nil && width == nil && quality == nil }
   }
 
   /// What the name asks for.
@@ -40,6 +44,10 @@ enum NameTokens {
         read.privacy = .stripAll
       } else if let bytes = SizeInName.bytes(in: token) {
         read.ceiling = bytes
+      } else if token.hasSuffix("px"), let width = Int(token.dropLast(2)), width > 0 {
+        read.width = width
+      } else if token.hasPrefix("q"), let quality = Int(token.dropFirst()), (1...100).contains(quality) {
+        read.quality = quality
       } else {
         // Anything else ends the run. Without this, a date or a word in the
         // middle of a name would be stepped over and whatever came before it
@@ -66,6 +74,14 @@ enum NameTokens {
     if let privacy = read.privacy {
       result.removeAll { if case .stripMetadata = $0 { return true } else { return false } }
       result.append(.stripMetadata(policy: privacy))
+    }
+    if let width = read.width {
+      result.removeAll { if case .resize = $0 { return true } else { return false } }
+      result.append(.resize(width: width, height: nil, fitMode: .proportional))
+    }
+    if let quality = read.quality {
+      result.removeAll { if case .quality = $0 { return true } else { return false } }
+      result.append(.quality(level: quality))
     }
     return result
   }
