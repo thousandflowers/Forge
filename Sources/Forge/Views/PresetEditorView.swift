@@ -33,6 +33,8 @@ struct PresetEditorView: View {
   @State private var search = ""
   /// The extensions a custom preset takes. Empty means anything Forge opens.
   @State private var inputFormats: Set<String>
+  @State private var nameTrigger: String
+  @State private var gate: Condition?
   @State private var choosingFormats = false
   @State private var confirmingDiscard = false
   @FocusState private var focus: Field?
@@ -77,6 +79,8 @@ struct PresetEditorView: View {
     _showsFormats = State(initialValue: !chosen.isEmpty)
     _showsTemplate = State(initialValue: !(preset?.nameTemplate ?? "").isEmpty)
     _inputFormats = State(initialValue: Set(preset?.inputFormats ?? []))
+    _nameTrigger = State(initialValue: preset?.nameTrigger ?? "")
+    _gate = State(initialValue: preset?.gate)
   }
 
   var body: some View {
@@ -205,7 +209,7 @@ struct PresetEditorView: View {
           actions: $steps,
           container: Self.rootID,
           render: { step in
-            if case .split = step.wrappedValue.operation { return AnyView(fork(step)) }
+            if !step.wrappedValue.branches.isEmpty { return AnyView(fork(step)) }
             if case .join = step.wrappedValue.operation { return AnyView(joinNode(step)) }
             return AnyView(stepRow(step))
           },
@@ -259,15 +263,26 @@ struct PresetEditorView: View {
     .dropSpot(.before(step.wrappedValue.id), into: self)
   }
 
-  /// The fork: the main line ends in a node, and from it an arm per copy runs
-  /// on its own, side by side, each a whole chain with its own end.
+  /// A fork: the main line runs into a node - a split, or an if with its
+  /// test - and from it an arm per path runs on its own, side by side, each
+  /// a whole chain with its own end. The arms of an if are the two answers;
+  /// a split has as many as there are copies.
   private func fork(_ step: Binding<Action>) -> some View {
-    VStack(spacing: 0) {
+    let isSplit: Bool = { if case .split = step.wrappedValue.operation { return true } else { return false } }()
+    return VStack(spacing: 0) {
       connected {
         HStack(spacing: 8) {
-          blockIcon("square.split.2x1", tint: LibraryEntry.Group.logic.color)
-          Text("Split into \(step.wrappedValue.branches.count) copies")
-            .font(.callout.weight(.semibold))
+          blockIcon(step.wrappedValue.operation.symbol, tint: LibraryEntry.Group.logic.color)
+          if isSplit {
+            Text("Split into \(step.wrappedValue.branches.count) copies")
+              .font(.callout.weight(.semibold))
+          } else if case .when(let condition, let then, let otherwise) = step.wrappedValue.operation {
+            Text("If").font(.callout.weight(.semibold))
+            ConditionEditor(condition: Binding(
+              get: { condition },
+              set: { step.wrappedValue.operation = .when($0, then: then, otherwise: otherwise) }
+            ))
+          }
           Button {
             _ = steps.removeStep(id: step.wrappedValue.id)
           } label: {
@@ -275,7 +290,7 @@ struct PresetEditorView: View {
           }
           .buttonStyle(.borderless)
           .foregroundStyle(.secondary)
-          .help("Remove the split; the arms go with it")
+          .help(isSplit ? "Remove the split; the arms go with it" : "Remove the if; both paths go with it")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -291,26 +306,28 @@ struct PresetEditorView: View {
       ScrollView(.horizontal, showsIndicators: false) {
         HStack(alignment: .top, spacing: 16) {
           ForEach(step.branches) { branch in
-            arm(branch, of: step)
+            arm(branch, of: step, renamable: isSplit)
               .frame(minWidth: 260, maxWidth: 420)
           }
-          Button {
-            step.wrappedValue.branches.append(ActionBranch(name: "Copy \(step.wrappedValue.branches.count + 1)", actions: []))
-          } label: {
-            VStack(spacing: 6) {
-              Image(systemName: "plus.circle").font(.title2)
-              Text("Add a copy").font(.caption)
+          if isSplit {
+            Button {
+              step.wrappedValue.branches.append(ActionBranch(name: "Copy \(step.wrappedValue.branches.count + 1)", actions: []))
+            } label: {
+              VStack(spacing: 6) {
+                Image(systemName: "plus.circle").font(.title2)
+                Text("Add a copy").font(.caption)
+              }
+              .foregroundStyle(.secondary)
+              .frame(width: 120, height: 90)
+              .background(
+                RoundedRectangle(cornerRadius: 10)
+                  .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
+                  .foregroundStyle(Color.secondary.opacity(0.3))
+              )
             }
-            .foregroundStyle(.secondary)
-            .frame(width: 120, height: 90)
-            .background(
-              RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
-                .foregroundStyle(Color.secondary.opacity(0.3))
-            )
+            .buttonStyle(.plain)
+            .padding(.top, 22)
           }
-          .buttonStyle(.plain)
-          .padding(.top, 22)
         }
         .padding(.horizontal, 8)
       }
@@ -318,15 +335,21 @@ struct PresetEditorView: View {
   }
 
   /// One arm of the fork: its name, its own chain, its own end.
-  private func arm(_ branch: Binding<ActionBranch>, of step: Binding<Action>) -> some View {
+  private func arm(_ branch: Binding<ActionBranch>, of step: Binding<Action>, renamable: Bool) -> some View {
     VStack(spacing: 0) {
       Rectangle().fill(Color.secondary.opacity(0.35)).frame(width: 2, height: 14)
       HStack(spacing: 6) {
         Image(systemName: "arrow.turn.down.right").foregroundStyle(.secondary).font(.caption)
-        TextField("Name this copy", text: branch.name)
-          .textFieldStyle(.plain)
-          .font(.callout.weight(.semibold))
-        if step.wrappedValue.branches.count > 2 {
+        if renamable {
+          TextField("Name this copy", text: branch.name)
+            .textFieldStyle(.plain)
+            .font(.callout.weight(.semibold))
+        } else {
+          Text(branch.wrappedValue.name)
+            .font(.callout.weight(.semibold))
+          Spacer()
+        }
+        if renamable, step.wrappedValue.branches.count > 2 {
           Button {
             step.wrappedValue.branches.removeAll { $0.id == branch.wrappedValue.id }
           } label: {
@@ -452,33 +475,75 @@ struct PresetEditorView: View {
     }
   }
 
-  /// The files this preset takes. Always first, never removed.
+  /// The files this preset takes, what starts it, and the test they have to
+  /// pass. Always first, never removed.
   private var inputBlock: some View {
     block(title: "Files that come in", symbol: category.icon, tint: .teal, remove: nil) {
-      HStack(spacing: 10) {
-        Picker("Kind", selection: $category) {
-          ForEach(PresetCategory.allCases, id: \.self) { Text($0.title).tag($0) }
-        }
-        .labelsHidden()
-        .fixedSize()
-
-        if category == .custom {
-          Button {
-            choosingFormats = true
-          } label: {
-            Label("Choose formats…", systemImage: "line.3.horizontal.decrease.circle")
+      VStack(alignment: .leading, spacing: 10) {
+        HStack(spacing: 10) {
+          Picker("Kind", selection: $category) {
+            ForEach(PresetCategory.allCases, id: \.self) { Text($0.title).tag($0) }
           }
-          // The anchor keeps one width whatever is chosen: a label that grew
-          // with the count moved the popover under the pointer at every click.
-          .popover(isPresented: $choosingFormats, arrowEdge: .bottom) { formatsPopover }
-          Text(inputFormats.isEmpty ? "Any file Forge opens." : "\(inputFormats.count) formats chosen.")
+          .labelsHidden()
+          .fixedSize()
+
+          if category == .custom {
+            Button {
+              choosingFormats = true
+            } label: {
+              Label("Choose formats…", systemImage: "line.3.horizontal.decrease.circle")
+            }
+            // The anchor keeps one width whatever is chosen: a label that grew
+            // with the count moved the popover under the pointer at every click.
+            .popover(isPresented: $choosingFormats, arrowEdge: .bottom) { formatsPopover }
+            Text(inputFormats.isEmpty ? "Any file Forge opens." : "\(inputFormats.count) formats chosen.")
+              .font(.callout)
+              .foregroundStyle(.secondary)
+              .monospacedDigit()
+          } else {
+            Text("Every \(category.noun) file dropped on Forge, or into a folder it watches.")
+              .font(.callout)
+              .foregroundStyle(.secondary)
+          }
+        }
+
+        Divider()
+
+        // Runs when: dropped, or renamed to say so.
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+          Text("Runs when").foregroundStyle(.secondary).frame(width: 74, alignment: .trailing)
+          VStack(alignment: .leading, spacing: 6) {
+            Text("a file is dropped on Forge, or lands in a folder Forge watches")
+              .font(.callout)
+            HStack(spacing: 6) {
+              Text("or a file is renamed with the word").font(.callout)
+              Text("_").foregroundStyle(.tertiary)
+              TextField("web", text: $nameTrigger)
+                .frame(width: 90)
+                .font(.callout.monospaced())
+            }
+            if !nameTrigger.trimmingCharacters(in: .whitespaces).isEmpty {
+              Text("In a watched folder, foto.jpg renamed to foto_\(nameTrigger.trimmingCharacters(in: .whitespaces)).jpg runs this preset, whatever the folder's own preset is. The word is dropped from the output's name.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+          }
+        }
+
+        // Only if: a gate on the whole preset.
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+          Text("Only if").foregroundStyle(.secondary).frame(width: 74, alignment: .trailing)
+          VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: Binding(get: { gate != nil }, set: { gate = $0 ? Condition() : nil })) {
+              Text("the file passes a test; otherwise it is left alone")
+            }
+            .toggleStyle(.checkbox)
             .font(.callout)
-            .foregroundStyle(.secondary)
-            .monospacedDigit()
-        } else {
-          Text("Every \(category.noun) file dropped on Forge, or into a folder it watches, goes through the blocks below.")
-            .font(.callout)
-            .foregroundStyle(.secondary)
+            if let current = gate {
+              ConditionEditor(condition: Binding(get: { current }, set: { gate = $0 }))
+            }
+          }
         }
       }
     }
@@ -593,60 +658,7 @@ struct PresetEditorView: View {
     }) {
       ActionRow(action: step)
         .padding(.leading, 22)
-      if !step.wrappedValue.branches.isEmpty {
-        branches(of: step)
-      }
     }
-  }
-
-  /// The paths out of a fork, side by side, each a canvas of its own.
-  private func branches(of step: Binding<Action>) -> some View {
-    let isSplit: Bool = { if case .split = step.wrappedValue.operation { return true } else { return false } }()
-    return VStack(alignment: .leading, spacing: 8) {
-      HStack(alignment: .top, spacing: 10) {
-        ForEach(step.branches) { branch in
-          VStack(spacing: 4) {
-            HStack(spacing: 6) {
-              if isSplit {
-                TextField("Name", text: branch.name)
-                  .textFieldStyle(.plain)
-                  .font(.caption.weight(.semibold))
-              } else {
-                Text(branch.wrappedValue.name)
-                  .font(.caption.weight(.semibold))
-                  .foregroundStyle(.secondary)
-              }
-              Spacer()
-              if isSplit, step.wrappedValue.branches.count > 2 {
-                Button {
-                  step.wrappedValue.branches.removeAll { $0.id == branch.wrappedValue.id }
-                } label: {
-                  Image(systemName: "minus.circle")
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
-                .help("Remove this copy")
-              }
-            }
-            .padding(.horizontal, 6)
-            StepListView(actions: branch.actions, container: branch.wrappedValue.id, render: { AnyView(stepRow($0)) }, endZone: { AnyView(endZone($0)) })
-          }
-          .padding(6)
-          .frame(maxWidth: .infinity, alignment: .top)
-          .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.06)))
-        }
-      }
-      if isSplit {
-        Button {
-          step.wrappedValue.branches.append(ActionBranch(name: "Copy \(step.wrappedValue.branches.count + 1)", actions: []))
-        } label: {
-          Label("Add a copy", systemImage: "plus")
-        }
-        .buttonStyle(.borderless)
-        .font(.callout)
-      }
-    }
-    .padding(.top, 4)
   }
 
   private var formatsBlock: some View {
@@ -897,12 +909,12 @@ struct PresetEditorView: View {
     let now = draft()
     guard let existing else {
       return !now.name.isEmpty || !now.description.isEmpty || !now.actions.isEmpty
-        || !now.parameters.isEmpty || now.nameTemplate != nil || now.inputFormats != nil
+        || !now.parameters.isEmpty || now.nameTemplate != nil || now.inputFormats != nil || now.nameTrigger != nil || now.gate != nil
     }
     return now.name != existing.name || now.description != existing.description
       || now.category != existing.category || now.actions != existing.actions
       || now.parameters != existing.parameters || now.nameTemplate != existing.nameTemplate
-      || now.inputFormats != existing.inputFormats
+      || now.inputFormats != existing.inputFormats || now.nameTrigger != existing.nameTrigger || now.gate != existing.gate
   }
 
   /// The preset as it stands on the canvas.
@@ -918,6 +930,9 @@ struct PresetEditorView: View {
     let template = nameTemplate.trimmingCharacters(in: .whitespaces)
     preset.nameTemplate = showsTemplate && !template.isEmpty ? template : nil
     preset.inputFormats = category == .custom && !inputFormats.isEmpty ? inputFormats.sorted() : nil
+    let word = nameTrigger.trimmingCharacters(in: .whitespaces).lowercased()
+    preset.nameTrigger = word.isEmpty ? nil : word
+    preset.gate = gate
     return preset
   }
 
@@ -945,6 +960,37 @@ extension View {
         editor.receive(providers, at: spot)
         return true
       }
+  }
+}
+
+/// A condition, as three controls in a row.
+struct ConditionEditor: View {
+  @Binding var condition: Condition
+
+  var body: some View {
+    HStack(spacing: 6) {
+      Picker("", selection: $condition.subject) {
+        ForEach(Condition.Subject.allCases, id: \.self) { Text($0.title).tag($0) }
+      }
+      .labelsHidden()
+      .fixedSize()
+      Picker("", selection: $condition.comparison) {
+        ForEach(Condition.Comparison.allCases.filter { condition.subject.isNumeric || $0 == .equals || $0 == .differs }, id: \.self) { Text($0.title).tag($0) }
+      }
+      .labelsHidden()
+      .fixedSize()
+      if condition.subject.isNumeric {
+        TextField("Value", text: Binding(
+          get: { String(format: "%g", condition.value) },
+          set: { condition.value = Double($0.replacingOccurrences(of: ",", with: ".")) ?? condition.value }
+        ))
+        .frame(width: 80)
+        Text(condition.subject.unit).foregroundStyle(.secondary)
+      } else {
+        TextField("png", text: $condition.text)
+          .frame(width: 80)
+      }
+    }
   }
 }
 
@@ -1399,41 +1445,7 @@ private struct ActionRow: View {
       .labelsHidden()
       .frame(maxWidth: 200, alignment: .leading)
 
-    case .when(let condition, let then, let otherwise):
-      HStack(spacing: 6) {
-        Picker("", selection: Binding(
-          get: { condition.subject },
-          set: { var c = condition; c.subject = $0; action.operation = .when(c, then: then, otherwise: otherwise) }
-        )) {
-          ForEach(Condition.Subject.allCases, id: \.self) { Text($0.title).tag($0) }
-        }
-        .labelsHidden()
-        .fixedSize()
-        Picker("", selection: Binding(
-          get: { condition.comparison },
-          set: { var c = condition; c.comparison = $0; action.operation = .when(c, then: then, otherwise: otherwise) }
-        )) {
-          ForEach(Condition.Comparison.allCases.filter { condition.subject.isNumeric || $0 == .equals || $0 == .differs }, id: \.self) { Text($0.title).tag($0) }
-        }
-        .labelsHidden()
-        .fixedSize()
-        if condition.subject.isNumeric {
-          TextField("Value", text: Binding(
-            get: { String(format: "%g", condition.value) },
-            set: { text in var c = condition; c.value = Double(text.replacingOccurrences(of: ",", with: ".")) ?? condition.value; action.operation = .when(c, then: then, otherwise: otherwise) }
-          ))
-          .frame(width: 80)
-          Text(condition.subject.unit).foregroundStyle(.secondary)
-        } else {
-          TextField("png", text: Binding(
-            get: { condition.text },
-            set: { var c = condition; c.text = $0; action.operation = .when(c, then: then, otherwise: otherwise) }
-          ))
-          .frame(width: 80)
-        }
-      }
-
-    case .split:
+    case .when, .split:
       EmptyView()
 
     case .stripMetadata(let policy):

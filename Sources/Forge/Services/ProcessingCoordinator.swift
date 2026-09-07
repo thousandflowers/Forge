@@ -168,6 +168,11 @@ actor ProcessingCoordinator {
     counter: Int?,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
+    // A preset with a gate leaves alone whatever does not pass it, and says so.
+    if let gate = preset.gate, !gate.holds(for: file) {
+      throw ProcessingError.validationFailed(message: "Left alone: \(gate.summary) is not true of this file.")
+    }
+
     // Every `if` decided for this file, every split fanned out: what is left
     // is one flat chain per output, and the processors only ever see those.
     let resolution = preset.actions.resolved(for: file)
@@ -670,7 +675,7 @@ actor ProcessingCoordinator {
     }.first
 
     return NameTemplate.Static(
-      name: (file.fileName as NSString).deletingPathExtension,
+      name: preset.untriggered(stem: (file.fileName as NSString).deletingPathExtension),
       parent: file.url.deletingLastPathComponent().lastPathComponent,
       // The file's own date where the filesystem knows one, since a template
       // asking for a date is asking about the photograph, not about now.

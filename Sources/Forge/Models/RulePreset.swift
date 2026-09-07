@@ -42,6 +42,15 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   /// anything Forge can open.
   var inputFormats: [String]? = nil
 
+  /// A word that starts this preset from a file's name: rename `foto.jpg` to
+  /// `foto_web.jpg` in a watched folder and the preset with the word `web`
+  /// runs on it, whatever the folder's own preset is. The word is dropped
+  /// from the output's name.
+  var nameTrigger: String? = nil
+
+  /// A test the file has to pass, or the preset leaves it alone.
+  var gate: Condition? = nil
+
   /// What the parameters were answered with, for this run only.
   ///
   /// Deliberately outside `CodingKeys`: an answer belongs to one conversion,
@@ -177,7 +186,7 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
 extension RulePreset {
   private enum CodingKeys: String, CodingKey {
     case id, name, description, category, position, isEnabled, actions
-    case parameters, nameTemplate, inputFormats
+    case parameters, nameTemplate, inputFormats, nameTrigger, gate
     // The shape presets were saved in before they became a chain.
     case targetFormat, resize, quality, filters, ocrLanguages
   }
@@ -202,6 +211,8 @@ extension RulePreset {
     parameters = try container.decodeIfPresent([PresetParameter].self, forKey: .parameters) ?? []
     nameTemplate = try container.decodeIfPresent(String.self, forKey: .nameTemplate)
     inputFormats = try container.decodeIfPresent([String].self, forKey: .inputFormats)
+    nameTrigger = try container.decodeIfPresent(String.self, forKey: .nameTrigger)
+    gate = try container.decodeIfPresent(Condition.self, forKey: .gate)
 
     if let actions = try container.decodeIfPresent([Operation].self, forKey: .actions) {
       self.actions = actions
@@ -229,6 +240,24 @@ extension RulePreset {
     if !parameters.isEmpty { try container.encode(parameters, forKey: .parameters) }
     try container.encodeIfPresent(nameTemplate, forKey: .nameTemplate)
     try container.encodeIfPresent(inputFormats, forKey: .inputFormats)
+    try container.encodeIfPresent(nameTrigger, forKey: .nameTrigger)
+    try container.encodeIfPresent(gate, forKey: .gate)
+  }
+
+  /// Whether the file's name carries this preset's trigger word, as `_word`
+  /// before the extension.
+  func isTriggered(by url: URL) -> Bool {
+    guard let word = nameTrigger?.trimmingCharacters(in: .whitespaces).lowercased(), !word.isEmpty else { return false }
+    let stem = url.deletingPathExtension().lastPathComponent.lowercased()
+    return stem.split(separator: "_").dropFirst().contains(Substring(word))
+  }
+
+  /// The stem with the trigger word taken out: `foto_web` becomes `foto`.
+  func untriggered(stem: String) -> String {
+    guard let word = nameTrigger?.trimmingCharacters(in: .whitespaces).lowercased(), !word.isEmpty else { return stem }
+    let pieces = stem.split(separator: "_").map(String.init)
+    guard pieces.count > 1 else { return stem }
+    return ([pieces[0]] + pieces.dropFirst().filter { $0.lowercased() != word }).joined(separator: "_")
   }
 
   /// Whether a file is one this preset takes.
