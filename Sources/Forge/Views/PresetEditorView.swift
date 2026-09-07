@@ -37,9 +37,11 @@ struct PresetEditorView: View {
   @State private var gate: Condition?
   @State private var choosingFormats = false
   @State private var confirmingDiscard = false
+  /// A fork about to be removed with steps in its arms, waiting for a yes.
+  @State private var removingFork: UUID?
   @FocusState private var focus: Field?
 
-  private enum Field { case name, description }
+  private enum Field { case name, description, search }
   /// Where a dragged block would land: a step's id, or `end`.
   @State private var dropTarget: DropSpot?
 
@@ -113,6 +115,15 @@ struct PresetEditorView: View {
         if isDirty { confirmingDiscard = true } else { onClose() }
       }
       .keyboardShortcut(.cancelAction)
+      .confirmationDialog("Remove this fork and everything in its arms?", isPresented: Binding(get: { removingFork != nil }, set: { if !$0 { removingFork = nil } })) {
+        Button("Remove Fork and Arms", role: .destructive) {
+          if let id = removingFork { _ = steps.removeStep(id: id) }
+          removingFork = nil
+        }
+        Button("Keep It", role: .cancel) { removingFork = nil }
+      } message: {
+        Text("The steps inside its arms go with it.")
+      }
       .confirmationDialog("Discard the changes to this preset?", isPresented: $confirmingDiscard) {
         Button("Discard Changes", role: .destructive, action: onClose)
         Button("Keep Editing", role: .cancel) {}
@@ -122,20 +133,23 @@ struct PresetEditorView: View {
 
       Spacer()
 
-      VStack(spacing: 2) {
+      VStack(spacing: 4) {
         TextField("Name this preset", text: $name)
           .font(.title3.weight(.semibold))
           .multilineTextAlignment(.center)
           .focused($focus, equals: .name)
           .onSubmit { focus = .description }
+          .editableSurface()
+          .accessibilityLabel(Text("Preset name"))
         TextField("What it does, in a line", text: $description)
           .font(.callout)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
           .focused($focus, equals: .description)
           .onSubmit { focus = nil }
+          .editableSurface()
+          .accessibilityLabel(Text("Preset description"))
       }
-      .textFieldStyle(.plain)
       .frame(maxWidth: 440)
 
       Spacer()
@@ -146,11 +160,18 @@ struct PresetEditorView: View {
           .foregroundStyle(.secondary)
           .lineLimit(1)
       }
+      // ⌘F goes to the library's search; a button nobody sees carries it.
+      Button("Find a block") { focus = .search }
+        .keyboardShortcut("f", modifiers: .command)
+        .hidden()
+        .frame(width: 0, height: 0)
+
       // ⌘S, not Return: Return in the name field used to save a preset that
       // was not finished being written.
       Button("Save", action: save)
         .buttonStyle(.borderedProminent)
         .keyboardShortcut("s", modifiers: .command)
+        .help("Save the preset (⌘S)")
         .disabled(cannotSave != nil)
         .help(cannotSave ?? "")
     }
@@ -221,6 +242,10 @@ struct PresetEditorView: View {
       }
       .padding(.horizontal, 24)
       .padding(.vertical, 16)
+      .animation(.easeOut(duration: 0.2), value: steps)
+      .animation(.easeOut(duration: 0.2), value: parameters)
+      .animation(.easeOut(duration: 0.2), value: showsFormats)
+      .animation(.easeOut(duration: 0.2), value: showsTemplate)
     }
     .frame(maxWidth: .infinity)
     // Anywhere else on the canvas: the block goes on the end.
@@ -246,13 +271,7 @@ struct PresetEditorView: View {
           Text("Every copy carries on from here, each still its own file.").font(.caption).foregroundStyle(.secondary)
         }
         Spacer()
-        Button {
-          _ = steps.removeStep(id: step.wrappedValue.id)
-        } label: {
-          Image(systemName: "minus.circle")
-        }
-        .buttonStyle(.borderless)
-        .foregroundStyle(.secondary)
+        removeButton("Remove the join") { _ = steps.removeStep(id: step.wrappedValue.id) }
       }
       .padding(.horizontal, 14)
       .padding(.vertical, 8)
@@ -276,6 +295,7 @@ struct PresetEditorView: View {
           if isSplit {
             Text("Split into \(step.wrappedValue.branches.count) copies")
               .font(.callout.weight(.semibold))
+              .monospacedDigit()
           } else if case .when(let condition, let then, let otherwise) = step.wrappedValue.operation {
             Text("If").font(.callout.weight(.semibold))
             ConditionEditor(condition: Binding(
@@ -283,14 +303,11 @@ struct PresetEditorView: View {
               set: { step.wrappedValue.operation = .when($0, then: then, otherwise: otherwise) }
             ))
           }
-          Button {
-            _ = steps.removeStep(id: step.wrappedValue.id)
-          } label: {
-            Image(systemName: "minus.circle")
+          removeButton(isSplit ? "Remove the split; the arms go with it" : "Remove the if; both paths go with it") {
+            // F. Arms with work in them are not thrown away on one click.
+            let busy = step.wrappedValue.branches.contains { !$0.actions.isEmpty }
+            if busy { removingFork = step.wrappedValue.id } else { _ = steps.removeStep(id: step.wrappedValue.id) }
           }
-          .buttonStyle(.borderless)
-          .foregroundStyle(.secondary)
-          .help(isSplit ? "Remove the split; the arms go with it" : "Remove the if; both paths go with it")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -349,14 +366,36 @@ struct PresetEditorView: View {
   private func nextNodeSlot(after id: UUID) -> some View {
     let spot = steps.spotAfter(id, root: Self.rootID) ?? .endOf(Self.rootID)
     return connected {
-      HStack(spacing: 8) {
-        Image(systemName: "plus.circle.dashed").foregroundStyle(.secondary)
-        Text("Next node — another If, a step, or a join")
-          .font(.callout)
-          .foregroundStyle(.secondary)
+      // A dashed slot with a plus reads as something to click, so it is: the
+      // menu offers what can go there. Dropping works as well.
+      Menu {
+        ForEach(LibraryEntry.Group.allCases, id: \.self) { group in
+          let entries = LibraryEntry.all(for: category).filter { $0.group == group && available($0) }
+          if !entries.isEmpty {
+            Section(group.rawValue) {
+              ForEach(entries) { entry in
+                Button {
+                  land(entry.id, at: spot)
+                } label: {
+                  Label(entry.title, systemImage: entry.symbol)
+                }
+              }
+            }
+          }
+        }
+      } label: {
+        HStack(spacing: 8) {
+          Image(systemName: "plus.circle.dashed").foregroundStyle(.secondary)
+          Text("Next node — another If, a step, or a join")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
       }
-      .frame(maxWidth: .infinity)
-      .padding(.vertical, 10)
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
       .background(
         RoundedRectangle(cornerRadius: 10)
           .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
@@ -364,6 +403,7 @@ struct PresetEditorView: View {
       )
       .frame(maxWidth: 640)
       .frame(maxWidth: .infinity)
+      .help("Click for the blocks that can go here, or drop one")
     }
     .dropSpot(spot, into: self)
   }
@@ -376,22 +416,18 @@ struct PresetEditorView: View {
         Image(systemName: "arrow.turn.down.right").foregroundStyle(.secondary).font(.caption)
         if renamable {
           TextField("Name this copy", text: branch.name)
-            .textFieldStyle(.plain)
             .font(.callout.weight(.semibold))
+            .editableSurface()
+            .accessibilityLabel(Text("Name of this copy"))
         } else {
           Text(branch.wrappedValue.name)
             .font(.callout.weight(.semibold))
           Spacer()
         }
         if renamable, step.wrappedValue.branches.count > 2 {
-          Button {
+          removeButton("Remove this copy") {
             step.wrappedValue.branches.removeAll { $0.id == branch.wrappedValue.id }
-          } label: {
-            Image(systemName: "minus.circle")
           }
-          .buttonStyle(.borderless)
-          .foregroundStyle(.secondary)
-          .help("Remove this copy")
         }
       }
       .padding(.horizontal, 10)
@@ -538,6 +574,7 @@ struct PresetEditorView: View {
             Text("Every \(category.noun) file dropped on Forge, or into a folder it watches.")
               .font(.callout)
               .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
           }
         }
 
@@ -549,12 +586,14 @@ struct PresetEditorView: View {
           VStack(alignment: .leading, spacing: 6) {
             Text("a file is dropped on Forge, or lands in a folder Forge watches")
               .font(.callout)
+              .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 6) {
               Text("or a file is renamed with the word").font(.callout)
               Text("_").foregroundStyle(.tertiary)
-              TextField("web", text: $nameTrigger)
+              TextField("word", text: $nameTrigger)
                 .frame(width: 90)
                 .font(.callout.monospaced())
+                .accessibilityLabel(Text("Trigger word"))
             }
             if !nameTrigger.trimmingCharacters(in: .whitespaces).isEmpty {
               Text("In a watched folder, foto.jpg renamed to foto_\(nameTrigger.trimmingCharacters(in: .whitespaces)).jpg runs this preset, whatever the folder's own preset is. The word is dropped from the output's name.")
@@ -732,12 +771,7 @@ struct PresetEditorView: View {
         Text(title).font(.callout.weight(.semibold))
         Spacer()
         if let remove {
-          Button(action: remove) {
-            Image(systemName: "minus.circle")
-          }
-          .buttonStyle(.borderless)
-          .foregroundStyle(.secondary)
-          .accessibilityLabel(Text("Remove \(title)"))
+          removeButton("Remove \(title)", action: remove)
         }
       }
       content()
@@ -747,6 +781,20 @@ struct PresetEditorView: View {
     .frame(maxWidth: .infinity)
     .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
     .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(tint.opacity(0.25)))
+  }
+
+  /// The ⊖ every removable thing shares. The glyph is 14pt; the hit area is
+  /// not, because a target the size of the glyph is a target people miss.
+  private func removeButton(_ help: String, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      Image(systemName: "minus.circle")
+        .frame(width: 24, height: 24)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.borderless)
+    .foregroundStyle(.secondary)
+    .help(help)
+    .accessibilityLabel(Text(help))
   }
 
   /// The coloured square Shortcuts puts in front of an action.
@@ -768,6 +816,8 @@ struct PresetEditorView: View {
         Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
         TextField("Search blocks", text: $search)
           .textFieldStyle(.plain)
+          .focused($focus, equals: .search)
+          .accessibilityLabel(Text("Search blocks"))
         if !search.isEmpty {
           Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
             .buttonStyle(.borderless)
@@ -822,7 +872,7 @@ struct PresetEditorView: View {
   /// tile is a button, and the whole tile drags onto the canvas.
   private func libraryTile(_ entry: LibraryEntry) -> some View {
     let usable = available(entry)
-    return Button {
+    return LibraryTileButton(usable: usable) {
       add(entry)
     } label: {
       HStack(spacing: 10) {
@@ -842,7 +892,6 @@ struct PresetEditorView: View {
       .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(entry.group.color.opacity(0.25)))
       .contentShape(RoundedRectangle(cornerRadius: 10))
     }
-    .buttonStyle(.plain)
     .disabled(!usable)
     .opacity(usable ? 1 : 0.45)
     .onDrag { NSItemProvider(object: entry.id as NSString) }
@@ -997,6 +1046,30 @@ extension View {
   }
 }
 
+/// A plain text field with a surface that says it can be typed in: faint at
+/// rest, plainer on hover, a ring when it has focus. Plain fields without it
+/// read as labels.
+private struct EditableSurface: ViewModifier {
+  @State private var hovering = false
+  @FocusState private var focused: Bool
+
+  func body(content: Content) -> some View {
+    content
+      .textFieldStyle(.plain)
+      .focused($focused)
+      .padding(.horizontal, 6)
+      .padding(.vertical, 3)
+      .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(hovering || focused ? 0.14 : 0.07)))
+      .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor.opacity(focused ? 0.8 : 0), lineWidth: 1.5))
+      .onHover { hovering = $0 }
+      .animation(.easeOut(duration: 0.12), value: hovering)
+  }
+}
+
+private extension View {
+  func editableSurface() -> some View { modifier(EditableSurface()) }
+}
+
 /// A condition, as a row of controls that change with what is being tested.
 struct ConditionEditor: View {
   @Binding var condition: Condition
@@ -1080,6 +1153,39 @@ private struct FormatChips: View {
         .foregroundStyle(on ? Color.white : Color.primary)
     }
     .buttonStyle(.plain)
+  }
+}
+
+/// A library tile as a button that lifts a little under the pointer and
+/// presses down under the click.
+private struct LibraryTileButton<Label: View>: View {
+  let usable: Bool
+  let action: () -> Void
+  @ViewBuilder let label: () -> Label
+  @State private var hovering = false
+
+  init(usable: Bool, action: @escaping () -> Void, @ViewBuilder label: @escaping () -> Label) {
+    self.usable = usable
+    self.action = action
+    self.label = label
+  }
+
+  var body: some View {
+    Button(action: action) {
+      label()
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(hovering && usable ? 0.06 : 0)))
+    }
+    .buttonStyle(PressableTile())
+    .onHover { hovering = $0 }
+    .animation(.easeOut(duration: 0.12), value: hovering)
+  }
+}
+
+private struct PressableTile: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .scaleEffect(configuration.isPressed ? 0.98 : 1)
+      .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
   }
 }
 
@@ -1458,7 +1564,7 @@ private struct ActionRow: View {
 
     case .merge(let kind):
       Picker("", selection: Binding(get: { kind }, set: { action.operation = .merge($0) })) {
-        ForEach(MergeKind.allCases, id: \.self) { Text($0.title.capitalized).tag($0) }
+        ForEach(MergeKind.allCases, id: \.self) { Text($0.title).tag($0) }
       }
       .labelsHidden()
       .frame(maxWidth: 160, alignment: .leading)
