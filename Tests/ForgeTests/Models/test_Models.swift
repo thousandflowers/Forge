@@ -219,7 +219,7 @@ final class FormatCatalogTests: BaseTestCase {
 final class RulePresetTests: BaseTestCase {
 
   func test_toOperations_isEmptyWhenNothingIsAsked() {
-    XCTAssertTrue(RulePreset.make().toOperations().isEmpty)
+    XCTAssertTrue(RulePreset.make().actions.isEmpty)
   }
 
   func test_toOperations_producesConvertResizeQualityAndFilters() {
@@ -228,7 +228,7 @@ final class RulePresetTests: BaseTestCase {
       resize: ResizeSpec(width: 100, height: 50, fitMode: .stretch),
       quality: 70,
       filters: [.grayscale]
-    ).toOperations()
+    ).actions
 
     XCTAssertEqual(operations.map(\.id), ["convert", "resize", "quality", "filter"])
   }
@@ -349,7 +349,7 @@ final class ActionChainTests: BaseTestCase {
         .convertFormat(to: .png),
       ]
     )
-    XCTAssertEqual(preset.toOperations().map(\.id), ["filter", "resize", "convert"])
+    XCTAssertEqual(preset.actions.map(\.id), ["filter", "resize", "convert"])
   }
 
   /// Two filters were impossible when a preset was a form with one slot each.
@@ -370,7 +370,7 @@ final class ActionChainTests: BaseTestCase {
       quality: 70,
       filters: [.sepia]
     )
-    XCTAssertEqual(preset.toOperations().map(\.id), ["convert", "resize", "quality", "filter"])
+    XCTAssertEqual(preset.actions.map(\.id), ["convert", "resize", "quality", "filter"])
   }
 
   /// A preset written before actions existed carries separate fields; it has
@@ -391,7 +391,7 @@ final class ActionChainTests: BaseTestCase {
     let preset = try JSONDecoder().decode(RulePreset.self, from: Data(json.utf8))
 
     XCTAssertEqual(preset.name, "Instagram Square")
-    XCTAssertEqual(preset.toOperations().map(\.id), ["convert", "resize", "quality", "filter"])
+    XCTAssertEqual(preset.actions.map(\.id), ["convert", "resize", "quality", "filter"])
     XCTAssertEqual(preset.targetFormat, .jpeg)
     XCTAssertEqual(preset.resize?.width, 1080)
     XCTAssertEqual(preset.resize?.fitMode, .cropCenter)
