@@ -233,18 +233,7 @@ struct PresetEditorView: View {
           if showsTemplate { connected { templateBlock }.dropSpot(steps.first.map { .before($0.id) } ?? .endOf(Self.rootID), into: self) }
         }
 
-        StepListView(
-          actions: $steps,
-          container: Self.rootID,
-          render: { step in
-            if !step.wrappedValue.branches.isEmpty { return AnyView(fork(step)) }
-            if case .join = step.wrappedValue.operation { return AnyView(joinNode(step)) }
-            return AnyView(stepRow(step))
-          },
-          // A main line that ends in a fork nothing rejoins has no end of its
-          // own: the arms have theirs.
-          endZone: { container in mainLineOpen ? AnyView(endZone(container)) : AnyView(EmptyView()) }
-        )
+        StepListView(actions: $steps, container: Self.rootID, render: { AnyView(renderStep($0)) }, endZone: { AnyView(renderEnd($0)) })
 
         if !hasFork {
           if showsFormats { connected { formatsBlock }.dropSpot(.endOf(Self.rootID), into: self) }
@@ -263,6 +252,29 @@ struct PresetEditorView: View {
     .onDrop(of: [.text], isTargeted: nil) { providers in
       receive(providers, at: .endOf(Self.rootID))
       return true
+    }
+  }
+
+  /// How a step is drawn, at any depth: a fork with its arms, a join node,
+  /// or a block.
+  @ViewBuilder
+  private func renderStep(_ step: Binding<Action>) -> some View {
+    if !step.wrappedValue.branches.isEmpty {
+      fork(step)
+    } else if case .join = step.wrappedValue.operation {
+      joinNode(step)
+    } else {
+      stepRow(step)
+    }
+  }
+
+  /// The end of a chain, at any depth - unless the chain ends in a fork
+  /// nothing rejoins, whose arms have ends of their own.
+  @ViewBuilder
+  private func renderEnd(_ container: UUID) -> some View {
+    let chain = container == Self.rootID ? steps : (steps.actions(in: container) ?? [])
+    if chain.last?.branches.isEmpty ?? true {
+      endZone(container)
     }
   }
 
@@ -347,7 +359,7 @@ struct PresetEditorView: View {
         HStack(alignment: .top, spacing: 16) {
           ForEach(step.branches) { branch in
             arm(branch, of: step, renamable: isSplit)
-              .frame(minWidth: 180, maxWidth: 420)
+              .frame(minWidth: 180, maxWidth: .infinity)
           }
           if isSplit {
             Button {
@@ -419,7 +431,7 @@ struct PresetEditorView: View {
       .padding(.horizontal, 10)
       .padding(.vertical, 6)
       .background(RoundedRectangle(cornerRadius: 8).fill(LibraryEntry.Group.logic.color.opacity(0.15)))
-      StepListView(actions: branch.actions, container: branch.wrappedValue.id, render: { AnyView(stepRow($0)) }, endZone: { AnyView(endZone($0)) })
+      StepListView(actions: branch.actions, container: branch.wrappedValue.id, render: { AnyView(renderStep($0)) }, endZone: { AnyView(renderEnd($0)) })
     }
   }
 
@@ -497,16 +509,10 @@ struct PresetEditorView: View {
     }
   }
 
-  /// A step on the main line after the fork runs on every copy, so the join
-  /// that says so is put in front of it when nothing does yet. A merge is a
-  /// join of its own kind.
+  /// A step after a fork runs on every path, so the join that says so is put
+  /// in front of it when nothing does yet - on the main line or in an arm.
   private func keepSplitLast() {
-    guard let index = steps.lastIndex(where: { !$0.branches.isEmpty }),
-          index + 1 < steps.count else { return }
-    switch steps[index + 1].operation {
-    case .join, .merge: return
-    default: steps.insert(Action(.join), at: index + 1)
-    }
+    steps.ensureJoins()
   }
 
   fileprivate func setDropTarget(_ spot: DropSpot, _ on: Bool) {
@@ -1389,6 +1395,31 @@ extension Array where Element == Action {
       }
     }
     return nil
+  }
+
+  /// The chain a branch holds, found by the branch's id.
+  func actions(in container: UUID) -> [Action]? {
+    for action in self {
+      for branch in action.branches {
+        if branch.id == container { return branch.actions }
+        if let found = branch.actions.actions(in: container) { return found }
+      }
+    }
+    return nil
+  }
+
+  /// A step after a fork, in any chain, gets a join in front of it when
+  /// nothing rejoins the arms yet.
+  mutating func ensureJoins() {
+    if let index = lastIndex(where: { !$0.branches.isEmpty }), index + 1 < count {
+      switch self[index + 1].operation {
+      case .join, .merge: break
+      default: insert(Action(.join), at: index + 1)
+      }
+    }
+    for i in indices {
+      for b in self[i].branches.indices { self[i].branches[b].actions.ensureJoins() }
+    }
   }
 
   func step(_ id: UUID) -> Action? {
