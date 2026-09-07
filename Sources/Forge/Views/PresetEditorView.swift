@@ -41,10 +41,22 @@ struct PresetEditorView: View {
   /// Where a dragged block would land: a step's id, or `end`.
   @State private var dropTarget: DropSpot?
 
-  fileprivate enum DropSpot: Equatable {
+  enum DropSpot: Equatable {
     case before(UUID)
-    case end
+    case endOf(UUID)
+
+    /// The step or branch the spot is on, for the no-dropping-into-yourself check.
+    var target: UUID {
+      switch self {
+      case .before(let id), .endOf(let id): return id
+      }
+    }
+
+    var isBefore: Bool { if case .before = self { return true } else { return false } }
   }
+
+  /// The canvas itself, as a container: the end of the top-level chain.
+  private static let rootID = UUID()
 
   init(preset: RulePreset?, onSave: @escaping (RulePreset) -> Void, onClose: @escaping () -> Void) {
     self.existing = preset
@@ -146,6 +158,9 @@ struct PresetEditorView: View {
   private var cannotSave: String? {
     if name.trimmingCharacters(in: .whitespaces).isEmpty { return "Give it a name" }
     if !keysAreSound { return "Every question needs its own key" }
+    let hasSplit = steps.contains { if case .split = $0.operation { return true } else { return false } }
+    let hasJoinOrMerge = steps.contains { if case .join = $0.operation { return true }; if case .merge = $0.operation { return true }; return false }
+    if hasJoinOrMerge && !hasSplit { return "A join or a merge needs a split before it" }
     let doesSomething = !steps.isEmpty || !formats.isEmpty || !parameters.isEmpty
       || (showsTemplate && !nameTemplate.trimmingCharacters(in: .whitespaces).isEmpty)
     if !doesSomething {
@@ -186,30 +201,19 @@ struct PresetEditorView: View {
           questionRow(parameter)
         }
 
-        ForEach($steps) { step in
-          stepRow(step)
-        }
+        StepListView(
+          actions: $steps,
+          container: Self.rootID,
+          render: { step in
+            if case .split = step.wrappedValue.operation { return AnyView(fork(step)) }
+            if case .join = step.wrappedValue.operation { return AnyView(joinNode(step)) }
+            return AnyView(stepRow(step))
+          },
+          endZone: { AnyView(endZone($0)) }
+        )
 
-        if showsFormats { connected { formatsBlock }.dropSpot(.end, into: self) }
-        if showsTemplate { connected { templateBlock }.dropSpot(.end, into: self) }
-
-        connected {
-          Text(steps.isEmpty && !showsFormats && parameters.isEmpty
-            ? "Drag a block here from the library, or click it. They run top to bottom."
-            : "Drop the next block here")
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(
-              RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
-                .foregroundStyle(dropTarget == .end ? Color.accentColor : Color.secondary.opacity(0.3))
-            )
-            .frame(maxWidth: 640)
-            .frame(maxWidth: .infinity)
-        }
-        .dropSpot(.end, into: self)
+        if showsFormats { connected { formatsBlock }.dropSpot(.endOf(Self.rootID), into: self) }
+        if showsTemplate { connected { templateBlock }.dropSpot(.endOf(Self.rootID), into: self) }
       }
       .padding(.horizontal, 24)
       .padding(.vertical, 16)
@@ -217,15 +221,156 @@ struct PresetEditorView: View {
     .frame(maxWidth: .infinity)
     // Anywhere else on the canvas: the block goes on the end.
     .onDrop(of: [.text], isTargeted: nil) { providers in
-      receive(providers, at: .end)
+      receive(providers, at: .endOf(Self.rootID))
       return true
     }
+  }
+
+  /// The split on the main line, when there is one. What follows it is the
+  /// tail every copy runs, after the arms have done their own work.
+  private var trailingSplit: Action? {
+    steps.first { if case .split = $0.operation { return true } else { return false } }
+  }
+
+  /// The node where the arms come back to the main line.
+  private func joinNode(_ step: Binding<Action>) -> some View {
+    connected {
+      HStack(spacing: 8) {
+        blockIcon("arrow.triangle.merge", tint: LibraryEntry.Group.logic.color)
+        VStack(alignment: .leading, spacing: 1) {
+          Text("Paths rejoin").font(.callout.weight(.semibold))
+          Text("Every copy carries on from here, each still its own file.").font(.caption).foregroundStyle(.secondary)
+        }
+        Spacer()
+        Button {
+          _ = steps.removeStep(id: step.wrappedValue.id)
+        } label: {
+          Image(systemName: "minus.circle")
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+      }
+      .padding(.horizontal, 14)
+      .padding(.vertical, 8)
+      .frame(maxWidth: 640)
+      .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
+      .overlay(Capsule().strokeBorder(LibraryEntry.Group.logic.color.opacity(0.4)))
+    }
+    .dropSpot(.before(step.wrappedValue.id), into: self)
+  }
+
+  /// The fork: the main line ends in a node, and from it an arm per copy runs
+  /// on its own, side by side, each a whole chain with its own end.
+  private func fork(_ step: Binding<Action>) -> some View {
+    VStack(spacing: 0) {
+      connected {
+        HStack(spacing: 8) {
+          blockIcon("square.split.2x1", tint: LibraryEntry.Group.logic.color)
+          Text("Split into \(step.wrappedValue.branches.count) copies")
+            .font(.callout.weight(.semibold))
+          Button {
+            _ = steps.removeStep(id: step.wrappedValue.id)
+          } label: {
+            Image(systemName: "minus.circle")
+          }
+          .buttonStyle(.borderless)
+          .foregroundStyle(.secondary)
+          .help("Remove the split; the arms go with it")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(Capsule().strokeBorder(LibraryEntry.Group.logic.color.opacity(0.4)))
+      }
+
+      // The bar the arms hang from.
+      Rectangle().fill(Color.secondary.opacity(0.35)).frame(height: 2)
+        .padding(.horizontal, 60)
+        .padding(.top, 10)
+
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(alignment: .top, spacing: 16) {
+          ForEach(step.branches) { branch in
+            arm(branch, of: step)
+              .frame(minWidth: 260, maxWidth: 420)
+          }
+          Button {
+            step.wrappedValue.branches.append(ActionBranch(name: "Copy \(step.wrappedValue.branches.count + 1)", actions: []))
+          } label: {
+            VStack(spacing: 6) {
+              Image(systemName: "plus.circle").font(.title2)
+              Text("Add a copy").font(.caption)
+            }
+            .foregroundStyle(.secondary)
+            .frame(width: 120, height: 90)
+            .background(
+              RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
+                .foregroundStyle(Color.secondary.opacity(0.3))
+            )
+          }
+          .buttonStyle(.plain)
+          .padding(.top, 22)
+        }
+        .padding(.horizontal, 8)
+      }
+    }
+  }
+
+  /// One arm of the fork: its name, its own chain, its own end.
+  private func arm(_ branch: Binding<ActionBranch>, of step: Binding<Action>) -> some View {
+    VStack(spacing: 0) {
+      Rectangle().fill(Color.secondary.opacity(0.35)).frame(width: 2, height: 14)
+      HStack(spacing: 6) {
+        Image(systemName: "arrow.turn.down.right").foregroundStyle(.secondary).font(.caption)
+        TextField("Name this copy", text: branch.name)
+          .textFieldStyle(.plain)
+          .font(.callout.weight(.semibold))
+        if step.wrappedValue.branches.count > 2 {
+          Button {
+            step.wrappedValue.branches.removeAll { $0.id == branch.wrappedValue.id }
+          } label: {
+            Image(systemName: "minus.circle")
+          }
+          .buttonStyle(.borderless)
+          .foregroundStyle(.secondary)
+          .help("Remove this copy")
+        }
+      }
+      .padding(.horizontal, 10)
+      .padding(.vertical, 6)
+      .background(RoundedRectangle(cornerRadius: 8).fill(LibraryEntry.Group.logic.color.opacity(0.15)))
+      StepListView(actions: branch.actions, container: branch.wrappedValue.id, render: { AnyView(stepRow($0)) }, endZone: { AnyView(endZone($0)) })
+    }
+  }
+
+  /// The dashed zone that ends every chain, root or branch: the next block
+  /// lands here.
+  private func endZone(_ container: UUID) -> some View {
+    let root = container == Self.rootID
+    let empty = root ? steps.isEmpty && !showsFormats && parameters.isEmpty : false
+    return connected {
+      Text(empty ? "Drag a block here from the library, or click it. They run top to bottom."
+        : root ? "Drop the next block here" : "Drop the next step of this copy here")
+        .font(root ? .callout : .caption)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, root ? 14 : 8)
+        .background(
+          RoundedRectangle(cornerRadius: 10)
+            .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
+            .foregroundStyle(isDropTarget(.endOf(container)) ? Color.accentColor : Color.secondary.opacity(0.3))
+        )
+        .frame(maxWidth: 640)
+        .frame(maxWidth: .infinity)
+    }
+    .dropSpot(.endOf(container), into: self)
   }
 
   /// A question on the canvas: dropping a step on it puts the step first.
   private func questionRow(_ parameter: Binding<PresetParameter>) -> some View {
     connected { questionBlock(parameter) }
-      .dropSpot(steps.first.map { .before($0.id) } ?? .end, into: self)
+      .dropSpot(steps.first.map { .before($0.id) } ?? .endOf(Self.rootID), into: self)
   }
 
   /// A step on the canvas: drags to reorder, takes drops in front of itself.
@@ -248,17 +393,40 @@ struct PresetEditorView: View {
   }
 
   private func land(_ payload: String, at spot: DropSpot) {
-    let index: Int? = {
-      if case .before(let id) = spot { return steps.firstIndex { $0.id == id } }
-      return nil
-    }()
-    if payload.hasPrefix("step:"), let moving = steps.firstIndex(where: { $0.id.uuidString == payload.dropFirst(5) }) {
-      let step = steps.remove(at: moving)
-      var target = index ?? steps.count
-      if let index, moving < index { target = index - 1 }
-      steps.insert(step, at: min(target, steps.count))
-    } else {
-      add(id: payload, at: index)
+    if payload.hasPrefix("step:"), let id = UUID(uuidString: String(payload.dropFirst(5))) {
+      // A fork dropped into one of its own branches would vanish into itself.
+      if let moving = steps.step(id), moving.contains(spot.target) { return }
+      guard let moving = steps.removeStep(id: id) else { return }
+      if !steps.insert(moving, at: spot, root: Self.rootID) { steps.append(moving) }
+      keepSplitLast()
+      return
+    }
+    guard let entry = LibraryEntry.all(for: category).first(where: { $0.id == payload }), available(entry) else { return }
+    switch entry.kind {
+    case .step(let kind):
+      let step = Action(kind.blank(for: category))
+      if !steps.insert(step, at: spot, root: Self.rootID) { steps.append(step) }
+      keepSplitLast()
+    case .formats where spot.target != Self.rootID && !steps.contains(where: { $0.id == spot.target }):
+      // Dropped into an arm: that copy gets a format of its own.
+      if let type = offeredFormats.first?.type {
+        let step = Action(.convertFormat(to: type))
+        if !steps.insert(step, at: spot, root: Self.rootID) { add(entry) }
+      }
+    default:
+      add(entry)
+    }
+  }
+
+  /// A step on the main line after the fork runs on every copy, so the join
+  /// that says so is put in front of it when nothing does yet. A merge is a
+  /// join of its own kind.
+  private func keepSplitLast() {
+    guard let index = steps.firstIndex(where: { if case .split = $0.operation { return true } else { return false } }),
+          index + 1 < steps.count else { return }
+    switch steps[index + 1].operation {
+    case .join, .merge: return
+    default: steps.insert(Action(.join), at: index + 1)
     }
   }
 
@@ -420,12 +588,65 @@ struct PresetEditorView: View {
   }
 
   private func stepBlock(_ step: Binding<Action>) -> some View {
-    block(title: step.wrappedValue.operation.title, symbol: step.wrappedValue.operation.symbol, tint: step.wrappedValue.tint, remove: {
-      steps.removeAll { $0.id == step.wrappedValue.id }
+    block(title: step.wrappedValue.title, symbol: step.wrappedValue.operation.symbol, tint: step.wrappedValue.tint, remove: {
+      _ = steps.removeStep(id: step.wrappedValue.id)
     }) {
       ActionRow(action: step)
         .padding(.leading, 22)
+      if !step.wrappedValue.branches.isEmpty {
+        branches(of: step)
+      }
     }
+  }
+
+  /// The paths out of a fork, side by side, each a canvas of its own.
+  private func branches(of step: Binding<Action>) -> some View {
+    let isSplit: Bool = { if case .split = step.wrappedValue.operation { return true } else { return false } }()
+    return VStack(alignment: .leading, spacing: 8) {
+      HStack(alignment: .top, spacing: 10) {
+        ForEach(step.branches) { branch in
+          VStack(spacing: 4) {
+            HStack(spacing: 6) {
+              if isSplit {
+                TextField("Name", text: branch.name)
+                  .textFieldStyle(.plain)
+                  .font(.caption.weight(.semibold))
+              } else {
+                Text(branch.wrappedValue.name)
+                  .font(.caption.weight(.semibold))
+                  .foregroundStyle(.secondary)
+              }
+              Spacer()
+              if isSplit, step.wrappedValue.branches.count > 2 {
+                Button {
+                  step.wrappedValue.branches.removeAll { $0.id == branch.wrappedValue.id }
+                } label: {
+                  Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help("Remove this copy")
+              }
+            }
+            .padding(.horizontal, 6)
+            StepListView(actions: branch.actions, container: branch.wrappedValue.id, render: { AnyView(stepRow($0)) }, endZone: { AnyView(endZone($0)) })
+          }
+          .padding(6)
+          .frame(maxWidth: .infinity, alignment: .top)
+          .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.06)))
+        }
+      }
+      if isSplit {
+        Button {
+          step.wrappedValue.branches.append(ActionBranch(name: "Copy \(step.wrappedValue.branches.count + 1)", actions: []))
+        } label: {
+          Label("Add a copy", systemImage: "plus")
+        }
+        .buttonStyle(.borderless)
+        .font(.callout)
+      }
+    }
+    .padding(.top, 4)
   }
 
   private var formatsBlock: some View {
@@ -583,15 +804,6 @@ struct PresetEditorView: View {
     .accessibilityLabel(Text("Add \(entry.title)"))
   }
 
-  private func add(id: String, at index: Int?) {
-    guard let entry = LibraryEntry.all(for: category).first(where: { $0.id == id }), available(entry) else { return }
-    if case .step(let kind) = entry.kind, let index {
-      steps.insert(Action(kind.blank(for: category)), at: min(index, steps.count))
-    } else {
-      add(entry)
-    }
-  }
-
   private var offered: [LibraryEntry] {
     let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
     return LibraryEntry.all(for: category).filter {
@@ -602,7 +814,7 @@ struct PresetEditorView: View {
   /// A block that can only be on the canvas once is offered once.
   private func available(_ entry: LibraryEntry) -> Bool {
     switch entry.kind {
-    case .formats: return !showsFormats
+    case .formats: return !showsFormats || trailingSplit != nil
     case .template: return !showsTemplate
     case .question, .step: return true
     }
@@ -700,7 +912,7 @@ struct PresetEditorView: View {
       name: name.trimmingCharacters(in: .whitespaces),
       description: description,
       category: category,
-      actions: formats.compactMap { $0.type.map { Operation.convertFormat(to: $0) } } + steps.map(\.operation)
+      actions: formats.compactMap { $0.type.map { Operation.convertFormat(to: $0) } } + steps.map(\.resolved)
     )
     preset.parameters = parameters.filter { !$0.key.trimmingCharacters(in: .whitespaces).isEmpty }
     let template = nameTemplate.trimmingCharacters(in: .whitespaces)
@@ -719,13 +931,13 @@ struct PresetEditorView: View {
 
 }
 
-private extension View {
+extension View {
   /// Makes a block a place to drop: a library block lands here, a step dragged
   /// from elsewhere moves here. Highlights while something hovers.
   func dropSpot(_ spot: PresetEditorView.DropSpot, into editor: PresetEditorView) -> some View {
     self
       .overlay(alignment: .top) {
-        if editor.isDropTarget(spot), spot != .end {
+        if editor.isDropTarget(spot), spot.isBefore {
           Rectangle().fill(Color.accentColor).frame(width: 640, height: 3).offset(y: 8)
         }
       }
@@ -733,6 +945,55 @@ private extension View {
         editor.receive(providers, at: spot)
         return true
       }
+  }
+}
+
+/// The formats a copy can come out as, one chosen.
+private struct FormatChips: View {
+  let chosen: UTType
+  let choose: (UTType) -> Void
+
+  private var offered: [OutputFormat] {
+    OutputFormat.images + OutputFormat.video + OutputFormat.audio + OutputFormat.documents
+  }
+
+  var body: some View {
+    FlowLayout(spacing: 6) {
+      ForEach(offered) { format in
+        if let type = format.type {
+          chip(format.label, on: type == chosen) { choose(type) }
+        }
+      }
+    }
+  }
+
+  private func chip(_ label: String, on: Bool, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      Text(label)
+        .font(.callout)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 3)
+        .background(RoundedRectangle(cornerRadius: 6).fill(on ? Color.accentColor : Color.secondary.opacity(0.14)))
+        .foregroundStyle(on ? Color.white : Color.primary)
+    }
+    .buttonStyle(.plain)
+  }
+}
+
+/// A chain of steps on the canvas, root or branch: every step rendered by the
+/// editor, and a drop zone at the end. A separate view so a fork's branches
+/// can hold the same thing without the type system chasing its own tail.
+struct StepListView: View {
+  @Binding var actions: [Action]
+  let container: UUID
+  let render: (Binding<Action>) -> AnyView
+  let endZone: (UUID) -> AnyView
+
+  var body: some View {
+    VStack(spacing: 0) {
+      ForEach($actions) { render($0) }
+      endZone(container)
+    }
   }
 }
 
@@ -744,10 +1005,12 @@ struct LibraryEntry: Identifiable {
     case transform = "Changes"
     case encode = "Encodes"
     case privacy = "Privacy"
+    case logic = "Logic"
 
     /// One colour per group, the way Shortcuts colours its actions.
     var color: Color {
       switch self {
+      case .logic: return Color(red: 0.50, green: 0.55, blue: 0.62)
       case .output: return Color(red: 0.36, green: 0.53, blue: 0.80)
       case .ask: return Color(red: 0.58, green: 0.48, blue: 0.76)
       case .transform: return Color(red: 0.80, green: 0.58, blue: 0.34)
@@ -798,6 +1061,7 @@ extension ActionKind {
     case .crop, .resize, .filter, .recognizeText: return .transform
     case .quality, .limitSize, .encode: return .encode
     case .privacy: return .privacy
+    case .when, .split, .join, .merge: return .logic
     }
   }
 
@@ -811,17 +1075,118 @@ extension ActionKind {
     case .recognizeText: return "Read the words in it into text"
     case .encode: return "Which codec writes the file"
     case .privacy: return "What the file stops saying about you"
+    case .when: return "One path if the file passes a test, another if not"
+    case .split: return "Several copies, each down its own path"
+    case .join: return "The copies carry on together, still separate files"
+    case .merge: return "The copies become one file, a page each"
     }
   }
 }
 
 /// An action with a stable identity, so a list can move it around without the
-/// rows swapping their contents underneath the user.
+/// rows swapping their contents underneath the user. A fork carries its
+/// branches as trees of the same, so every step everywhere can be dragged.
 struct Action: Identifiable, Hashable {
-  let id = UUID()
+  let id: UUID
+  /// The step itself. For a fork the nested chains here are empty: the
+  /// branches below hold them, with identities.
   var operation: Operation
+  var branches: [ActionBranch]
 
-  init(_ operation: Operation) { self.operation = operation }
+  init(_ operation: Operation) {
+    id = UUID()
+    switch operation {
+    case .when(let condition, let then, let otherwise):
+      self.operation = .when(condition, then: [], otherwise: [])
+      branches = [
+        ActionBranch(name: "If it passes", actions: then.map(Action.init)),
+        ActionBranch(name: "Otherwise", actions: otherwise.map(Action.init)),
+      ]
+    case .split(let split):
+      self.operation = .split([])
+      branches = split.map { ActionBranch(name: $0.name, actions: $0.actions.map(Action.init)) }
+    default:
+      self.operation = operation
+      branches = []
+    }
+  }
+
+  /// The operation with its branches folded back in, as the preset stores it.
+  var resolved: Operation {
+    switch operation {
+    case .when(let condition, _, _):
+      return .when(
+        condition,
+        then: branches.first?.actions.map(\.resolved) ?? [],
+        otherwise: branches.dropFirst().first?.actions.map(\.resolved) ?? []
+      )
+    case .split:
+      return .split(branches.map { Branch(name: $0.name, actions: $0.actions.map(\.resolved)) })
+    default:
+      return operation
+    }
+  }
+
+  /// What the block is called on the canvas. A split counts its branches
+  /// here, where they live, rather than the empty list the operation holds.
+  var title: String {
+    if case .split = operation { return "Split into \(branches.count) copies" }
+    return operation.title
+  }
+
+  /// Whether a step with this id is this one or lives somewhere under it.
+  func contains(_ other: UUID) -> Bool {
+    id == other || branches.contains { $0.id == other || $0.actions.contains { $0.contains(other) } }
+  }
+}
+
+/// One path out of a fork, on the canvas.
+struct ActionBranch: Identifiable, Hashable {
+  let id = UUID()
+  var name: String
+  var actions: [Action]
+}
+
+extension Array where Element == Action {
+  /// Takes the step with this id out of the tree, wherever it is.
+  mutating func removeStep(id: UUID) -> Action? {
+    if let index = firstIndex(where: { $0.id == id }) { return remove(at: index) }
+    for i in indices {
+      for b in self[i].branches.indices {
+        if let taken = self[i].branches[b].actions.removeStep(id: id) { return taken }
+      }
+    }
+    return nil
+  }
+
+  /// Puts a step where a drop said, anywhere in the tree. False when the spot
+  /// is nowhere to be found, which the caller treats as "at the end".
+  mutating func insert(_ step: Action, at spot: PresetEditorView.DropSpot, root: UUID) -> Bool {
+    switch spot {
+    case .before(let id):
+      if let index = firstIndex(where: { $0.id == id }) { insert(step, at: index); return true }
+    case .endOf(let container):
+      if container == root { append(step); return true }
+    }
+    for i in indices {
+      for b in self[i].branches.indices {
+        if case .endOf(let container) = spot, container == self[i].branches[b].id {
+          self[i].branches[b].actions.append(step)
+          return true
+        }
+        if self[i].branches[b].actions.insert(step, at: spot, root: root) { return true }
+      }
+    }
+    return false
+  }
+
+  func step(_ id: UUID) -> Action? {
+    for action in self {
+      if action.id == id { return action }
+      for branch in action.branches { if let found = branch.actions.step(id) { return found } }
+    }
+    return nil
+  }
 }
 
 /// The steps that can be added, what each one starts as, and which kinds of
@@ -831,7 +1196,7 @@ struct Action: Identifiable, Hashable {
 /// top, because it is the one thing every preset answers and the one thing that
 /// can be answered more than once.
 enum ActionKind: String, CaseIterable, Identifiable {
-  case crop, resize, quality, limitSize, filter, recognizeText, encode, privacy
+  case crop, resize, quality, limitSize, filter, recognizeText, encode, privacy, when, split, join, merge
   var id: String { rawValue }
 
   var title: String {
@@ -844,6 +1209,10 @@ enum ActionKind: String, CaseIterable, Identifiable {
     case .recognizeText: return "Read the text"
     case .encode: return "Codec"
     case .privacy: return "Remove metadata"
+    case .when: return "If…"
+    case .split: return "Split into copies"
+    case .join: return "Join the paths"
+    case .merge: return "Merge into one file"
     }
   }
 
@@ -857,6 +1226,10 @@ enum ActionKind: String, CaseIterable, Identifiable {
     case .recognizeText: return "text.viewfinder"
     case .encode: return "cpu"
     case .privacy: return "eye.slash"
+    case .when: return "arrow.triangle.branch"
+    case .split: return "square.split.2x1"
+    case .join: return "arrow.triangle.merge"
+    case .merge: return "doc.on.doc"
     }
   }
 
@@ -874,6 +1247,10 @@ enum ActionKind: String, CaseIterable, Identifiable {
       let codecs = category == .audio ? Codec.audioCodecs : Codec.videoCodecs
       return .encode(codec: codecs.first ?? .h264)
     case .privacy: return .stripMetadata(policy: .stripAll)
+    case .when: return .when(Condition(), then: [], otherwise: [])
+    case .split: return .split([Branch(name: "Copy 1"), Branch(name: "Copy 2")])
+    case .join: return .join
+    case .merge: return .merge(.pdf)
     }
   }
 
@@ -895,6 +1272,8 @@ enum ActionKind: String, CaseIterable, Identifiable {
     case .privacy:
       // Every kind of file carries something about who made it.
       return true
+    case .when, .split, .join, .merge:
+      return true
     }
   }
 }
@@ -904,7 +1283,7 @@ extension Action {
   /// say whether it still applies.
   var kind: ActionKind {
     switch operation {
-    case .convertFormat: return .resize  // never in the step list; formats have their own block
+    case .convertFormat: return .resize  // inside an arm it is a step; the top level keeps its block
     case .resize(_, _, let mode): return mode == .cropCenter ? .crop : .resize
     case .quality: return .quality
     case .filter: return .filter
@@ -912,6 +1291,10 @@ extension Action {
     case .encode: return .encode
     case .limitSize: return .limitSize
     case .stripMetadata: return .privacy
+    case .when: return .when
+    case .split: return .split
+    case .join: return .join
+    case .merge: return .merge
     }
   }
 
@@ -922,6 +1305,7 @@ extension Action {
     case .resize, .filter, .recognizeText: return LibraryEntry.Group.transform.color
     case .quality, .limitSize, .encode: return LibraryEntry.Group.encode.color
     case .stripMetadata: return LibraryEntry.Group.privacy.color
+    case .when, .split, .join, .merge: return LibraryEntry.Group.logic.color
     }
   }
 
@@ -943,10 +1327,22 @@ private struct ActionRow: View {
   @ViewBuilder
   private var settings: some View {
     switch action.operation {
-    case .convertFormat:
-      // Handled by the block at the top of the editor, which owns every one
-      // of them at once.
-      EmptyView()
+    case .convertFormat(let to):
+      // At the top level formats have a block of their own; inside an arm a
+      // copy picks the one format it comes out as.
+      FormatChips(chosen: to) { action.operation = .convertFormat(to: $0) }
+
+    case .join:
+      Text("Every copy carries on from here, each still its own file.")
+        .font(.callout)
+        .foregroundStyle(.secondary)
+
+    case .merge(let kind):
+      Picker("", selection: Binding(get: { kind }, set: { action.operation = .merge($0) })) {
+        ForEach(MergeKind.allCases, id: \.self) { Text($0.title.capitalized).tag($0) }
+      }
+      .labelsHidden()
+      .frame(maxWidth: 160, alignment: .leading)
 
     case .resize(let width, let height, let mode):
       HStack(spacing: 6) {
@@ -1000,6 +1396,43 @@ private struct ActionRow: View {
       }
       .labelsHidden()
       .frame(maxWidth: 200, alignment: .leading)
+
+    case .when(let condition, let then, let otherwise):
+      HStack(spacing: 6) {
+        Picker("", selection: Binding(
+          get: { condition.subject },
+          set: { var c = condition; c.subject = $0; action.operation = .when(c, then: then, otherwise: otherwise) }
+        )) {
+          ForEach(Condition.Subject.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        .labelsHidden()
+        .fixedSize()
+        Picker("", selection: Binding(
+          get: { condition.comparison },
+          set: { var c = condition; c.comparison = $0; action.operation = .when(c, then: then, otherwise: otherwise) }
+        )) {
+          ForEach(Condition.Comparison.allCases.filter { condition.subject.isNumeric || $0 == .equals || $0 == .differs }, id: \.self) { Text($0.title).tag($0) }
+        }
+        .labelsHidden()
+        .fixedSize()
+        if condition.subject.isNumeric {
+          TextField("Value", text: Binding(
+            get: { String(format: "%g", condition.value) },
+            set: { text in var c = condition; c.value = Double(text.replacingOccurrences(of: ",", with: ".")) ?? condition.value; action.operation = .when(c, then: then, otherwise: otherwise) }
+          ))
+          .frame(width: 80)
+          Text(condition.subject.unit).foregroundStyle(.secondary)
+        } else {
+          TextField("png", text: Binding(
+            get: { condition.text },
+            set: { var c = condition; c.text = $0; action.operation = .when(c, then: then, otherwise: otherwise) }
+          ))
+          .frame(width: 80)
+        }
+      }
+
+    case .split:
+      EmptyView()
 
     case .stripMetadata(let policy):
       Picker("", selection: Binding(

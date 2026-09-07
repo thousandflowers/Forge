@@ -358,8 +358,8 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
 
   private func applyOperation(_ operation: Operation, to image: CIImage) throws -> CIImage {
     switch operation {
-    case .convertFormat, .quality, .recognizeText, .encode, .limitSize, .stripMetadata:
-      return image // settled when the file is written
+    case .convertFormat, .quality, .recognizeText, .encode, .limitSize, .stripMetadata, .when, .split, .join, .merge:
+      return image // settled when the file is written, or decided before it is read
     case .resize(let width, let height, let mode):
       return applyResize(image, targetWidth: width, targetHeight: height, mode: mode)
     case .filter(let type):

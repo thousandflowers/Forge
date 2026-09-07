@@ -330,7 +330,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
 
   private static func apply(_ operation: Operation, to image: CIImage) -> CIImage {
     switch operation {
-    case .convertFormat, .quality, .recognizeText, .encode, .limitSize, .stripMetadata:
+    case .convertFormat, .quality, .recognizeText, .encode, .limitSize, .stripMetadata, .when, .split, .join, .merge:
       return image
     case .resize(let width, let height, _):
       let target = CGSize(

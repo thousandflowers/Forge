@@ -150,7 +150,7 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
 
   /// What the chain converts to, if it says.
   var targetFormat: UTType? {
-    actions.compactMap { if case .convertFormat(let to) = $0 { return to } else { return nil } }.first
+    actions.flatMap(\.leaves).compactMap { if case .convertFormat(let to) = $0 { return to } else { return nil } }.first
   }
 
   var resize: ResizeSpec? {

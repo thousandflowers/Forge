@@ -240,6 +240,14 @@ struct Presets: AsyncParsableCommand {
         return codec.title
       case .limitSize(let bytes):
         return "under \(Int64(bytes).formatted(.byteCount(style: .file)))"
+      case .when(let condition, _, _):
+        return "if \(condition.summary)"
+      case .split(let branches):
+        return "\(branches.count) copies"
+      case .join:
+        return "join"
+      case .merge(let kind):
+        return "merge into \(kind.title)"
       case .stripMetadata(let policy):
         return policy == .stripLocation ? "no location" : "no metadata"
       }

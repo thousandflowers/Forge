@@ -171,6 +171,14 @@ struct PresetCard: View {
       }
     case .stripMetadata(let policy):
       return policy == .stripLocation ? "no location" : "no metadata"
+    case .when(let condition, _, _):
+      return "if \(condition.subject.title.lowercased())"
+    case .split(let branches):
+      return "\(branches.count) copies"
+    case .join:
+      return "rejoin"
+    case .merge(let kind):
+      return kind.title
     case .quality(let level):
       return "Q\(level)"
     case .filter(let type):

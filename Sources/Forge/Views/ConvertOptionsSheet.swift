@@ -61,6 +61,7 @@ struct ConvertChoice: Equatable {
       case .recognizeText(let languages): updated.language = languages.first
       case .limitSize(let bytes): updated.maxBytes = bytes
       case .stripMetadata(let policy): updated.privacy = policy
+      case .when, .split, .join, .merge: break
       }
     }
 
