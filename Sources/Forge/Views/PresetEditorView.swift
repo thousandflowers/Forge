@@ -243,9 +243,11 @@ struct PresetEditorView: View {
       }
       .padding(.horizontal, 24)
       .padding(.vertical, 16)
-      // At least as wide as the canvas, so the chain sits centred when the
-      // tree is narrow and scrolls sideways when it is wide.
-      .frame(minWidth: proxy.size.width)
+      // At least as wide and as tall as the canvas: centred sideways when the
+      // tree is narrow, scrolling when it is wide, and always starting at the
+      // top - a two-way scroll view would otherwise float short content in
+      // the middle.
+      .frame(minWidth: proxy.size.width, minHeight: proxy.size.height, alignment: .top)
       .animation(.easeOut(duration: 0.2), value: steps)
       .animation(.easeOut(duration: 0.2), value: parameters)
       .animation(.easeOut(duration: 0.2), value: showsFormats)
