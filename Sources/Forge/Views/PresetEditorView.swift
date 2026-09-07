@@ -335,7 +335,37 @@ struct PresetEditorView: View {
       }
       .frame(maxWidth: .infinity)
       .padding(.horizontal, 8)
+
+      // The arms come back to one line, and the line goes on: the next node
+      // - another if, a step, a join - goes in the slot that is always here.
+      Rectangle().fill(Color.secondary.opacity(0.35)).frame(height: 2)
+        .padding(.horizontal, 60)
+        .padding(.top, 6)
+      nextNodeSlot(after: step.wrappedValue.id)
     }
+  }
+
+  /// The half-empty slot under a fork: where the next node lands.
+  private func nextNodeSlot(after id: UUID) -> some View {
+    let spot = steps.spotAfter(id, root: Self.rootID) ?? .endOf(Self.rootID)
+    return connected {
+      HStack(spacing: 8) {
+        Image(systemName: "plus.circle.dashed").foregroundStyle(.secondary)
+        Text("Next node — another If, a step, or a join")
+          .font(.callout)
+          .foregroundStyle(.secondary)
+      }
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, 10)
+      .background(
+        RoundedRectangle(cornerRadius: 10)
+          .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
+          .foregroundStyle(isDropTarget(spot) ? Color.accentColor : Color.secondary.opacity(0.3))
+      )
+      .frame(maxWidth: 640)
+      .frame(maxWidth: .infinity)
+    }
+    .dropSpot(spot, into: self)
   }
 
   /// One arm of the fork: its name, its own chain, its own end.
@@ -1253,6 +1283,20 @@ extension Array where Element == Action {
       }
     }
     return false
+  }
+
+  /// The spot right after a step, wherever it lives: before the next step in
+  /// its chain, or the end of that chain when it is the last.
+  func spotAfter(_ id: UUID, root: UUID) -> PresetEditorView.DropSpot? {
+    if let index = firstIndex(where: { $0.id == id }) {
+      return index + 1 < count ? .before(self[index + 1].id) : .endOf(root)
+    }
+    for action in self {
+      for branch in action.branches {
+        if let spot = branch.actions.spotAfter(id, root: branch.id) { return spot }
+      }
+    }
+    return nil
   }
 
   func step(_ id: UUID) -> Action? {
