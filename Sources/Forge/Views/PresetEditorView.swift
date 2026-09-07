@@ -454,7 +454,7 @@ struct PresetEditorView: View {
 
   /// The files this preset takes. Always first, never removed.
   private var inputBlock: some View {
-    block(title: "Files that come in", symbol: category.icon, tint: Color(red: 0.38, green: 0.62, blue: 0.68), remove: nil) {
+    block(title: "Files that come in", symbol: category.icon, tint: .teal, remove: nil) {
       HStack(spacing: 10) {
         Picker("Kind", selection: $category) {
           ForEach(PresetCategory.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -1010,12 +1010,14 @@ struct LibraryEntry: Identifiable {
     /// One colour per group, the way Shortcuts colours its actions.
     var color: Color {
       switch self {
-      case .logic: return Color(red: 0.50, green: 0.55, blue: 0.62)
-      case .output: return Color(red: 0.36, green: 0.53, blue: 0.80)
-      case .ask: return Color(red: 0.58, green: 0.48, blue: 0.76)
-      case .transform: return Color(red: 0.80, green: 0.58, blue: 0.34)
-      case .encode: return Color(red: 0.40, green: 0.64, blue: 0.50)
-      case .privacy: return Color(red: 0.78, green: 0.45, blue: 0.53)
+      // The system's own colours, the ones Shortcuts paints its actions
+      // with: alive on the small icon squares, and they follow light and dark.
+      case .logic: return .indigo
+      case .output: return .blue
+      case .ask: return .purple
+      case .transform: return .orange
+      case .encode: return .green
+      case .privacy: return .pink
       }
     }
   }
