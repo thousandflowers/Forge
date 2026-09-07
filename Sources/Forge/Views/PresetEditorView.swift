@@ -218,7 +218,8 @@ struct PresetEditorView: View {
   /// already had, wanted a click to select a row before its fields would
   /// take typing, and drew its own drag previews.
   private var canvas: some View {
-    ScrollView {
+    GeometryReader { proxy in
+    ScrollView([.vertical, .horizontal]) {
       VStack(spacing: 0) {
         inputBlock
 
@@ -242,10 +243,14 @@ struct PresetEditorView: View {
       }
       .padding(.horizontal, 24)
       .padding(.vertical, 16)
+      // At least as wide as the canvas, so the chain sits centred when the
+      // tree is narrow and scrolls sideways when it is wide.
+      .frame(minWidth: proxy.size.width)
       .animation(.easeOut(duration: 0.2), value: steps)
       .animation(.easeOut(duration: 0.2), value: parameters)
       .animation(.easeOut(duration: 0.2), value: showsFormats)
       .animation(.easeOut(duration: 0.2), value: showsTemplate)
+    }
     }
     .frame(maxWidth: .infinity)
     // Anywhere else on the canvas: the block goes on the end.
@@ -353,13 +358,12 @@ struct PresetEditorView: View {
         .padding(.horizontal, 60)
         .padding(.top, 10)
 
-      // The arms sit centred under the node, sharing the width between them.
+      // The arms sit centred under the node, each as wide as it needs.
       HStack(alignment: .top, spacing: 16) {
         Spacer(minLength: 0)
         HStack(alignment: .top, spacing: 16) {
           ForEach(step.branches) { branch in
             arm(branch, of: step, renamable: isSplit)
-              .frame(minWidth: 180, maxWidth: .infinity)
           }
           if isSplit {
             Button {
@@ -383,7 +387,7 @@ struct PresetEditorView: View {
         }
         Spacer(minLength: 0)
       }
-      .frame(maxWidth: .infinity)
+      .fixedSize(horizontal: true, vertical: false)
       .padding(.horizontal, 8)
 
       // The arms are their own paths and stay apart. Only a join or a merge
@@ -408,7 +412,8 @@ struct PresetEditorView: View {
 
   /// One arm of the fork: its name, its own chain, its own end.
   private func arm(_ branch: Binding<ActionBranch>, of step: Binding<Action>, renamable: Bool) -> some View {
-    VStack(spacing: 0) {
+    let nested = branch.wrappedValue.actions.contains { !$0.branches.isEmpty }
+    return VStack(spacing: 0) {
       Rectangle().fill(Color.secondary.opacity(0.35)).frame(width: 2, height: 14)
       HStack(spacing: 6) {
         Image(systemName: "arrow.turn.down.right").foregroundStyle(.secondary).font(.caption)
@@ -433,6 +438,8 @@ struct PresetEditorView: View {
       .background(RoundedRectangle(cornerRadius: 8).fill(LibraryEntry.Group.logic.color.opacity(0.15)))
       StepListView(actions: branch.actions, container: branch.wrappedValue.id, render: { AnyView(renderStep($0)) }, endZone: { AnyView(renderEnd($0)) })
     }
+    .frame(width: nested ? nil : 420)
+    .fixedSize(horizontal: nested, vertical: false)
   }
 
   /// The dashed zone that ends every chain, root or branch: the next block
@@ -1028,7 +1035,7 @@ extension View {
     self
       .overlay(alignment: .top) {
         if editor.isDropTarget(spot), spot.isBefore {
-          Rectangle().fill(Color.accentColor).frame(width: 640, height: 3).offset(y: 8)
+          Rectangle().fill(Color.accentColor).frame(maxWidth: 640).frame(height: 3).offset(y: 8)
         }
       }
       .onDrop(of: [.text], isTargeted: Binding(get: { editor.isDropTarget(spot) }, set: { editor.setDropTarget(spot, $0) })) { providers in
