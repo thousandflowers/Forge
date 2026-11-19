@@ -18,7 +18,11 @@ enum InputFormats {
     }
     let media = FormatCatalog.readableMediaTypes
     let audio = media.filter { $0.conforms(to: .audio) }
-    let video = media.filter { !$0.conforms(to: .audio) }
+    // Films only. "Everything that is not audio" put playlists (M3U, PLS),
+    // captions (VTT, SCC, TTML) and audio macOS has no class for (AWB, XHE)
+    // under Videos.
+    // ponytail: unclassified dyn types get no chip; "Any" still takes them.
+    let video = media.filter { $0.conforms(to: .movie) }
     let documents = Set(DocumentText.readable.keys).union(SimpleDocProcessor.readableTypes)
     let fonts = ["ttf", "otf", "woff", "woff2"].filter(ExternalBridge.Fonts.handles)
     return [

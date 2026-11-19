@@ -1493,3 +1493,24 @@ final class CarriedChoiceTests: XCTestCase {
     XCTAssertEqual(custom.carried(offered: [], kinds: [.image, .audio]).customActions, [], "a mixed batch hides the fields")
   }
 }
+
+final class ImportDuplicateTests: XCTestCase {
+  func test_theSamePresetImportedTwiceIsKeptOnce() {
+    let web = RulePreset(name: "Web JPEG copy", description: "", targetFormat: .jpeg, quality: 80, category: .image)
+    var renamed = web
+    renamed.name = "Web JPEG for blog"
+    var stronger = web
+    stronger.actions = [.convertFormat(to: .jpeg), .quality(level: 60)]
+    XCTAssertTrue(AppModel.isAlreadyHere(web, in: [web]))
+    XCTAssertFalse(AppModel.isAlreadyHere(renamed, in: [web]), "another name is another preset")
+    XCTAssertFalse(AppModel.isAlreadyHere(stronger, in: [web]), "same name, different steps: kept")
+  }
+}
+
+final class InputFormatGroupTests: XCTestCase {
+  func test_videosHoldFilmsOnly() {
+    let videos = Set(InputFormats.groups.first { $0.kind == .video }?.extensions ?? [])
+    XCTAssertTrue(videos.isSuperset(of: ["mov", "mp4", "m4v"]))
+    XCTAssertTrue(videos.isDisjoint(with: ["m3u", "pls", "vtt", "scc", "ttml", "awb", "xhe", "mp3", "m4a"]), "got \(videos.sorted())")
+  }
+}

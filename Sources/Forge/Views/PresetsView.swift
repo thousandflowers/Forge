@@ -6,6 +6,8 @@ struct PresetsView: View {
   @EnvironmentObject private var model: AppModel
   /// The card files are being dragged over, outlined so the drop has a target.
   @State private var dropTarget: UUID?
+  /// The preset waiting on a yes before it is deleted.
+  @State private var deleting: RulePreset?
 
   var body: some View {
     Group {
@@ -25,7 +27,7 @@ struct PresetsView: View {
                   set: { model.setPreset(preset, enabled: $0) }
                 ),
                 onShare: { share(preset) },
-                onDelete: { model.deletePreset(preset) }
+                onDelete: { deleting = preset }
               )
                 .onTapGesture { model.presetEditor = PresetEditorRequest(preset: preset) }
                 // Files dropped on a preset run through it: they go to the
@@ -58,13 +60,26 @@ struct PresetsView: View {
                   Button("Move Down") { model.movePreset(preset, by: 1) }
                     .disabled(model.presets.last?.id == preset.id)
                   Divider()
-                  Button("Delete", role: .destructive) { model.deletePreset(preset) }
+                  Button("Delete…", role: .destructive) { deleting = preset }
                 }
             }
           }
           .padding(20)
         }
       }
+    }
+    // A preset can be an afternoon's work, and there is no Undo: one click on
+    // a small × used to delete it for good.
+    .confirmationDialog(
+      deleting.map { "Delete “\($0.name)”?" } ?? "",
+      isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
+    ) {
+      if let preset = deleting {
+        Button("Delete", role: .destructive) { model.deletePreset(preset); deleting = nil }
+        Button("Cancel", role: .cancel) { deleting = nil }
+      }
+    } message: {
+      Text("It cannot be brought back. Share it first to keep a copy.")
     }
     .navigationTitle(model.presetEditor == nil ? "Presets" : (model.presetEditor?.preset?.name ?? "New Preset"))
     // The editor covers the screen, so the screen's own buttons step aside
@@ -124,6 +139,7 @@ struct PresetCard: View {
           .controlSize(.mini)
           .labelsHidden()
           .help(isEnabled ? "Turn this preset off" : "Turn this preset on")
+          .accessibilityLabel(Text("Use \(preset.name)"))
         if let onShare {
           Button(action: onShare) {
             Image(systemName: "square.and.arrow.up")

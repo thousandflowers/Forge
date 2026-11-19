@@ -180,7 +180,8 @@ final class AppModel: ObservableObject {
       do {
         let imported = try await self?.persistence.importPresets(from: url) ?? []
         guard let self else { return }
-        for preset in imported {
+        // The same file imported twice used to leave two identical presets.
+        for preset in imported where !Self.isAlreadyHere(preset, in: self.presets) {
           var copy = preset
           copy.id = UUID()
           self.savePreset(copy)
@@ -189,6 +190,11 @@ final class AppModel: ObservableObject {
         self?.report(error, doing: "importing presets")
       }
     }
+  }
+
+  /// A preset with this name that already does exactly the same.
+  nonisolated static func isAlreadyHere(_ preset: RulePreset, in presets: [RulePreset]) -> Bool {
+    presets.contains { $0.name == preset.name && $0.actions == preset.actions }
   }
 
   // MARK: - Folders

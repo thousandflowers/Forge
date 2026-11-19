@@ -86,12 +86,14 @@ struct ConditionEditor: View {
       case .name, .folder, .fileExtension:
         TextField(condition.subject == .fileExtension ? "png" : "text", text: $condition.text)
           .frame(width: 140)
+          .accessibilityLabel(Text("\(condition.subject.title) to test"))
       case .fileSize, .longestSide, .width, .height:
         TextField("Value", text: Binding(
           get: { String(format: "%g", condition.value) },
           set: { condition.value = Double($0.replacingOccurrences(of: ",", with: ".")) ?? condition.value }
         ))
         .frame(width: 80)
+        .accessibilityLabel(Text("\(condition.subject.title) in \(condition.subject.unit)"))
         Text(condition.subject.unit).foregroundStyle(.secondary)
       }
     }

@@ -212,6 +212,8 @@ struct BatchProcessingView: View {
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
             .help("Stop converting this one")
+            // Without it VoiceOver reads the symbol's own name: "Close".
+            .accessibilityLabel(Text("Stop converting \(f.fileName)"))
           }
         }
       }
