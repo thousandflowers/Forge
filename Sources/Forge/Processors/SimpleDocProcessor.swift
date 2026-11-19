@@ -43,17 +43,25 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
 
     let outputType = Self.outputUTI(for: output, operations: operations, fallback: .jpeg)
 
+    // Text asked for audio is spoken, not converted - a PDF included, which is
+    // why this comes before the PDF branch rather than after it.
+    if FormatCatalog.audioFormatID(for: outputType) != nil {
+      return try await speak(input, from: inputType, to: outputType, at: output, operations: operations, progress: progress)
+    }
+
     if inputType.conforms(to: .pdf) {
       // A PDF asked for text hands back the text it carries, and reads the
       // pages that carry none. A scan has no text layer at all.
       if outputType.conforms(to: .plainText) {
         return try readText(from: input, operations: operations, to: output, progress: progress)
       }
+      // Asked for another document format, it becomes that document's text.
+      // PDF to PDF stays a render: pouring the text into new pages would lose
+      // every picture and every layout the original had.
+      if !outputType.conforms(to: .pdf), DocumentText.canWrite(outputType) {
+        return try await rewritePDF(input, as: outputType, at: output, operations: operations, progress: progress)
+      }
       return try renderPDF(input, to: output, operations: operations, progress: progress)
-    }
-    // Text asked for audio is spoken, not converted.
-    if FormatCatalog.audioFormatID(for: outputType) != nil {
-      return try await speak(input, from: inputType, to: outputType, at: output, operations: operations, progress: progress)
     }
 
     return try await convertText(input, from: inputType, to: outputType, at: output, progress: progress)
@@ -178,15 +186,11 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
   ) async throws -> ProcessingResult {
     let start = Date()
 
-    let text: String
-    if inputType.conforms(to: .pdf) {
-      guard let pdf = PDFDocument(url: input) else {
-        throw ProcessingError.conversionFailed(reason: "Cannot open \(input.lastPathComponent)")
-      }
-      text = pdf.string ?? ""
-    } else {
-      text = try DocumentText.read(input, as: inputType).string
-    }
+    // A scanned PDF has no text layer, so it is read the same way as for .txt.
+    let text = inputType.conforms(to: .pdf)
+      ? try pdfPages(from: input, operations: operations) { progress($0 * 0.3) }
+        .joined(separator: Self.paragraphBreak)
+      : try DocumentText.read(input, as: inputType).string
 
     // The recognition language doubles as the speaking one: both answer "which
     // language is this document in".
@@ -196,19 +200,12 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     }.first
 
     try await SpeechSynthesis.write(text, to: output, as: outputType, language: language, progress: progress)
-
-    let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
-    return ProcessingResult(
-      outputURL: output,
-      outputSize: attributes[.size] as? Int64 ?? 0,
-      outputDimensions: nil,
-      duration: Date().timeIntervalSince(start)
-    )
+    return try Self.result(output, since: start)
   }
 
   // MARK: - Reading a PDF
 
-  /// Text from a PDF: what is embedded, and OCR for the pages without any.
+  /// A PDF written out as plain text.
   private func readText(
     from input: URL,
     operations: [Operation],
@@ -216,7 +213,38 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     progress: @escaping @Sendable (Double) -> Void
   ) throws -> ProcessingResult {
     let start = Date()
+    let text = try pdfPages(from: input, operations: operations) { progress($0 * 0.95) }
+      .joined(separator: Self.plainPageBreak)
+    try text.write(to: output, atomically: true, encoding: .utf8)
+    progress(1.0)
+    return try Self.result(output, since: start)
+  }
 
+  /// A PDF written out as another document format: its text, since a PDF
+  /// carries no paragraphs or styles for the writer to keep.
+  @MainActor
+  private func rewritePDF(
+    _ input: URL,
+    as outputType: UTType,
+    at output: URL,
+    operations: [Operation],
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> ProcessingResult {
+    let start = Date()
+    let text = try pdfPages(from: input, operations: operations) { progress($0 * 0.9) }
+      .joined(separator: Self.paragraphBreak)
+    try DocumentText.write(NSAttributedString(string: text), to: output, as: outputType)
+    progress(1.0)
+    return try Self.result(output, since: start)
+  }
+
+  /// Text from a PDF, page by page: what is embedded, and OCR for the pages
+  /// without any.
+  private func pdfPages(
+    from input: URL,
+    operations: [Operation],
+    progress: (Double) -> Void
+  ) throws -> [String] {
     guard let pdf = PDFDocument(url: input) else {
       throw ProcessingError.conversionFailed(reason: "Cannot open \(input.lastPathComponent)")
     }
@@ -241,13 +269,18 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
         pages.append(try TextRecognizer.text(in: image, languages: languages))
       }
 
-      progress(Double(index + 1) / Double(pdf.pageCount) * 0.95)
+      progress(Double(index + 1) / Double(pdf.pageCount))
     }
+    return pages
+  }
 
-    // A form feed is the long-standing way to say "page break" in plain text.
-    try pages.joined(separator: "\n\u{000C}\n").write(to: output, atomically: true, encoding: .utf8)
-    progress(1.0)
+  /// A form feed is the long-standing way to say "page break" in plain text.
+  private static let plainPageBreak = "\n\u{000C}\n"
+  /// Rich formats and speech get a paragraph break: a form feed means nothing
+  /// to a Word reader and a voice reads it as nothing.
+  private static let paragraphBreak = "\n\n"
 
+  private static func result(_ output: URL, since start: Date) throws -> ProcessingResult {
     let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
     return ProcessingResult(
       outputURL: output,
@@ -298,14 +331,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     progress(0.7)
     try DocumentText.write(document, to: output, as: outputType)
     progress(1.0)
-
-    let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
-    return ProcessingResult(
-      outputURL: output,
-      outputSize: attributes[.size] as? Int64 ?? 0,
-      outputDimensions: nil,
-      duration: Date().timeIntervalSince(start)
-    )
+    return try Self.result(output, since: start)
   }
 
 

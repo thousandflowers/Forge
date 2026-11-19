@@ -39,6 +39,27 @@ final class SpeechSynthesisTests: BaseTestCase {
     XCTAssertGreaterThan(duration, 1.0)
   }
 
+  /// "Read aloud" is offered for a PDF. The PDF branch used to run first and
+  /// refuse the sound file before the speaking code ever saw it.
+  func test_pdfIsReadAloud() async throws {
+    try requireVoices()
+    let source = path("letter.pdf")
+    try await DocumentText.write(
+      NSAttributedString(string: "Forge reads this letter out loud for you."),
+      to: source, as: .pdf
+    )
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: try XCTUnwrap(UTType("com.apple.m4a-audio")), category: .document),
+      destinationMode: .copyTo,
+      destinationURL: try folder("out")
+    ) { _ in }
+
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+    let duration = try await AVURLAsset(url: try XCTUnwrap(entry.outputURL)).load(.duration).seconds
+    XCTAssertGreaterThan(duration, 1.0)
+  }
+
   func test_anEmptyDocumentSaysSoRatherThanWritingSilence() async throws {
     try requireVoices()
     let source = path("empty.txt")
