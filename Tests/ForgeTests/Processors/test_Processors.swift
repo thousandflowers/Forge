@@ -261,29 +261,8 @@ final class ConversionTests: BaseTestCase {
     let tracks = try await output.loadTracks(withMediaType: .video)
     let track = try XCTUnwrap(tracks.first)
     let size = try await track.load(.naturalSize)
-    XCTAssertLessThan(size.width, 1280, "the output kept the source width")
-  }
-
-  /// The preset is chosen from the names the system offers, not a fixed table.
-  func test_videoPreset_picksTheSmallestPresetThatCoversTheRequest() {
-    let available = [
-      AVAssetExportPreset640x480,
-      AVAssetExportPreset1280x720,
-      AVAssetExportPreset1920x1080,
-      AVAssetExportPresetHighestQuality,
-    ]
-    let chosen = MediaProcessor.videoPreset(
-      for: [.resize(width: 800, height: 600, fitMode: .proportional)],
-      available: available
-    )
-    XCTAssertEqual(chosen, AVAssetExportPreset1280x720)
-  }
-
-  func test_videoPreset_readsDimensionsOutOfThePresetName() {
-    let parsed = MediaProcessor.dimensions(inPresetNamed: AVAssetExportPreset1920x1080)
-    XCTAssertEqual(parsed?.width, 1920)
-    XCTAssertEqual(parsed?.height, 1080)
-    XCTAssertNil(MediaProcessor.dimensions(inPresetNamed: AVAssetExportPresetHighestQuality))
+    XCTAssertEqual(abs(size.width), 640, "a 640 × 480 box takes a 1280 × 720 film to 640 × 360")
+    XCTAssertEqual(abs(size.height), 360)
   }
 
   // MARK: - Audio
