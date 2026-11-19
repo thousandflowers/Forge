@@ -135,6 +135,22 @@ enum ExternalBridge {
     return libreOffice != nil && !isTimeBased && !type.conforms(to: .image)
   }
 
+  /// Whether a tool on this Mac writes the format - what `plan` would find a
+  /// writer for, asked of the target alone. Pictures stay ImageIO's, which
+  /// hands WebP to cwebp itself.
+  static func canWrite(_ type: UTType) -> Bool {
+    guard let ext = FormatCatalog.fileExtension(for: type) ?? type.preferredFilenameExtension else {
+      return false
+    }
+    if type.conforms(to: .image) {
+      return ImageProcessor.isWebP(type) && ExternalTools.locate("cwebp") != nil
+    }
+    if Fonts.handles(ext) { return ExternalTools.locate("fonttools") != nil }
+    if ExternalTools.locate("pandoc") != nil, pandocWrites(ext) { return true }
+    let isTimeBased = type.conforms(to: .audiovisualContent) || type.conforms(to: .audio)
+    return isTimeBased && ExternalTools.locate("ffmpeg") != nil
+  }
+
   static func plan(from input: URL, to output: URL, operations: [Operation]) -> Plan? {
     let source = input.pathExtension.lowercased()
     let target = output.pathExtension.lowercased()

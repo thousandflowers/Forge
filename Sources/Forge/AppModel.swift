@@ -243,6 +243,9 @@ final class AppModel: ObservableObject {
       || FormatCatalog.isWritableVideo(format)
       || FormatCatalog.isWritableModel(format)
       || DocumentText.canWrite(format)
+      // A tool the user installed writes it - the default Audio to MP3 preset
+      // goes to ffmpeg, and warning that this Mac cannot write MP3 was false.
+      || ExternalBridge.canWrite(format)
   }
 
   func presetName(for id: UUID) -> String {

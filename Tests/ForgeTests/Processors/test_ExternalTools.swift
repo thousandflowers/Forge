@@ -187,6 +187,24 @@ final class ExternalToolTests: BaseTestCase {
   /// Pictures are ImageIO's, whatever is installed. A tool that offered to
   /// take them would take them off the path that resizes, filters and
   /// measures.
+  /// The Presets screen warned "This Mac cannot write MP3" on the default
+  /// Audio to MP3 preset, on a Mac where ffmpeg writes it every time.
+  func test_aFormatOnlyAToolWritesIsStillDeliverable() throws {
+    try requireFFmpeg()
+    let mp3 = try XCTUnwrap(UTType(filenameExtension: "mp3"))
+    XCTAssertTrue(ExternalBridge.canWrite(mp3))
+  }
+
+  func test_aDocumentFormatPandocWritesIsDeliverable() throws {
+    try requirePandoc()
+    let epub = try XCTUnwrap(UTType(filenameExtension: "epub"))
+    XCTAssertTrue(ExternalBridge.canWrite(epub))
+  }
+
+  func test_noToolClaimsToWriteAPicture() {
+    XCTAssertFalse(ExternalBridge.canWrite(.jpeg), "pictures are ImageIO's")
+  }
+
   func test_picturesAreNotOfferedToAnyTool() {
     XCTAssertFalse(ExternalBridge.canHandle(.png))
     XCTAssertFalse(ExternalBridge.canHandle(.jpeg))
