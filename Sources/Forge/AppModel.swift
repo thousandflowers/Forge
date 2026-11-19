@@ -22,6 +22,8 @@ final class AppModel: ObservableObject {
   /// a drop that happened somewhere else, and the Convert screen takes them as
   /// one, adding to what is already there.
   @Published var opened: [URL] = []
+  /// The sidebar section on screen; the View menu's ⌘1…⌘7 set it.
+  @Published var section: AppSection? = .process
   /// The preset being written, when the editor is up. It covers the whole
   /// window, so the window owns it rather than the Presets screen.
   @Published var presetEditor: PresetEditorRequest?

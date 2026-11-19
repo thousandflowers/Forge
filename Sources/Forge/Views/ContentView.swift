@@ -2,11 +2,10 @@ import SwiftUI
 
 struct ContentView: View {
   @EnvironmentObject private var model: AppModel
-  @State private var section: AppSection? = .process
 
   var body: some View {
     NavigationSplitView {
-      List(AppSection.allCases, selection: $section) { item in
+      List(AppSection.allCases, selection: $model.section) { item in
         Label(item.title, systemImage: item.icon)
           .badge(item.count(presets: model.presets.count, folders: model.folders.count))
           .tag(item)
@@ -34,8 +33,8 @@ struct ContentView: View {
     .animation(.easeInOut(duration: 0.2), value: model.presetEditor?.id)
     // Running something again from History is a conversion, so the Convert
     // screen is where it happens.
-    .onChange(of: model.pending) { pending in if pending != nil { section = .process } }
-    .onChange(of: model.opened) { opened in if !opened.isEmpty { section = .process } }
+    .onChange(of: model.pending) { pending in if pending != nil { model.section = .process } }
+    .onChange(of: model.opened) { opened in if !opened.isEmpty { model.section = .process } }
     .alert(
       "Forge ran into a problem",
       isPresented: Binding(
@@ -52,7 +51,7 @@ struct ContentView: View {
 
   @ViewBuilder
   private var detail: some View {
-    switch section ?? .process {
+    switch model.section ?? .process {
     case .process:  BatchProcessingView()
     case .presets:  PresetsView()
     case .gallery:  GalleryView()

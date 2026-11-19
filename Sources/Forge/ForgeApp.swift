@@ -12,7 +12,10 @@ struct ForgeApp: App {
         .frame(minWidth: 880, minHeight: 600)
         .onAppear { delegate.inbox.deliver = { model.open($0) } }
     }
-    .commands { SidebarCommands() }
+    .commands {
+      SidebarCommands()
+      ForgeCommands(model: model)
+    }
 
     // A conversion is usually a small errand, and going to the window for it
     // is more ceremony than the errand deserves.
@@ -61,5 +64,34 @@ final class OpenedFiles {
     let urls = waiting
     waiting = []
     deliver(urls)
+  }
+}
+
+/// The menu bar's own commands: each one does what the window's button does.
+struct ForgeCommands: Commands {
+  @ObservedObject var model: AppModel
+
+  var body: some Commands {
+    CommandGroup(replacing: .newItem) {
+      Button("New Preset") { model.presetEditor = PresetEditorRequest(preset: nil) }
+        .keyboardShortcut("n")
+      Button("Add Files…") { addFiles() }
+        .keyboardShortcut("o")
+    }
+    CommandGroup(after: .sidebar) {
+      Divider()
+      ForEach(Array(AppSection.allCases.enumerated()), id: \.element) { index, section in
+        Button(section.title) { model.section = section }
+          .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")))
+      }
+    }
+  }
+
+  /// Files picked here arrive the way files dropped on the Dock icon do.
+  private func addFiles() {
+    let panel = NSOpenPanel()
+    panel.allowsMultipleSelection = true
+    panel.canChooseDirectories = false
+    if panel.runModal() == .OK { model.open(panel.urls) }
   }
 }
