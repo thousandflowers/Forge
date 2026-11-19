@@ -13,6 +13,10 @@ final class MonitoredFolderWatcher {
   private static let settleInterval: TimeInterval = 1.0
   /// How often to re-check a file that is still growing.
   private static let pollInterval: TimeInterval = 0.5
+  /// How long a file another process keeps open is waited for. An editor can
+  /// hold a file open for as long as it is on screen; after this it is taken
+  /// as finished, the way it was before the open check existed.
+  private static let longestWaitForAWriter: TimeInterval = 300
 
   private let queue = DispatchQueue(label: "com.eugeniozamengo.Forge.watcher", qos: .utility)
 
@@ -21,8 +25,9 @@ final class MonitoredFolderWatcher {
   private var root: URL?
   private var includeSubfolders = false
   private var handler: FileAddedHandler?
-  /// Files seen but not yet settled, with the size they were last seen at.
-  private var pending: [String: (size: Int64, since: Date)] = [:]
+  /// Files seen but not yet settled: the size they were last seen at, since
+  /// when, and when they first turned up.
+  private var pending: [String: (size: Int64, since: Date, arrived: Date)] = [:]
   private var timer: DispatchSourceTimer?
 
   deinit {
@@ -119,7 +124,8 @@ final class MonitoredFolderWatcher {
     guard !url.lastPathComponent.hasPrefix(".") else { return }
     guard let size = Self.fileSize(url) else { return }
 
-    pending[path] = (size: size, since: Date())
+    let now = Date()
+    pending[path] = (size: size, since: now, arrived: pending[path]?.arrived ?? now)
     startTimerIfNeeded()
   }
 
@@ -170,7 +176,13 @@ final class MonitoredFolderWatcher {
         continue
       }
       if size != seen.size {
-        pending[path] = (size: size, since: now)
+        pending[path] = (size: size, since: now, arrived: seen.arrived)
+      } else if now.timeIntervalSince(seen.since) >= Self.settleInterval,
+                FileActivity.isOpenElsewhere(url),
+                now.timeIntervalSince(seen.arrived) < Self.longestWaitForAWriter {
+        // Stopped growing, but whoever is writing it still has it open: a
+        // stalled copy, not a finished one. Wait another round.
+        pending[path] = (size: size, since: now, arrived: seen.arrived)
       } else if now.timeIntervalSince(seen.since) >= Self.settleInterval {
         pending.removeValue(forKey: path)
         ready.append(url)
