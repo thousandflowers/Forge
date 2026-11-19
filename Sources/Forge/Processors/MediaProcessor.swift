@@ -32,8 +32,19 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     let start = Date()
     let asset = AVURLAsset(url: input)
 
-    let videoTracks = try await asset.loadTracks(withMediaType: .video)
-    let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+    let videoTracks: [AVAssetTrack]
+    let audioTracks: [AVAssetTrack]
+    do {
+      videoTracks = try await asset.loadTracks(withMediaType: .video)
+      audioTracks = try await asset.loadTracks(withMediaType: .audio)
+    } catch {
+      // AVFoundation's own words are "Cannot Open", in the system language,
+      // which say neither what nor why.
+      throw ProcessingError.conversionFailed(
+        reason: "\(input.lastPathComponent) cannot be opened: it looks damaged or incomplete. "
+          + "If it is still being copied or downloaded, try again once it has arrived."
+      )
+    }
 
     guard !videoTracks.isEmpty || !audioTracks.isEmpty else {
       throw ProcessingError.conversionFailed(

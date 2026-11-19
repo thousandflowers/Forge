@@ -128,6 +128,29 @@ final class ConversionTests: BaseTestCase {
     XCTAssertEqual(after.audio, 1)
   }
 
+  /// A damaged or half-copied film failed with AVFoundation's two words,
+  /// "Cannot Open", which say neither what could not be opened nor why.
+  func test_aDamagedVideoSaysWhatIsWrongWithIt() async throws {
+    let whole = try await Fixture.video(at: path("whole.mp4"), seconds: 2, withAudio: true)
+    let data = try Data(contentsOf: whole)
+    let broken = path("broken.mp4")
+    try data.prefix(data.count / 3).write(to: broken)
+
+    do {
+      _ = try await coordinator().processFile(
+        try ProcessableFile(url: broken),
+        with: .make(format: .mov, category: .video),
+        destinationMode: .copyTo,
+        destinationURL: try folder("out")
+      ) { _ in }
+      XCTFail("a third of a film is not a film")
+    } catch {
+      let message = error.localizedDescription
+      XCTAssertTrue(message.contains("broken.mp4"), message)
+      XCTAssertTrue(message.contains("damaged") || message.contains("incomplete"), message)
+    }
+  }
+
   /// The old pipeline read only the video track, so every converted file came
   /// out silent.
   func test_video_keepsTheAudioTrack() async throws {
