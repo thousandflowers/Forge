@@ -87,3 +87,25 @@ struct EmptyStateView: View {
     .padding()
   }
 }
+
+/// Sizes measured from Shortcuts on macOS 26, used wherever Forge draws a
+/// block, a row or a card. Colours stay Forge's.
+enum Metrics {
+  static let blockHeight: CGFloat = 43
+  static let blockColumn: CGFloat = 600
+  static let blockGap: CGFloat = 12
+  static let iconSize: CGFloat = 22
+  static let bodyText: CGFloat = 13
+  static let blockRadius: CGFloat = 20
+  static let cardRadius: CGFloat = 16
+}
+
+extension View {
+  /// Forge's cards in Shortcuts' shape: flat, generously rounded.
+  func forgeCard(radius: CGFloat = Metrics.cardRadius) -> some View {
+    background(
+      RoundedRectangle(cornerRadius: radius, style: .continuous)
+        .fill(Color(nsColor: .controlBackgroundColor))
+    )
+  }
+}
