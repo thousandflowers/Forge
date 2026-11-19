@@ -115,7 +115,15 @@ actor ProcessingCoordinator {
     activeTasks[fileId] = task
     defer { activeTasks.removeValue(forKey: fileId) }
 
-    return try await task.value
+    // The work runs in a task of its own so the window can cancel one file by
+    // id, and a task of its own does not hear its caller being cancelled. The
+    // CLI's Ctrl-C and the editor's Preview cancel from outside, so it is
+    // passed on here: otherwise the export ran to the end regardless.
+    return try await withTaskCancellationHandler {
+      try await task.value
+    } onCancel: {
+      task.cancel()
+    }
   }
 
   /// Convert one file into a folder of the caller's choosing, without writing

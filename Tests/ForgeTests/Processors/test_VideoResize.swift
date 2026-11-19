@@ -47,3 +47,29 @@ final class VideoResizeTests: BaseTestCase {
     XCTAssertNil(MediaProcessor.renderSize(natural: natural, width: nil, height: nil, mode: .proportional))
   }
 }
+
+/// Cancelling the caller stops the conversion: the CLI's Ctrl-C and the
+/// editor's Preview both cancel from outside, and the export used to carry on
+/// to the end regardless, leaving its scratch and its empty name behind.
+final class CancellationReachesTheExportTests: BaseTestCase {
+  func test_cancellingTheCallerStopsAndClearsUp() async throws {
+    let source = try await Fixture.video(at: path("long.mp4"), seconds: 20, size: CGSize(width: 1920, height: 1080), withAudio: false)
+    let out = try folder("out")
+    let coordinator = coordinator()
+    let file = try ProcessableFile(url: source)
+    let run = Task {
+      try await coordinator.processFile(
+        file,
+        with: .make(format: .mov, resize: ResizeSpec(width: 1280, height: nil, fitMode: .proportional), category: .video),
+        destinationMode: .copyTo,
+        destinationURL: out
+      ) { _ in }
+    }
+    try await Task.sleep(nanoseconds: 600_000_000)
+    let cancelledAt = Date()
+    run.cancel()
+    _ = try? await run.value
+    XCTAssertLessThan(Date().timeIntervalSince(cancelledAt), 3, "the export ran on after the cancel")
+    XCTAssertEqual(contents(of: out), [], "nothing is left behind")
+  }
+}
