@@ -57,6 +57,14 @@ struct CustomSizeMenu: View {
         .font(.caption).foregroundStyle(.secondary)
     }
     .padding(14)
+    .onAppear { shape = Self.proportion(width: width, height: height) }
+  }
+
+  /// The ready-made shape a size already is, or Free.
+  static func proportion(width: Int?, height: Int?) -> Proportion {
+    guard let width, let height, height > 0 else { return .free }
+    let ratio = CGFloat(width) / CGFloat(height)
+    return Proportion.allCases.first { $0.ratio.map { abs($0 - ratio) < 0.01 } ?? false } ?? .free
   }
 
   private var stageView: some View {

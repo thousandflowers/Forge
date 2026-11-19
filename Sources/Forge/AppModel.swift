@@ -525,6 +525,8 @@ final class AppModel: ObservableObject {
     let preset: RulePreset
     let destination: URL?
     let mode: DestinationMode
+    /// History's run-again replaces the list; files dropped on a preset join it.
+    var replacesList = true
   }
 
   // MARK: - Default presets (first run)

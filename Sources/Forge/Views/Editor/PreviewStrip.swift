@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import ImageIO
 
 /// The Preview at the foot of the editor: a sample file after each step, as
 /// small thumbnails with what each weighs. Hover one to peek at it; click it
@@ -15,7 +16,10 @@ struct PreviewStrip: View {
   @State private var steps: [PreviewRunner.Step] = []
   @State private var failure: String?
   @State private var working = false
-  @State private var scratch: URL?
+  /// Every run gets a folder under this one; the whole of it goes when the
+  /// editor closes.
+  @State private var root = FileManager.default.temporaryDirectory
+    .appendingPathComponent("ForgePreview-\(UUID().uuidString)", isDirectory: true)
 
   /// The run is redone when the sample or the chain changes, and only then.
   private struct Key: Equatable {
@@ -32,11 +36,11 @@ struct PreviewStrip: View {
       }
       .frame(width: 118, alignment: .leading)
 
-      if sample == nil {
+      if let failure {
+        Label(failure, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.secondary).lineLimit(2)
+      } else if sample == nil {
         Text("Drop a file here, or choose one, to see what each step does to it.")
           .font(.callout).foregroundStyle(.secondary)
-      } else if let failure {
-        Label(failure, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.secondary).lineLimit(2)
       } else {
         ForEach(steps) { step in
           if step.id > 0 { Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.tertiary) }
@@ -52,19 +56,29 @@ struct PreviewStrip: View {
     .background(.bar)
     .overlay(alignment: .top) { Divider() }
     .dropDestination(for: URL.self) { urls, _ in
-      guard let url = urls.first, let file = try? ProcessableFile(url: url) else { return false }
-      sample = file
+      guard let url = urls.first else { return false }
+      use(url)
       return true
     }
     .task(id: Key(sample: sample?.url, actions: preset.actions)) { await refresh() }
-    .onDisappear { removeScratch() }
+    .onDisappear { try? FileManager.default.removeItem(at: root) }
   }
 
   private func choose() {
     let panel = NSOpenPanel()
     panel.allowsMultipleSelection = false
     panel.canChooseDirectories = false
-    if panel.runModal() == .OK, let url = panel.url { sample = try? ProcessableFile(url: url) }
+    if panel.runModal() == .OK, let url = panel.url { use(url) }
+  }
+
+  /// A file Forge cannot open says so and keeps the sample there was.
+  private func use(_ url: URL) {
+    do {
+      sample = try ProcessableFile(url: url)
+      failure = nil
+    } catch {
+      failure = "Forge cannot open \(url.lastPathComponent): \(error.localizedDescription)"
+    }
   }
 
   /// Wait a moment so typing a number does not start a run per keystroke,
@@ -75,23 +89,27 @@ struct PreviewStrip: View {
     guard !Task.isCancelled else { return }
     working = true
     defer { working = false }
-    removeScratch()
-    let folder = FileManager.default.temporaryDirectory
-      .appendingPathComponent("ForgePreview-\(UUID().uuidString)", isDirectory: true)
-    scratch = folder
+    let folder = root.appendingPathComponent("run-\(UUID().uuidString)", isDirectory: true)
     do {
       steps = try await PreviewRunner.run(sample: sample, preset: preset, coordinator: coordinator, scratch: folder)
       failure = nil
+      removeRuns(except: folder)
     } catch is CancellationError {
+      // A newer run is on its way; it clears this one's folder when it lands.
       return
     } catch {
       failure = error.localizedDescription
     }
   }
 
-  private func removeScratch() {
-    if let scratch { try? FileManager.default.removeItem(at: scratch) }
-    scratch = nil
+  /// The runs the thumbnails no longer point at. Only after the new run has
+  /// finished: until then the strip still shows the previous one's files.
+  private func removeRuns(except current: URL) {
+    let fileManager = FileManager.default
+    let runs = (try? fileManager.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+    for run in runs where run.standardizedFileURL != current.standardizedFileURL {
+      try? fileManager.removeItem(at: run)
+    }
   }
 }
 
@@ -149,13 +167,40 @@ private struct PreviewThumb: View {
   }
 }
 
-/// A file as a picture: the image itself where there is one, its icon otherwise.
+/// A file as a picture: the image itself where there is one, its icon
+/// otherwise. Read once per file, scaled down to what is shown, off the main
+/// thread - a whole photograph decoded on every redraw is what this replaces.
 struct PreviewImage: View {
   let url: URL
+  /// The longest side to decode, in pixels; the big view asks for more.
+  var maxPixels: Int = 400
+  @State private var image: NSImage?
 
   var body: some View {
-    let image = NSImage(contentsOf: url) ?? NSWorkspace.shared.icon(forFile: url.path)
-    Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+    SwiftUI.Group {
+      if let image {
+        Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+      } else {
+        Rectangle().fill(Color.secondary.opacity(0.15))
+      }
+    }
+    .task(id: url) {
+      let url = url, maxPixels = maxPixels
+      image = await Task.detached(priority: .utility) { PreviewImage.thumbnail(of: url, maxPixels: maxPixels) }.value
+    }
+  }
+
+  nonisolated static func thumbnail(of url: URL, maxPixels: Int) -> NSImage {
+    let options: [CFString: Any] = [
+      kCGImageSourceCreateThumbnailFromImageAlways: true,
+      kCGImageSourceCreateThumbnailWithTransform: true,
+      kCGImageSourceThumbnailMaxPixelSize: maxPixels,
+    ]
+    if let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+       let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
+      return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+    }
+    return NSWorkspace.shared.icon(forFile: url.path)
   }
 }
 
@@ -182,8 +227,8 @@ struct PreviewCompare: View {
         }
         GeometryReader { geo in
           ZStack(alignment: .leading) {
-            PreviewImage(url: original.url).frame(width: geo.size.width, height: geo.size.height).clipped()
-            PreviewImage(url: step.url).frame(width: geo.size.width, height: geo.size.height).clipped()
+            PreviewImage(url: original.url, maxPixels: 2000).frame(width: geo.size.width, height: geo.size.height).clipped()
+            PreviewImage(url: step.url, maxPixels: 2000).frame(width: geo.size.width, height: geo.size.height).clipped()
               .mask(alignment: .leading) {
                 Rectangle().frame(width: geo.size.width * (1 - split)).offset(x: geo.size.width * split)
               }

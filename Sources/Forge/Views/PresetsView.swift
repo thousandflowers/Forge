@@ -37,7 +37,8 @@ struct PresetsView: View {
                     files: urls,
                     preset: preset,
                     destination: urls.first?.deletingLastPathComponent(),
-                    mode: .copyTo
+                    mode: .copyTo,
+                    replacesList: false
                   )
                   return true
                 } isTargeted: { targeted in

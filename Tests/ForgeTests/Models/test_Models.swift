@@ -1422,3 +1422,25 @@ final class CustomSizeMenuTests: XCTestCase {
     XCTAssertEqual(CustomSizeMenu.height(for: 3000, ratio: 3.0 / 2.0), 2000)
   }
 }
+
+/// What the review turned up, kept from coming back.
+final class RedesignReviewTests: XCTestCase {
+  func test_aTypedNumberEndsInsideTheRange() {
+    XCTAssertEqual(NumberToken.clamped(500, to: 1...100), 100)
+    XCTAssertEqual(NumberToken.clamped(0, to: 1...20_000), 1)
+    XCTAssertEqual(NumberToken.clamped(80, to: 1...100), 80)
+    XCTAssertNil(NumberToken.clamped(nil, to: 1...100), "empty stays automatic")
+  }
+
+  func test_theMenuStartsOnTheShapeTheSizeAlreadyHas() {
+    XCTAssertEqual(CustomSizeMenu.proportion(width: 1080, height: 1080), .square)
+    XCTAssertEqual(CustomSizeMenu.proportion(width: 1920, height: 1080), .wide)
+    XCTAssertEqual(CustomSizeMenu.proportion(width: 1000, height: 333), .free)
+    XCTAssertEqual(CustomSizeMenu.proportion(width: 1080, height: nil), .free)
+  }
+
+  func test_aFolderWithoutADestinationSaysSo() {
+    let folder = MonitoredFolder(url: URL(fileURLWithPath: "/tmp/in"), ruleId: UUID(), destinationMode: .moveTo)
+    XCTAssertEqual(folder.detail(presetName: "Web JPEG"), "Web JPEG · moves, but no folder is chosen · subfolders ignored")
+  }
+}

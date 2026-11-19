@@ -357,7 +357,9 @@ struct BatchProcessingView: View {
   }
 
   private func take(_ pending: AppModel.PendingConversion) {
-    vm.clear()
+    // Never cleared while a batch runs: that emptied the rows mid-run. Files
+    // dropped on a preset join what is already here.
+    if pending.replacesList, !vm.isProcessing { vm.clear() }
     vm.add(pending.files)
     adhoc = pending.preset
     choice.destinationMode = pending.mode

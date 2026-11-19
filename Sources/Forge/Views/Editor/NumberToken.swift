@@ -33,6 +33,12 @@ struct NumberToken: View {
     min(max((value ?? startingFrom) + delta, range.lowerBound), range.upperBound)
   }
 
+  /// A typed value brought back inside the range when the typing ends:
+  /// Quality 500 becomes 100, a width of 0 becomes 1.
+  static func clamped(_ value: Int?, to range: ClosedRange<Int>) -> Int? {
+    value.map { min(max($0, range.lowerBound), range.upperBound) }
+  }
+
   /// What typing leaves behind: digits only, at most five of them.
   static func digits(of text: String) -> String {
     String(text.filter(\.isNumber).prefix(5))
@@ -60,7 +66,11 @@ private struct ScrubField: NSViewRepresentable {
     )
     field.stringValue = value.map(String.init) ?? ""
     field.delegate = context.coordinator
-    field.onScrub = { [weak coordinator = context.coordinator] in coordinator?.scrub(field, by: $0) }
+    // Weak on both: the closure is stored on the field itself.
+    field.onScrub = { [weak coordinator = context.coordinator, weak field] delta in
+      guard let field else { return }
+      coordinator?.scrub(field, by: delta)
+    }
     field.onFocus = { [weak coordinator = context.coordinator] in coordinator?.focused() }
     return field
   }
@@ -92,6 +102,9 @@ private struct ScrubField: NSViewRepresentable {
 
     func controlTextDidEndEditing(_ obj: Notification) {
       parent.editing = false
+      guard let field = obj.object as? NSTextField else { return }
+      let inside = NumberToken.clamped(parent.value, to: parent.range)
+      if inside != parent.value { set(field, inside) }
     }
 
     func controlTextDidChange(_ obj: Notification) {

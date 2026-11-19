@@ -269,22 +269,27 @@ struct BlockCard<Content: View>: View {
 
   /// One line when the controls fit beside the title, as a sentence the way
   /// Shortcuts writes its actions; the controls go underneath when they do not.
+  @State private var narrow = false
+  /// Below this the controls go under the title (an arm of a fork, say).
+  private let inlineMinimum: CGFloat = 440
+
   var body: some View {
-    SwiftUI.Group {
-      if inline {
-        ViewThatFits(in: .horizontal) {
-          HStack(spacing: 8) {
-            header
-            content()
-            Spacer(minLength: 8)
-            removeButton
-          }
-          stacked
-        }
-      } else {
-        stacked
-      }
+    let oneLine = inline && !narrow
+    let layout = oneLine
+      ? AnyLayout(HStackLayout(alignment: .center, spacing: 8))
+      : AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+    layout {
+      header
+      content()
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.trailing, remove == nil ? 0 : 28)
+    .overlay(alignment: oneLine ? .trailing : .topTrailing) { removeButton }
+    .background(GeometryReader { geo in
+      Color.clear
+        .onAppear { narrow = geo.size.width < inlineMinimum }
+        .onChange(of: geo.size.width) { narrow = $0 < inlineMinimum }
+    })
     .padding(.horizontal, 12).padding(.vertical, 8)
     .frame(minHeight: Metrics.blockHeight)
     .frame(maxWidth: Metrics.blockColumn, alignment: .leading)
@@ -295,17 +300,6 @@ struct BlockCard<Content: View>: View {
         .fill(Color(nsColor: .controlBackgroundColor))
     )
     .frame(maxWidth: .infinity)
-  }
-
-  private var stacked: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      HStack(spacing: 8) {
-        header
-        Spacer()
-        removeButton
-      }
-      content()
-    }
   }
 
   private var header: some View {

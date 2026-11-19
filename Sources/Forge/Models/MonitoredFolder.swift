@@ -23,8 +23,8 @@ struct MonitoredFolder: Identifiable, Codable, Hashable, Sendable {
     let destination: String
     switch destinationMode {
     case .overwrite: destination = "replaces the originals"
-    case .copyTo: destination = "copies into \(destinationURL.map(Self.abbreviated) ?? "the same folder")"
-    case .moveTo: destination = "moves into \(destinationURL.map(Self.abbreviated) ?? "the same folder")"
+    case .copyTo: destination = destinationURL.map { "copies into \(Self.abbreviated($0))" } ?? "copies, but no folder is chosen"
+    case .moveTo: destination = destinationURL.map { "moves into \(Self.abbreviated($0))" } ?? "moves, but no folder is chosen"
     }
     return [presetName, destination, includeSubfolders ? "subfolders too" : "subfolders ignored"]
       .joined(separator: " · ")
