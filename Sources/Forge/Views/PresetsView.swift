@@ -191,7 +191,11 @@ struct PresetCard: View {
       case (nil, nil): return "resize"
       }
     case .stripMetadata(let policy):
-      return policy == .stripLocation ? "no location" : "no metadata"
+      switch policy {
+      case .keepAll: return "all metadata"
+      case .stripLocation: return "no location"
+      case .stripAll: return "no metadata"
+      }
     case .when(let condition, _, _):
       return "if \(condition.subject.title.lowercased())"
     case .split(let branches):

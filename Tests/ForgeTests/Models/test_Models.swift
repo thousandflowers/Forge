@@ -1444,3 +1444,52 @@ final class RedesignReviewTests: XCTestCase {
     XCTAssertEqual(folder.detail(presetName: "Web JPEG"), "Web JPEG · moves, but no folder is chosen · subfolders ignored")
   }
 }
+
+/// What the button-by-button pass over the Convert sheet turned up.
+final class ConvertSheetNothingTests: XCTestCase {
+  private let webJPEG = RulePreset(name: "Web JPEG", description: "", category: .image,
+                                   actions: [.convertFormat(to: .jpeg), .quality(level: 80)])
+
+  func test_nothingLeavesNoneOfTheLastPresetBehind() {
+    let afterPreset = ConvertChoice().adopting(webJPEG)
+    XCTAssertFalse(afterPreset.customActions.isEmpty)
+    let nothing = afterPreset.cleared()
+    XCTAssertNil(nothing.presetID)
+    XCTAssertEqual(nothing.customActions, [], "the old JPEG Q80 used to run anyway")
+    XCTAssertNil(nothing.resolved(against: [webJPEG]))
+  }
+
+  func test_keepingEveryTagIsNotCalledNoMetadata() {
+    XCTAssertEqual(PresetCard.chip(.stripMetadata(policy: .keepAll)), "all metadata")
+    XCTAssertEqual(PresetCard.chip(.stripMetadata(policy: .stripLocation)), "no location")
+    XCTAssertEqual(PresetCard.chip(.stripMetadata(policy: .stripAll)), "no metadata")
+  }
+}
+
+/// A new batch does not inherit what it cannot show.
+final class CarriedChoiceTests: XCTestCase {
+  private let webJPEG = RulePreset(name: "Web JPEG", description: "", targetFormat: .jpeg, quality: 80, category: .image)
+  private let video720 = RulePreset(name: "Video 720p", description: "", targetFormat: .mpeg4Movie,
+                                    resize: ResizeSpec(width: 1280, height: 720, fitMode: .proportional), category: .video)
+
+  func test_aPresetTheNewFilesAreNotOfferedIsDropped() {
+    var last = ConvertChoice().adopting(webJPEG)
+    last.destinationURL = URL(fileURLWithPath: "/tmp/out")
+    let next = last.carried(offered: [video720], kinds: [.video])
+    XCTAssertNil(next.presetID)
+    XCTAssertEqual(next.customActions, [], "no JPEG left to run on the film")
+    XCTAssertEqual(next.destinationURL, last.destinationURL, "where files go still carries")
+  }
+
+  func test_anOfferedPresetCarriesSoTheSecondBatchJustRuns() {
+    let last = ConvertChoice().adopting(webJPEG)
+    XCTAssertEqual(last.carried(offered: [webJPEG], kinds: [.image]), last)
+  }
+
+  func test_handSetFieldsCarryOnlyWhereTheyAreShown() {
+    var custom = ConvertChoice()
+    custom.format = OutputFormat(type: .png)
+    XCTAssertEqual(custom.carried(offered: [], kinds: [.image]).format, custom.format)
+    XCTAssertEqual(custom.carried(offered: [], kinds: [.image, .audio]).customActions, [], "a mixed batch hides the fields")
+  }
+}

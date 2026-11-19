@@ -43,17 +43,7 @@ struct ConvertChoice: Equatable {
   /// this one never made - which then gets applied for real the moment any
   /// other field is touched and the preset lets go.
   func adopting(_ preset: RulePreset) -> ConvertChoice {
-    var updated = self
-    updated.format = .keep
-    updated.width = nil
-    updated.height = nil
-    updated.quality = nil
-    updated.filter = nil
-    updated.codec = nil
-    updated.language = nil
-    updated.maxBytes = nil
-    updated.privacy = nil
-
+    var updated = cleared()
     for action in preset.actions {
       switch action {
       case .convertFormat(let to): updated.format = OutputFormat(type: to)
@@ -67,9 +57,41 @@ struct ConvertChoice: Equatable {
       case .when, .split, .join, .merge: break
       }
     }
-
     updated.presetID = preset.id
     return updated
+  }
+
+  /// Nothing chosen: no preset and none of a preset's fields left behind.
+  /// "Nothing" used to drop only the preset's name, so the last preset's
+  /// format and quality stayed in fields a mixed batch does not show, and
+  /// Convert ran them anyway - over the originals, with Overwrite.
+  func cleared() -> ConvertChoice {
+    var updated = self
+    updated.presetID = nil
+    updated.format = .keep
+    updated.width = nil
+    updated.height = nil
+    updated.quality = nil
+    updated.filter = nil
+    updated.codec = nil
+    updated.language = nil
+    updated.maxBytes = nil
+    updated.privacy = nil
+    return updated
+  }
+
+  /// The last batch's choice, handed to a new one. Kept only where the sheet
+  /// will show it: a preset the new files are offered, or hand-set fields on
+  /// a batch of one kind that honours them. Anything else used to ride along
+  /// unseen - a JPEG preset from a batch of photos turned the next drop, a
+  /// film, into hundreds of 4K frames with no preset showing as chosen.
+  /// Where the files go is not about what they are, so it always carries.
+  func carried(offered: [RulePreset], kinds: Set<ConvertKind>) -> ConvertChoice {
+    if let presetID {
+      return offered.contains { $0.id == presetID } ? self : cleared()
+    }
+    guard let custom = resolved(against: []) else { return self }
+    return kinds.count == 1 && custom.suits(kinds) ? self : cleared()
   }
 
   var needsDestination: Bool { destinationMode != .overwrite }
@@ -234,8 +256,8 @@ struct ConvertOptionsSheet: View {
   private var presetField: some View {
     field("Start from") {
       chips {
-        chip("Nothing", selected: choice.presetID == nil) {
-          choice.presetID = nil
+        chip("Nothing", selected: choice.presetID == nil && choice.customActions.isEmpty) {
+          choice = choice.cleared()
         }
         ForEach(offeredPresets) { preset in
           chip(preset.name, selected: choice.presetID == preset.id) { load(preset) }
