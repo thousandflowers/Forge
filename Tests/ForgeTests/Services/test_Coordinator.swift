@@ -187,6 +187,52 @@ final class ProcessableFileTests: BaseTestCase {
     XCTAssertThrowsError(try ProcessableFile(url: url))
   }
 
+  /// A picture saved from the web often has no extension at all. ImageIO
+  /// reads what it is from the first bytes, so Forge should too.
+  func test_aPictureWithNoExtensionIsKnownByItsContents() async throws {
+    let png = try Fixture.image(at: path("photo.png"), width: 64, height: 48)
+    let bare = path("photo")
+    try FileManager.default.moveItem(at: png, to: bare)
+
+    let file = try ProcessableFile(url: bare)
+    XCTAssertTrue(file.fileType.conforms(to: .png), file.fileType.identifier)
+    XCTAssertEqual(file.dimensions, Dimensions(width: 64, height: 48))
+
+    let entry = try await coordinator().processFile(
+      file,
+      with: .make(format: .jpeg, category: .image),
+      destinationMode: .copyTo,
+      destinationURL: try folder("out")
+    ) { _ in }
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+    XCTAssertEqual(entry.outputURL?.lastPathComponent, "photo.jpeg")
+  }
+
+  /// A picture whose name says otherwise - a PNG called .mp4 - failed with
+  /// AVFoundation's "Cannot Open". What it is wins over what it is called.
+  func test_aPictureNamedAsSomethingElseIsKnownByItsContents() throws {
+    let png = try Fixture.image(at: path("shot.png"), width: 32, height: 32)
+    let lying = path("shot.mp4")
+    try FileManager.default.moveItem(at: png, to: lying)
+
+    XCTAssertTrue(try ProcessableFile(url: lying).fileType.conforms(to: .png))
+  }
+
+  /// Only pictures are recognised this way. A PDF with no extension stays
+  /// unknown rather than being half recognised.
+  func test_aPDFWithNoExtensionIsStillRefused() throws {
+    let pdf = try Fixture.pdf(at: path("doc.pdf"), pages: 1)
+    let bare = path("doc")
+    try FileManager.default.moveItem(at: pdf, to: bare)
+    XCTAssertThrowsError(try ProcessableFile(url: bare))
+  }
+
+  /// Real files keep the type their extension gives: a PDF stays a PDF.
+  func test_aFileThatIsWhatItSaysKeepsItsType() throws {
+    let pdf = try Fixture.pdf(at: path("doc.pdf"), pages: 1)
+    XCTAssertEqual(try ProcessableFile(url: pdf).fileType, .pdf)
+  }
+
   func test_rejectsMissingFiles() {
     XCTAssertThrowsError(try ProcessableFile(url: path("nope.png")))
   }

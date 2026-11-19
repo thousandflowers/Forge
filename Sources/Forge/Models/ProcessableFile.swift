@@ -63,6 +63,34 @@ struct ProcessableFile: Identifiable, Hashable, Sendable {
   /// genuinely has no types for and Forge genuinely reads. Those are given a
   /// dynamic type that at least conforms to plain text, which is what they are.
   private static func type(of url: URL) -> UTType? {
+    let named = namedType(of: url)
+    // A picture is known by its first bytes, which ImageIO reads without
+    // decoding anything. That answer wins when the name gives none - a photo
+    // saved from the web with no extension - or claims something that is not
+    // a picture at all, like a PNG called .mp4. A name that already says
+    // "image" is left alone: ImageIO decodes by content anyway, and a camera
+    // RAW is TIFF underneath without being one.
+    if named.map({ !$0.conforms(to: .image) }) ?? true, let sniffed = pictureType(of: url),
+       named.map({ !$0.conforms(to: sniffed) }) ?? true {
+      return sniffed
+    }
+    return named
+  }
+
+  private static func pictureType(of url: URL) -> UTType? {
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+          let identifier = CGImageSourceGetType(source) as String?,
+          let type = UTType(identifier),
+          // ImageIO also recognises a PDF, but the document path reads the
+          // type from the extension again, so a misnamed PDF would only fail
+          // further in. Pictures go all the way through.
+          type.conforms(to: .image) else {
+      return nil
+    }
+    return type
+  }
+
+  private static func namedType(of url: URL) -> UTType? {
     guard let type = UTType(filenameExtension: url.pathExtension) else { return nil }
     guard type.isDynamic else { return type }
     // TOML for the same reason: `public.toml` does not exist on macOS 14, so
