@@ -52,7 +52,10 @@ struct CustomSizeMenu: View {
       Picker("", selection: $fit) {
         ForEach(ResizeFitMode.allCases, id: \.self) { Text($0.title).tag($0) }
       }
-      .pickerStyle(.segmented).labelsHidden().frame(width: stageWidth)
+      // A menu, as on the block: four segments did not fit in 240 points
+      // and ran into the popover's edges.
+      .pickerStyle(.menu).labelsHidden().fixedSize()
+      .accessibilityLabel(Text("How it fits"))
       Text("From \(Int(source.width)) × \(Int(source.height))")
         .font(.caption).foregroundStyle(.secondary)
     }
@@ -75,11 +78,18 @@ struct CustomSizeMenu: View {
       Circle().fill(Color.white).frame(width: 14, height: 14)
         .overlay(Circle().strokeBorder(Color.accentColor, lineWidth: 2))
         .offset(x: frame.width - 7, y: frame.height - 7)
-        .gesture(DragGesture().onChanged { value in resize(to: value.location) })
-        .help("Drag to set the size")
     }
     .frame(width: stage.width, height: stage.height)
     .clipShape(RoundedRectangle(cornerRadius: 6))
+    // The whole stage takes the drag, read in the stage's own points: on the
+    // 14-point handle the drag's location was the handle's own, so the frame
+    // collapsed to its minimum, and the handle was a hard target besides.
+    .contentShape(Rectangle())
+    .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.stageSpace)).onChanged { value in
+      resize(to: value.location)
+    })
+    .coordinateSpace(name: Self.stageSpace)
+    .help("Drag to set the size")
   }
 
   @ViewBuilder private var picture: some View {
@@ -124,7 +134,9 @@ struct CustomSizeMenu: View {
     height = Self.height(for: base, ratio: ratio)
   }
 
-  /// A drag on the corner, in the stage's own points.
+  private static let stageSpace = "custom-size-stage"
+
+  /// A drag on the stage, in the stage's own points: the corner goes there.
   private func resize(to point: CGPoint) {
     let newWidth = Int((max(16, min(stage.width, point.x)) / scale).rounded())
     width = newWidth

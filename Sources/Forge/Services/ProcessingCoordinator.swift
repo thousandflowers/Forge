@@ -96,7 +96,9 @@ actor ProcessingCoordinator {
           ruleId: preset.id,
           timestamp: Date(),
           status: error is CancellationError ? .cancelled : .failed,
-          errorMessage: error.localizedDescription,
+          // Not CancellationError's own text, which History showed verbatim:
+          // "The operation couldn't be completed. (Swift.CancellationError error 1.)"
+          errorMessage: error is CancellationError ? "Stopped before it finished." : error.localizedDescription,
           // Measured rather than zeroed: a conversion that failed after two
           // minutes and one that failed at once are not the same event, and
           // history used to record both as taking no time at all.

@@ -137,7 +137,9 @@ struct PresetEditorView: View {
       Button("Cancel") {
         if isDirty { confirmingDiscard = true } else { onClose() }
       }
-      .keyboardShortcut(.cancelAction)
+      // While the Preview's big view is up, Esc is its: two cancel actions in
+      // one window meant Esc closed neither.
+      .keyboardShortcut(compared == nil ? .cancelAction : nil)
       .confirmationDialog("Remove this fork and everything in its arms?", isPresented: Binding(get: { removingFork != nil }, set: { if !$0 { removingFork = nil } })) {
         Button("Remove Fork and Arms", role: .destructive) {
           if let id = removingFork { _ = steps.removeStep(id: id) }

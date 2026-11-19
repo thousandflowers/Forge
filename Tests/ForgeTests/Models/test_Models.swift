@@ -1514,3 +1514,13 @@ final class InputFormatGroupTests: XCTestCase {
     XCTAssertTrue(videos.isDisjoint(with: ["m3u", "pls", "vtt", "scc", "ttml", "awb", "xhe", "mp3", "m4a"]), "got \(videos.sorted())")
   }
 }
+
+final class CapabilityWiringTests: XCTestCase {
+  /// A pack Forge has a bridge for says so, or the card claims a working
+  /// conversion is not called.
+  func test_fontToolsAreMarkedAsCalled() throws {
+    let fonts = try XCTUnwrap(Capabilities.all.first { $0.id == "fonts" })
+    guard case .needsPack(let pack) = fonts.status else { return XCTFail("fonts is not a pack") }
+    XCTAssertTrue(pack.isWired)
+  }
+}

@@ -19,9 +19,12 @@ struct ForgeApp: App {
 
     // A conversion is usually a small errand, and going to the window for it
     // is more ceremony than the errand deserves.
-    MenuBarExtra("Forge", systemImage: "hammer") {
+    MenuBarExtra {
       MenuBarView()
         .environmentObject(model)
+    } label: {
+      // The symbol's own name was what VoiceOver read: "Build" ("Compilazione").
+      Image(systemName: "hammer").accessibilityLabel(Text("Forge"))
     }
   }
 }
@@ -78,6 +81,15 @@ struct ForgeCommands: Commands {
       Button("Add Files…") { addFiles() }
         .keyboardShortcut("o")
     }
+    // Where every Mac app keeps it, as well as in the sidebar.
+    CommandGroup(replacing: .appSettings) {
+      Button("Settings…") { model.section = .settings }
+        .keyboardShortcut(",")
+    }
+    // The default item put up "Help isn't available for Forge."
+    CommandGroup(replacing: .help) {
+      Button("Forge Help") { NSWorkspace.shared.open(Self.helpURL) }
+    }
     CommandGroup(after: .sidebar) {
       Divider()
       ForEach(Array(AppSection.allCases.enumerated()), id: \.element) { index, section in
@@ -86,6 +98,8 @@ struct ForgeCommands: Commands {
       }
     }
   }
+
+  static let helpURL = URL(string: "https://github.com/thousandflowers/Forge#readme")!
 
   /// Files picked here arrive the way files dropped on the Dock icon do.
   private func addFiles() {

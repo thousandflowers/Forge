@@ -121,7 +121,8 @@ private struct PreviewThumb: View {
   @State private var peeking = false
 
   var body: some View {
-    Button(action: open) {
+    // The peek closes on the click: it used to stay up over the big view.
+    Button { peeking = false; open() } label: {
       HStack(spacing: 6) {
         PreviewImage(url: step.url).frame(width: 42, height: 28).clipShape(RoundedRectangle(cornerRadius: 4))
         VStack(alignment: .leading, spacing: 0) {
