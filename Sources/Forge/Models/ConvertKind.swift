@@ -218,6 +218,9 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
     case .video:
       return [
         OutputGroup("Video", OutputFormat.video),
+        // The soundtrack on its own. Sound-only containers, so "M4A" means
+        // the sound and not the film in an MPEG-4 box.
+        OutputGroup("Sound", OutputFormat.audio.filter { $0.type.map(MediaProcessor.isSoundOnly) ?? false }),
         OutputGroup("Frames", OutputFormat.images),
         // The track already inside the film, which ffmpeg pulls out.
         OutputGroup("Subtitles", ExternalTools.locate("ffmpeg") == nil ? [] : OutputFormat.subtitles),

@@ -1310,6 +1310,14 @@ final class ConvertKindOfferingTests: XCTestCase {
     XCTAssertTrue(ConvertKind.image.offers(.jpeg))
     XCTAssertFalse(ConvertKind.image.offers(.quickTimeMovie))
     XCTAssertTrue(ConvertKind.video.offers(.jpeg), "a film can give up a frame")
+    XCTAssertTrue(
+      ConvertKind.video.offers(UTType("com.apple.m4a-audio")!),
+      "a film can give up its soundtrack"
+    )
+    XCTAssertFalse(
+      ConvertKind.video.outputGroups.first { $0.title == "Sound" }?.formats.contains { $0.type == .mpeg4Movie } ?? true,
+      "the sound row is sound only"
+    )
     XCTAssertTrue(ConvertKind.data.offers(.json))
     XCTAssertFalse(ConvertKind.data.offers(.jpeg), "a JSON file is not a picture")
   }
