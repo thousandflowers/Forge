@@ -4,6 +4,8 @@ import UniformTypeIdentifiers
 
 struct PresetsView: View {
   @EnvironmentObject private var model: AppModel
+  /// The card files are being dragged over, outlined so the drop has a target.
+  @State private var dropTarget: UUID?
 
   var body: some View {
     Group {
@@ -26,6 +28,25 @@ struct PresetsView: View {
                 onDelete: { model.deletePreset(preset) }
               )
                 .onTapGesture { model.presetEditor = PresetEditorRequest(preset: preset) }
+                // Files dropped on a preset run through it: they go to the
+                // Convert screen with this preset chosen, through the same
+                // questions and confirmations as any other run.
+                .dropDestination(for: URL.self) { urls, _ in
+                  guard !urls.isEmpty else { return false }
+                  model.pending = AppModel.PendingConversion(
+                    files: urls,
+                    preset: preset,
+                    destination: urls.first?.deletingLastPathComponent(),
+                    mode: .copyTo
+                  )
+                  return true
+                } isTargeted: { targeted in
+                  dropTarget = targeted ? preset.id : (dropTarget == preset.id ? nil : dropTarget)
+                }
+                .overlay(
+                  RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous)
+                    .strokeBorder(Color.accentColor, lineWidth: dropTarget == preset.id ? 2.5 : 0)
+                )
                 .contextMenu {
                   Button("Edit") { model.presetEditor = PresetEditorRequest(preset: preset) }
                   Button("Duplicate") { model.duplicatePreset(preset) }
@@ -146,8 +167,7 @@ struct PresetCard: View {
     }
     .padding(14)
     .frame(height: 150, alignment: .top)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
+    .forgeCard()
     .contentShape(Rectangle())
     .opacity(isEnabled ? 1 : 0.5)
   }
