@@ -110,7 +110,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       // the encoder, so it is kept the only way a promise about a result can
       // be: write it, measure it, and write it again lower until it fits.
       if let ceiling = Self.sizeCeiling(from: operations) {
-        settled = try squeeze(rendered, to: output, as: outputUTI, options: options, ceiling: ceiling)
+        settled = try squeeze(rendered, of: input, to: output, as: outputUTI, options: options, ceiling: ceiling)
       }
     }
     progress(1.0)
@@ -284,6 +284,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
   @discardableResult
   private func squeeze(
     _ frames: [ImageFrame],
+    of input: URL,
     to output: URL,
     as uti: UTType,
     options: [CFString: Any],
@@ -326,7 +327,8 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     let finalSize = try Self.fileSize(of: output)
     guard finalSize <= ceiling else {
       throw ProcessingError.conversionFailed(
-        reason: "Cannot get \(output.lastPathComponent) under "
+        // The input's name: `output` is the hidden scratch file.
+        reason: "Cannot get \(input.lastPathComponent) under "
           + "\(Int64(ceiling).formatted(.byteCount(style: .file))); the smallest it goes is "
           + "\(Int64(finalSize).formatted(.byteCount(style: .file)))."
       )

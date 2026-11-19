@@ -39,6 +39,27 @@ final class GenerativePresetTests: BaseTestCase {
     XCTAssertGreaterThan(size(of: output), 0)
   }
 
+  /// A ceiling that cannot be met is reported against the file the user gave,
+  /// not the hidden scratch file the conversion was written to.
+  func test_anUnreachableCeilingNamesTheUsersFile() async throws {
+    let source = try Fixture.image(at: path("holiday.png"), width: 1200, height: 800)
+    let preset = RulePreset(
+      name: "Impossible", description: "", category: .image,
+      actions: [.convertFormat(to: .jpeg), .limitSize(bytes: 10)]
+    )
+    do {
+      _ = try await coordinator().processFile(
+        try ProcessableFile(url: source), with: preset,
+        destinationMode: .copyTo, destinationURL: try folder("out"), progress: { _ in }
+      )
+      XCTFail("ten bytes is not a picture")
+    } catch {
+      let message = error.localizedDescription
+      XCTAssertTrue(message.contains("holiday.png"), message)
+      XCTAssertFalse(message.contains(".forge-"), message)
+    }
+  }
+
   /// A preset with no template is named the way it always was.
   func test_aPresetWithoutATemplateKeepsTheOldName() async throws {
     let source = try Fixture.image(at: path("plain.png"), width: 400, height: 300)
