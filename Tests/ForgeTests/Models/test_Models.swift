@@ -473,6 +473,26 @@ final class OutputNamingTests: BaseTestCase {
 
     XCTAssertEqual(try XCTUnwrap(entry.outputURL).lastPathComponent, "photo.png")
   }
+
+  /// `forge convert photo.png --overwrite` hands over a URL relative to the
+  /// working directory. It never compared equal to the absolute name worked
+  /// out for the output, so the file came back as `photo 2.png`.
+  func test_convertingInPlaceKeepsTheNameFromARelativePath() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 400, height: 400)
+    let relative = URL(
+      fileURLWithPath: source.lastPathComponent,
+      relativeTo: source.deletingLastPathComponent()
+    )
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: relative),
+      with: .make(format: .png, resize: ResizeSpec(width: 200, height: 200, fitMode: .proportional), category: .image),
+      destinationMode: .overwrite
+    ) { _ in }
+
+    XCTAssertEqual(try XCTUnwrap(entry.outputURL).lastPathComponent, "photo.png")
+    XCTAssertFalse(contents(of: source.deletingLastPathComponent()).contains("photo 2.png"))
+  }
 }
 
 /// Icon files carry several resolutions.

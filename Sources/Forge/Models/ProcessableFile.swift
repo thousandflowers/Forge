@@ -22,6 +22,11 @@ struct ProcessableFile: Identifiable, Hashable, Sendable {
   var dimensions: Dimensions?
 
   init(url: URL) throws {
+    // Absolute, always. A command line hands over `photo.png` relative to the
+    // working directory, and a relative URL never compares equal to the
+    // absolute one worked out for the output - which made converting in place
+    // rename the file `photo 2.png`.
+    let url = url.absoluteURL.standardizedFileURL
     self.url = url
 
     // Verify file exists and is not a directory
