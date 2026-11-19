@@ -81,8 +81,12 @@ struct BatchProcessingView: View {
     // A run started from History arrives here. Both hooks are needed: the
     // screen may already be showing, or may be about to appear because
     // something set this.
-    .onAppear { if let pending = model.pending { take(pending) } }
+    .onAppear {
+      if let pending = model.pending { take(pending) }
+      takeOpened()
+    }
     .onChange(of: model.pending) { pending in if let pending { take(pending) } }
+    .onChange(of: model.opened) { _ in takeOpened() }
     .navigationTitle("Convert")
     .toolbar {
       ToolbarItemGroup {
@@ -344,6 +348,14 @@ struct BatchProcessingView: View {
   /// Take a conversion handed over from somewhere else in the app - the same
   /// files or new ones, with the chain a past run used - and put it through the
   /// ordinary route, gate and confirmations included.
+  /// Files opened from the Dock or Open With: a drop, made elsewhere.
+  private func takeOpened() {
+    let urls = model.opened
+    guard !urls.isEmpty else { return }
+    model.opened = []
+    add(urls)
+  }
+
   private func take(_ pending: AppModel.PendingConversion) {
     vm.clear()
     vm.add(pending.files)

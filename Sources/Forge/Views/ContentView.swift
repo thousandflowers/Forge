@@ -34,6 +34,7 @@ struct ContentView: View {
     // Running something again from History is a conversion, so the Convert
     // screen is where it happens.
     .onChange(of: model.pending) { pending in if pending != nil { section = .process } }
+    .onChange(of: model.opened) { opened in if !opened.isEmpty { section = .process } }
     .alert(
       "Forge ran into a problem",
       isPresented: Binding(
