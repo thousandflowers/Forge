@@ -21,7 +21,7 @@ Drop in a folder of photos, a video, a stack of PDFs. Forge asks what they shoul
 
 ## Drop the files, and answer a question only when there is one
 
-The Convert screen is a drop zone. The first time, Forge asks what the files should become. After that it mostly does not ask at all: **drop a folder onto the preset you chose a minute ago and it just runs.**
+The Convert screen is a drop zone, and so is the Dock icon: files dropped on it, or opened with **Open With › Forge** in Finder, land on the same screen. The first time, Forge asks what the files should become. After that it mostly does not ask at all: **drop a folder onto the preset you chose a minute ago and it just runs.**
 
 Every conversion is read as five facts — is something being thrown away, did you ask for that yourself, is anything still undefined, does this make a different kind of thing or more files than it was given, does it touch the originals — and those five decide between running it, asking once, and the confirmation that has always guarded your originals. A size you typed into a filename counts as your own answer, so `holiday_10MB.jpg` runs without a word. The same ceiling arriving from a preset does not: that gets one sober popup which converts a single representative file into a scratch folder and shows you the before and the after, measured rather than guessed.
 
