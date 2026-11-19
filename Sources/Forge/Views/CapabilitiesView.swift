@@ -241,7 +241,7 @@ private struct CapabilityCard: View {
           .font(.title3)
           .foregroundStyle(tint)
         Spacer()
-        badge
+        if !offersAction { badge }
       }
 
       Text(capability.title)
@@ -404,6 +404,16 @@ private struct CapabilityCard: View {
       .foregroundStyle(.tertiary)
       .fixedSize(horizontal: false, vertical: true)
       .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  /// A card with a Download or Install button already says what can be done;
+  /// a pill saying "Add" or "Needs a tool" beside it only repeats it.
+  private var offersAction: Bool {
+    guard case .needsPack(let pack) = capability.status, let tool = pack.tool, !tool.isInstalled else {
+      return false
+    }
+    if case .downloading = installer.state(of: tool.binary) { return false }
+    return installer.offered[tool.binary] != nil || ExternalTools.hasHomebrew
   }
 
   @ViewBuilder
