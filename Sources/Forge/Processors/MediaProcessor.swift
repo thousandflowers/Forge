@@ -37,6 +37,9 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     do {
       videoTracks = try await asset.loadTracks(withMediaType: .video)
       audioTracks = try await asset.loadTracks(withMediaType: .audio)
+    } catch is CancellationError {
+      // A stopped batch is a cancelled row, not a damaged file.
+      throw CancellationError()
     } catch {
       // AVFoundation's own words are "Cannot Open", in the system language,
       // which say neither what nor why.

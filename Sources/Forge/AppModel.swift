@@ -267,7 +267,10 @@ final class AppModel: ObservableObject {
     }
     // Some of them, rather than none, used to disappear without a word.
     if files.count < urls.count {
-      let missed = urls.filter { url in !files.contains { $0.url == url } }
+      // Compared the way ProcessableFile stores its URL: absolute and
+      // standardised, or a relative path that opened fine is listed as missed.
+      let opened = Set(files.map(\.url))
+      let missed = urls.filter { !opened.contains($0.absoluteURL.standardizedFileURL) }
       lastError = BatchViewModel.describe(missed)
     }
 
