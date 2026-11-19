@@ -104,7 +104,6 @@ struct EmptyStateView: View {
 enum Metrics {
   static let blockHeight: CGFloat = 43
   static let blockColumn: CGFloat = 600
-  static let blockGap: CGFloat = 12
   static let iconSize: CGFloat = 22
   static let bodyText: CGFloat = 13
   static let blockRadius: CGFloat = 20

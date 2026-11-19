@@ -76,10 +76,6 @@ enum ExternalTools {
 
   static func locate(_ binary: String) -> URL? {
     cache.location(of: binary) { name in
-      // A tool Forge fetched comes first. It is the build the manifest named
-      // and the hash was checked against, which is the only copy Forge can say
-      // anything true about - and the user asked for it by name.
-      if let managed = ManagedExtensions.executable(named: name) { return managed }
       for path in searchPaths {
         let candidate = URL(fileURLWithPath: path).appendingPathComponent(name)
         if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }

@@ -46,11 +46,6 @@ enum DocumentText {
     }
   }()
 
-  static func canRead(_ type: UTType) -> Bool {
-    if let markdown, type.conforms(to: markdown) { return true }
-    return readable.keys.contains { type.conforms(to: $0) }
-  }
-
   static func canWrite(_ type: UTType) -> Bool {
     // Markdown conforms to plain text, so it would otherwise slip through as
     // writable - and the result would be the rendered words with every mark

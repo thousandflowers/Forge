@@ -35,27 +35,6 @@ struct CapabilitiesView: View {
     }
     .navigationTitle("Capabilities")
     .searchable(text: $search, placement: .toolbar, prompt: "Search capabilities")
-    .task { await installer.readWhatIsOffered() }
-    // Downloading writes to the user's Mac, so what is about to arrive is put
-    // in front of them first: the version, the licence, where it comes from
-    // and how big it is. Same rule as the Homebrew card, which shows the
-    // command before it runs it.
-    .confirmationDialog(
-      installer.confirmingDownload.map { "Download \($0.displayName) \($0.version)?" } ?? "",
-      isPresented: Binding(
-        get: { installer.confirmingDownload != nil },
-        set: { if !$0 { installer.confirmingDownload = nil } }
-      )
-    ) {
-      if let offer = installer.confirmingDownload {
-        Button("Download") { installer.download(offer) }
-        Button("Cancel", role: .cancel) { installer.confirmingDownload = nil }
-      }
-    } message: {
-      if let offer = installer.confirmingDownload {
-        Text(ToolInstaller.consent(for: offer))
-      }
-    }
     // Installing writes to the user's Mac, so the exact command is shown once
     // before it runs. Everything after that happens in here.
     .confirmationDialog(
@@ -314,12 +293,6 @@ private struct CapabilityCard: View {
   @ViewBuilder
   private func toolDetail(_ tool: ExternalTool, wired: Bool) -> some View {
     switch installer.state(of: tool.binary) {
-    case .downloading(let fraction):
-      VStack(alignment: .leading, spacing: 6) {
-        ProgressView(value: fraction)
-        caption("Downloading \(Int(fraction * 100))%")
-      }
-
     case .running(let line):
       HStack(spacing: 8) {
         ProgressView().controlSize(.small)
@@ -347,35 +320,13 @@ private struct CapabilityCard: View {
   /// The card when nothing is happening to the tool.
   @ViewBuilder
   private func settled(_ tool: ExternalTool, wired: Bool) -> some View {
-    if let fetched = installer.fetched[tool.binary] {
-      VStack(alignment: .leading, spacing: 6) {
-        caption(wired
-          ? "\(tool.binary) \(fetched.version) is installed, and Forge uses it for \(tool.adds)."
-          : "\(tool.binary) \(fetched.version) is installed. Forge does not call it yet.")
-        HStack(spacing: 8) {
-          if let newer = installer.newerVersion(of: tool.binary) {
-            Button("Update to \(newer.version)") { installer.confirmingDownload = newer }
-              .controlSize(.small)
-          }
-          Button("Remove") { installer.remove(tool.binary) }
-            .controlSize(.small)
-        }
-      }
-    } else if tool.isInstalled {
+    if tool.isInstalled {
       caption(wired
         ? "\(tool.binary) is installed, and Forge uses it for \(tool.adds)."
         : "\(tool.binary) is installed. Forge does not call it yet.")
-    } else if let offer = installer.offered[tool.binary] {
-      VStack(alignment: .leading, spacing: 6) {
-        caption("\(offer.displayName) \(offer.version) adds \(tool.adds). "
-          + "\(ToolInstaller.size(of: offer)), \(offer.license), from \(offer.sourceURL). "
-          + "Forge hosts the build and checks it against its checksum before using it.")
-        Button("Download \(offer.displayName)") { installer.confirmingDownload = offer }
-          .controlSize(.small)
-      }
     } else {
       VStack(alignment: .leading, spacing: 6) {
-        caption("\(tool.binary) would add \(tool.adds). Forge has no build of it to offer — Homebrew installs it here.")
+        caption("\(tool.binary) would add \(tool.adds). Homebrew installs it here.")
         if ExternalTools.hasHomebrew {
           Button("Install \(tool.formula)") { installer.confirming = tool }
             .controlSize(.small)
@@ -386,16 +337,9 @@ private struct CapabilityCard: View {
     }
   }
 
-  /// Whatever was tried last is what "again" means.
-  @ViewBuilder
   private func retry(_ tool: ExternalTool) -> some View {
-    if let offer = installer.offered[tool.binary] {
-      Button("Try Again") { installer.confirmingDownload = offer }
-        .controlSize(.small)
-    } else {
-      Button("Try Again") { installer.confirming = tool }
-        .controlSize(.small)
-    }
+    Button("Try Again") { installer.confirming = tool }
+      .controlSize(.small)
   }
 
   private func caption(_ text: String) -> some View {
@@ -406,14 +350,13 @@ private struct CapabilityCard: View {
       .frame(maxWidth: .infinity, alignment: .leading)
   }
 
-  /// A card with a Download or Install button already says what can be done;
+  /// A card with an Install button already says what can be done;
   /// a pill saying "Add" or "Needs a tool" beside it only repeats it.
   private var offersAction: Bool {
     guard case .needsPack(let pack) = capability.status, let tool = pack.tool, !tool.isInstalled else {
       return false
     }
-    if case .downloading = installer.state(of: tool.binary) { return false }
-    return installer.offered[tool.binary] != nil || ExternalTools.hasHomebrew
+    return ExternalTools.hasHomebrew
   }
 
   @ViewBuilder
@@ -423,12 +366,8 @@ private struct CapabilityCard: View {
     case .installable: label("Add", .accentColor)
     case .planned: label("Coming", .blue)
     case .needsPack(let pack):
-      if let tool = pack.tool, case .downloading = installer.state(of: tool.binary) {
-        label("Downloading", .accentColor)
-      } else if pack.tool?.isInstalled == true {
+      if pack.tool?.isInstalled == true {
         label(pack.isWired ? "Available" : "Installed", pack.isWired ? .green : .orange)
-      } else if let tool = pack.tool, installer.offered[tool.binary] != nil {
-        label("Add", .accentColor)
       } else {
         label("Needs a tool", .orange)
       }
@@ -498,8 +437,6 @@ final class ToolInstaller: ObservableObject {
     case idle
     /// The last line Homebrew printed, so a long install shows signs of life.
     case running(String)
-    /// How much of a hosted build has arrived.
-    case downloading(Double)
     case failed(String)
     case installed
   }
@@ -508,65 +445,8 @@ final class ToolInstaller: ObservableObject {
   /// The tool waiting on a yes for Homebrew. Installing writes to the user's
   /// Mac, so it is asked once, with the exact command.
   @Published var confirming: ExternalTool?
-  /// The build waiting on a yes. Same rule, with the version, the licence, the
-  /// source and the size instead of the command.
-  @Published var confirmingDownload: ExtensionInfo?
-
-  /// What Forge hosts a build of, by the name the binary is called.
-  @Published private(set) var offered: [String: ExtensionInfo] = [:]
-  /// What Forge has already fetched.
-  @Published private(set) var fetched: [String: InstalledExtension] = [:]
 
   func state(of binary: String) -> State { states[binary] ?? .idle }
-
-  /// Read the list of builds, and what is already here. The list is a network
-  /// call and is allowed to fail quietly: a Mac with no connection still has a
-  /// Capabilities screen, and Homebrew is still on it.
-  func readWhatIsOffered() async {
-    refreshFetched()
-    guard let list = try? await ExtensionManager.shared.installableExtensions() else { return }
-    offered = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-  }
-
-  /// The offered build, when it is not the version that is installed.
-  func newerVersion(of binary: String) -> ExtensionInfo? {
-    guard let installed = fetched[binary], let offer = offered[binary],
-          offer.version != installed.version else { return nil }
-    return offer
-  }
-
-  func download(_ offer: ExtensionInfo) {
-    confirmingDownload = nil
-    states[offer.id] = .downloading(0)
-
-    Task { [weak self] in
-      guard let self else { return }
-      do {
-        _ = try await ExtensionManager.shared.install(offer.id) { [self] fraction in
-          Task { @MainActor in self.states[offer.id] = .downloading(fraction) }
-        }
-        self.refreshFetched()
-        self.states[offer.id] = .installed
-      } catch {
-        self.states[offer.id] = .failed(error.localizedDescription)
-      }
-    }
-  }
-
-  /// Take a fetched tool off the Mac. Only Forge's own copy is touched: a
-  /// Homebrew one, or anything else on PATH, is the user's and is left alone.
-  func remove(_ binary: String) {
-    Task { [weak self] in
-      guard let self else { return }
-      do {
-        try await ExtensionManager.shared.remove(binary)
-        self.refreshFetched()
-        self.states[binary] = .idle
-      } catch {
-        self.states[binary] = .failed(error.localizedDescription)
-      }
-    }
-  }
 
   func install(_ tool: ExternalTool) {
     confirming = nil
@@ -587,32 +467,5 @@ final class ToolInstaller: ObservableObject {
         self.states[tool.binary] = .failed(error.localizedDescription)
       }
     }
-  }
-
-  /// What the user is agreeing to, in full, before anything is downloaded.
-  static func consent(for offer: ExtensionInfo) -> String {
-    """
-    Forge will download \(offer.displayName) \(offer.version) (\(size(of: offer))) from \(host(of: offer))     and check it against a SHA-256 checksum before using it.
-
-    \(offer.description). Licence: \(offer.license). Source: \(offer.sourceURL).
-
-    It goes in Forge's own folder, not into the app and not onto your PATH, and can be removed from this card.
-    """
-  }
-
-  static func size(of offer: ExtensionInfo) -> String {
-    guard let build = offer.build(for: .current), build.sizeBytes > 0 else { return "unknown size" }
-    return ByteCountFormatter.string(fromByteCount: build.sizeBytes, countStyle: .file)
-  }
-
-  private static func host(of offer: ExtensionInfo) -> String {
-    offer.build(for: .current)?.url.host ?? "Forge's releases"
-  }
-
-  private func refreshFetched() {
-    fetched = Dictionary(
-      ExtensionManager.shared.installedExtensions().map { ($0.id, $0) },
-      uniquingKeysWith: { first, _ in first }
-    )
   }
 }

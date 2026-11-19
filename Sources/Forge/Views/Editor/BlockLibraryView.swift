@@ -80,9 +80,7 @@ struct BlockLibraryView: View {
   /// tile is a button, and the whole tile drags onto the canvas.
   private func tile(_ entry: LibraryEntry) -> some View {
     let usable = available(entry)
-    return LibraryTileButton(usable: usable) {
-      add(entry)
-    } label: {
+    return LibraryRow(usable: usable, action: { add(entry) }) {
       // A compact row, as in Shortcuts' library: small icon and name; what it
       // does is in the tooltip rather than under every row.
       HStack(spacing: 8) {
@@ -103,5 +101,22 @@ struct BlockLibraryView: View {
     .onDrag { NSItemProvider(object: entry.id as NSString) }
     .help(usable ? "\(entry.summary) — click, or drag onto the canvas" : "Already on the canvas")
     .accessibilityLabel(Text("Add \(entry.title)"))
+  }
+}
+
+/// A library row as a button, lit faintly under the pointer.
+private struct LibraryRow<Label: View>: View {
+  let usable: Bool
+  let action: () -> Void
+  @ViewBuilder let label: () -> Label
+  @State private var hovering = false
+
+  var body: some View {
+    Button(action: action) {
+      label().background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+        .fill(Color.primary.opacity(hovering && usable ? 0.06 : 0)))
+    }
+    .buttonStyle(.plain)
+    .onHover { hovering = $0 }
   }
 }

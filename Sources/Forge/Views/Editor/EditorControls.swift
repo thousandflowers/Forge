@@ -129,37 +129,6 @@ struct FormatChips: View {
 
 /// A library tile as a button that lifts a little under the pointer and
 /// presses down under the click.
-struct LibraryTileButton<Label: View>: View {
-  let usable: Bool
-  let action: () -> Void
-  @ViewBuilder let label: () -> Label
-  @State private var hovering = false
-
-  init(usable: Bool, action: @escaping () -> Void, @ViewBuilder label: @escaping () -> Label) {
-    self.usable = usable
-    self.action = action
-    self.label = label
-  }
-
-  var body: some View {
-    Button(action: action) {
-      label()
-        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(hovering && usable ? 0.06 : 0)))
-    }
-    .buttonStyle(PressableTile())
-    .onHover { hovering = $0 }
-    .animation(.easeOut(duration: 0.12), value: hovering)
-  }
-}
-
-struct PressableTile: ButtonStyle {
-  func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .scaleEffect(configuration.isPressed ? 0.98 : 1)
-      .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
-  }
-}
-
 /// A chain of steps on the canvas, root or branch: every step rendered by the
 /// editor, and a drop zone at the end. A separate view so a fork's branches
 /// can hold the same thing without the type system chasing its own tail.

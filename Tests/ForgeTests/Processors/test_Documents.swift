@@ -70,7 +70,6 @@ final class DocumentConversionTests: BaseTestCase {
 
   func test_markdownIsNotOfferedAsAnOutput() throws {
     let markdown = try XCTUnwrap(DocumentText.markdown)
-    XCTAssertTrue(DocumentText.canRead(markdown))
     XCTAssertFalse(DocumentText.canWrite(markdown), "nothing on the system writes Markdown")
   }
 
