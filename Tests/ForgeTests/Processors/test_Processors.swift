@@ -110,6 +110,24 @@ final class ConversionTests: BaseTestCase {
     XCTAssertTrue(values.contains("Eugenio"), "the artist did not survive: \(values)")
   }
 
+  /// A film asked for an audio-only container gives up its soundtrack. M4A is
+  /// a container AVFoundation will also put a picture in, and it did: the
+  /// .m4a came out carrying the whole film.
+  func test_video_toM4AKeepsOnlyTheSound() async throws {
+    let source = try await Fixture.video(at: path("clip.mp4"), seconds: 2, withAudio: true)
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: try XCTUnwrap(UTType("com.apple.m4a-audio")), category: .audio),
+      destinationMode: .copyTo,
+      destinationURL: try folder("out")
+    ) { _ in }
+
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+    let after = try await AVURLAsset(url: try XCTUnwrap(entry.outputURL)).trackCounts()
+    XCTAssertEqual(after.video, 0, "an .m4a is sound only")
+    XCTAssertEqual(after.audio, 1)
+  }
+
   /// The old pipeline read only the video track, so every converted file came
   /// out silent.
   func test_video_keepsTheAudioTrack() async throws {

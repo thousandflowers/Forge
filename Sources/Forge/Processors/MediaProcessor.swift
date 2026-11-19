@@ -84,7 +84,22 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       )
     }
 
+    // A film asked for a sound format gives up its soundtrack. An export
+    // session would happily put the picture in an .m4a as well, because M4A is
+    // MPEG-4 underneath; nothing that opens an .m4a expects one.
+    if Self.isSoundOnly(requested) {
+      guard !audioTracks.isEmpty else {
+        throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no sound to keep")
+      }
+      return try await convertAudio(input, to: output, operations: operations, start: start, progress: progress)
+    }
+
     return try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress)
+  }
+
+  /// Audio that is not also a movie: `.m4a`, `.wav`, `.flac`, not `.mp4`.
+  static func isSoundOnly(_ type: UTType) -> Bool {
+    type.conforms(to: .audio) && !type.conforms(to: .movie)
   }
 
   // MARK: - Words out of a recording
