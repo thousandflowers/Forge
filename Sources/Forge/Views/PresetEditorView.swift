@@ -43,6 +43,14 @@ struct PresetEditorView: View {
 
   private enum Field { case name, description }
   @State private var searchWantsFocus = false
+  @EnvironmentObject private var model: AppModel
+  /// The original and the step being compared big, from the Preview.
+  @State private var compared: Compared?
+
+  struct Compared: Equatable {
+    let original: PreviewRunner.Step
+    let step: PreviewRunner.Step
+  }
   /// Where a dragged block would land: a step's id, or `end`.
   @State private var dropTarget: DropSpot?
 
@@ -91,9 +99,23 @@ struct PresetEditorView: View {
       topBar
       Divider()
       HStack(spacing: 0) {
-        canvas
+        VStack(spacing: 0) {
+          canvas
+          // The sample file after each step, small; click for the big view.
+          PreviewStrip(preset: draft(), coordinator: model.coordinator) { original, step in
+            withAnimation(.easeOut(duration: 0.15)) { compared = Compared(original: original, step: step) }
+          }
+        }
         Divider()
         library
+      }
+    }
+    .overlay {
+      if let compared {
+        PreviewCompare(original: compared.original, step: compared.step) {
+          withAnimation(.easeOut(duration: 0.15)) { self.compared = nil }
+        }
+        .transition(.opacity)
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
