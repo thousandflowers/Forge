@@ -8,6 +8,7 @@ struct ContentView: View {
     NavigationSplitView {
       List(AppSection.allCases, selection: $section) { item in
         Label(item.title, systemImage: item.icon)
+          .badge(item.count(presets: model.presets.count, folders: model.folders.count))
           .tag(item)
       }
       .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)

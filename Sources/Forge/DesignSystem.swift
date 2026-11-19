@@ -17,6 +17,17 @@ enum AppSection: String, CaseIterable, Identifiable {
     }
   }
 
+  /// What the sidebar shows beside the row, as Shortcuts does; 0 shows
+  /// nothing. History is not counted: a number in the hundreds says nothing
+  /// and only grows.
+  func count(presets: Int, folders: Int) -> Int {
+    switch self {
+    case .presets: return presets
+    case .folders: return folders
+    default: return 0
+    }
+  }
+
   var icon: String {
     switch self {
     case .process: return "arrow.triangle.2.circlepath"

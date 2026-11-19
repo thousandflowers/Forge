@@ -1330,3 +1330,13 @@ final class ConvertKindOfferingTests: XCTestCase {
     XCTAssertEqual(OutputFormat(type: .jpeg).label, "JPEG")
   }
 }
+
+/// The sidebar counts what is there, as Shortcuts does: presets and folders.
+final class SidebarCountTests: XCTestCase {
+  func test_sidebarCountsPresetsAndFolders() {
+    XCTAssertEqual(AppSection.presets.count(presets: 6, folders: 2), 6)
+    XCTAssertEqual(AppSection.folders.count(presets: 6, folders: 2), 2)
+    XCTAssertEqual(AppSection.process.count(presets: 6, folders: 2), 0, "Convert has nothing to count")
+    XCTAssertEqual(AppSection.history.count(presets: 6, folders: 2), 0, "a number in the hundreds says nothing")
+  }
+}
