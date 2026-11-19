@@ -1340,3 +1340,29 @@ final class SidebarCountTests: XCTestCase {
     XCTAssertEqual(AppSection.history.count(presets: 6, folders: 2), 0, "a number in the hundreds says nothing")
   }
 }
+
+/// A watched folder reads as a sentence, the way Shortcuts lists automations.
+final class FolderSentenceTests: XCTestCase {
+  private let home = FileManager.default.homeDirectoryForCurrentUser
+
+  func test_theSentenceNamesTheFolderFromHome() {
+    let folder = MonitoredFolder(url: home.appendingPathComponent("Downloads"), ruleId: UUID(), destinationMode: .copyTo)
+    XCTAssertEqual(folder.arrivalSentence, "When files arrive in ~/Downloads")
+  }
+
+  func test_aFolderOutsideHomeKeepsItsFullPath() {
+    let folder = MonitoredFolder(url: URL(fileURLWithPath: "/Volumes/Card/DCIM"), ruleId: UUID(), destinationMode: .copyTo)
+    XCTAssertEqual(folder.arrivalSentence, "When files arrive in /Volumes/Card/DCIM")
+  }
+
+  func test_theDetailSaysWhereTheyGoAndAboutSubfolders() {
+    var folder = MonitoredFolder(
+      url: home.appendingPathComponent("Downloads"), ruleId: UUID(), destinationMode: .copyTo,
+      destinationURL: home.appendingPathComponent("Desktop")
+    )
+    XCTAssertEqual(folder.detail(presetName: "Web JPEG"), "Web JPEG · copies into ~/Desktop · subfolders ignored")
+    folder.destinationMode = .overwrite
+    folder.includeSubfolders = true
+    XCTAssertEqual(folder.detail(presetName: "Web JPEG"), "Web JPEG · replaces the originals · subfolders too")
+  }
+}
