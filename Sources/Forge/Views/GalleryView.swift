@@ -224,11 +224,18 @@ struct GalleryView: View {
         .help("Share “\(entry.preset.name)”")
         .accessibilityLabel(Text("Share \(entry.preset.name)"))
 
-        Button(isInstalled(entry) ? "Added" : "Add") {
+        // The same + on every card: one colour, one shape. Already added, it
+        // is greyed out rather than turned into something else.
+        Button {
           model.install(entry.preset)
+        } label: {
+          Image(systemName: "plus.circle.fill").font(.title3)
         }
+        .buttonStyle(.borderless)
+        .foregroundStyle(Color.accentColor)
         .disabled(isInstalled(entry))
         .help(isInstalled(entry) ? "Already in your presets" : "Add “\(entry.preset.name)” to your presets")
+        .accessibilityLabel(Text(isInstalled(entry) ? "\(entry.preset.name), already added" : "Add \(entry.preset.name)"))
       }
 
       Text(entry.preset.name)
@@ -238,25 +245,25 @@ struct GalleryView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
 
+      // Two lines always, so every card keeps the same shape.
       Text(entry.summary)
         .font(.callout)
         .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
+        .lineLimit(2, reservesSpace: true)
         .frame(maxWidth: .infinity, alignment: .leading)
 
       Spacer(minLength: 6)
 
       chipRow(entry.preset.actions.map(PresetCard.chip), tint: Color.secondary.opacity(0.12))
-      if let tags = entry.tags, !tags.isEmpty {
-        chipRow(tags, tint: Color.accentColor.opacity(0.16))
-      }
+        .frame(height: 18, alignment: .leading).clipped()
+      // Every card has its tag row, empty or not, so the rows line up.
+      chipRow(entry.tags ?? [], tint: Color.accentColor.opacity(0.16))
+        .frame(height: 18, alignment: .leading).clipped()
     }
     .padding(14)
-    // A minimum rather than a fixed height: the cards still line up, without
-    // the hole a fixed height leaves under a short summary.
-    .frame(minHeight: 172, alignment: .top)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
+    // One height for every card: the user asked for them all the same.
+    .frame(height: 196, alignment: .top)
+    .forgeCard()
   }
 
   private func chipRow(_ titles: [String], tint: Color) -> some View {
