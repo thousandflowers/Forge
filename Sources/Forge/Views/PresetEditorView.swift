@@ -684,6 +684,7 @@ struct PresetEditorView: View {
           .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
       }
       .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+      .accessibilityValue(Text(formats.isEmpty ? "the same format" : formats.map(\.label).joined(separator: ", ")))
       .accessibilityLabel(Text("Comes out as"))
       if formats.count > 1 {
         Text("\(formats.count) copies of every file, one per format.")

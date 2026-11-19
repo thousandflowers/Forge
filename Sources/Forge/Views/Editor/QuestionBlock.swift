@@ -46,6 +46,7 @@ struct QuestionBlock: View {
             }
           ))
           .frame(width: 80)
+          .accessibilityLabel(Text("Default answer"))
           Text(parameter.kind.unit).foregroundStyle(.secondary)
         }
 

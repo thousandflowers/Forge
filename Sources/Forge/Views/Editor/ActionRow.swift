@@ -77,6 +77,7 @@ struct ActionRow: View {
           step: 1
         )
         .frame(maxWidth: 160)
+        .accessibilityLabel(Text("Quality"))
       }
 
     case .filter(let type):
@@ -125,6 +126,7 @@ struct ActionRow: View {
           }
         ))
         .frame(width: 80)
+        .accessibilityLabel(Text("Largest size, in megabytes"))
         Text("MB").foregroundStyle(.secondary)
       }
 

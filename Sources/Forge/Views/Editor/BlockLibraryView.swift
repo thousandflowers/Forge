@@ -22,6 +22,7 @@ struct BlockLibraryView: View {
           .accessibilityLabel(Text("Search blocks"))
         if !search.isEmpty {
           Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
+            .accessibilityLabel(Text("Clear search"))
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
         }
