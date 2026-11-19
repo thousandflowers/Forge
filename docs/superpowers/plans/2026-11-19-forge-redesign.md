@@ -37,7 +37,7 @@ Phases 2–5 are planned in detail when Phase 1 is done and seen by the user.
 **Files:**
 - Modify: `Sources/Forge/DesignSystem.swift` (append)
 
-- [ ] **Step 1: Append the tokens and the card style**
+- [x] **Step 1: Append the tokens and the card style**
 
 ```swift
 /// Sizes measured from Shortcuts on macOS 26, used wherever Forge draws a
@@ -63,15 +63,15 @@ extension View {
 }
 ```
 
-- [ ] **Step 2: Build** — `swift build` → `Build complete!`
-- [ ] **Step 3: Commit** — `git commit -am "feat: design tokens measured from Shortcuts"`
+- [x] **Step 2: Build** — `swift build` → `Build complete!`
+- [x] **Step 3: Commit** — `git commit -am "feat: design tokens measured from Shortcuts"`
 
 ### Task 1.2: Gallery cards all the same, one identical + button
 
 **Files:**
 - Modify: `Sources/Forge/Views/GalleryView.swift` (`card(_:)`, ~line 209)
 
-- [ ] **Step 1: Replace the Add/Added text button with one + button, the same on every card**
+- [x] **Step 1: Replace the Add/Added text button with one + button, the same on every card**
 
 ```swift
         Button {
@@ -86,7 +86,7 @@ extension View {
         .accessibilityLabel(Text(isInstalled(entry) ? "\(entry.preset.name), already added" : "Add \(entry.preset.name)"))
 ```
 
-- [ ] **Step 2: Same size for every card** — the summary always takes two lines, the card has a fixed height, the shape is `forgeCard()`:
+- [x] **Step 2: Same size for every card** — the summary always takes two lines, the card has a fixed height, the shape is `forgeCard()`:
 
 ```swift
       Text(entry.summary)
@@ -103,16 +103,16 @@ and replace the card's `.frame(minHeight: 172, …)`, `.background`, `.overlay` 
 ```
 Chip rows: show the tag row on every card (an empty row of the same height when a preset has no tags), so the two rows line up across cards.
 
-- [ ] **Step 3: Build the app and look** — `bash Scripts/build_app.sh`, open Gallery, screenshot: every card the same height, every + the same.
-- [ ] **Step 4: `swift test`** — 400 passed.
-- [ ] **Step 5: Commit** — `git commit -am "feat: gallery cards are all the same, with one + button"`
+- [x] **Step 3: Build the app and look** — `bash Scripts/build_app.sh`, open Gallery, screenshot: every card the same height, every + the same.
+- [x] **Step 4: `swift test`** — 400 passed.
+- [x] **Step 5: Commit** — `git commit -am "feat: gallery cards are all the same, with one + button"`
 
 ### Task 1.3: Capabilities — no status pill beside an action button
 
 **Files:**
 - Modify: `Sources/Forge/Views/CapabilitiesView.swift` (card header ~line 239, `badge` ~line 409)
 
-- [ ] **Step 1: Add `offersAction`** to the card — true exactly when the card shows a Download or Install button (the same conditions as the button branch at ~line 368–381):
+- [x] **Step 1: Add `offersAction`** to the card — true exactly when the card shows a Download or Install button (the same conditions as the button branch at ~line 368–381):
 
 ```swift
   /// A card with a Download or Install button already says what can be done;
@@ -125,10 +125,10 @@ Chip rows: show the tag row on every card (an empty row of the same height when 
   }
 ```
 
-- [ ] **Step 2: Show the badge only when `!offersAction`** in the card header.
-- [ ] **Step 3: Build the app and look** — a card with Install has no pill; Available cards keep theirs.
-- [ ] **Step 4: `swift test`** — 400 passed.
-- [ ] **Step 5: Commit** — `git commit -am "fix: no status pill beside an Install or Download button"`
+- [x] **Step 2: Show the badge only when `!offersAction`** in the card header.
+- [x] **Step 3: Build the app and look** — a card with Install has no pill; Available cards keep theirs.
+- [x] **Step 4: `swift test`** — 400 passed.
+- [x] **Step 5: Commit** — `git commit -am "fix: no status pill beside an Install or Download button"`
 
 ### Task 1.4: Sidebar counts
 
@@ -137,7 +137,7 @@ Chip rows: show the tag row on every card (an empty row of the same height when 
 - Modify: `Sources/Forge/Views/ContentView.swift` (sidebar row)
 - Test: `Tests/ForgeTests/Models/test_Models.swift`
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```swift
   /// The sidebar counts what is there, as Shortcuts does: presets, folders.
@@ -148,8 +148,8 @@ Chip rows: show the tag row on every card (an empty row of the same height when 
   }
 ```
 
-- [ ] **Step 2: Run, expect FAIL** — `swift test --filter test_sidebarCountsPresetsAndFolders` → "has no member 'count'".
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run, expect FAIL** — `swift test --filter test_sidebarCountsPresetsAndFolders` → "has no member 'count'".
+- [x] **Step 3: Implement**
 
 ```swift
   /// What the sidebar shows beside the row; 0 shows nothing. History is not
@@ -169,6 +169,6 @@ and in `ContentView` the row becomes
           .tag(item)
 ```
 
-- [ ] **Step 4: Run, expect PASS**; then `swift test` — 401 passed.
-- [ ] **Step 5: Build the app and look** — counts beside Presets and Folders.
-- [ ] **Step 6: Commit** — `git commit -am "feat: the sidebar counts presets and folders"`
+- [x] **Step 4: Run, expect PASS**; then `swift test` — 401 passed.
+- [x] **Step 5: Build the app and look** — counts beside Presets and Folders.
+- [x] **Step 6: Commit** — `git commit -am "feat: the sidebar counts presets and folders"`
