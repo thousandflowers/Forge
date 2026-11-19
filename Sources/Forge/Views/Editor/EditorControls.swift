@@ -31,7 +31,9 @@ struct EditableSurface: ViewModifier {
       .focused($focused)
       .padding(.horizontal, 6)
       .padding(.vertical, 3)
-      .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(hovering || focused ? 0.14 : 0.07)))
+      // Nothing at rest, so a name reads as a title rather than a disabled
+      // box; a faint surface under the pointer, a ring while typing.
+      .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(focused ? 0.1 : (hovering ? 0.08 : 0))))
       .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor.opacity(focused ? 0.8 : 0), lineWidth: 1.5))
       .onHover { hovering = $0 }
       .animation(.easeOut(duration: 0.12), value: hovering)
@@ -142,7 +144,7 @@ struct LibraryTileButton<Label: View>: View {
   var body: some View {
     Button(action: action) {
       label()
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(hovering && usable ? 0.06 : 0)))
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(hovering && usable ? 0.06 : 0)))
     }
     .buttonStyle(PressableTile())
     .onHover { hovering = $0 }
@@ -232,12 +234,13 @@ struct RemoveButton: View {
 
   var body: some View {
     Button(action: action) {
-      Image(systemName: "minus.circle")
+      Image(systemName: "xmark.circle.fill")
+        .font(.system(size: 15))
         .frame(width: 24, height: 24)
         .contentShape(Rectangle())
     }
     .buttonStyle(.borderless)
-    .foregroundStyle(.secondary)
+    .foregroundStyle(Color.secondary.opacity(0.6))
     .help(help)
     .accessibilityLabel(Text(help))
   }
@@ -250,32 +253,69 @@ struct BlockCard<Content: View>: View {
   let symbol: String
   let tint: Color
   let remove: (() -> Void)?
+  /// false for a block whose controls are several rows by nature (a
+  /// question, the files that come in): those always go under the title.
+  let inline: Bool
   @ViewBuilder let content: () -> Content
 
-  init(title: String, symbol: String, tint: Color, remove: (() -> Void)?, @ViewBuilder content: @escaping () -> Content) {
+  init(title: String, symbol: String, tint: Color, remove: (() -> Void)?, inline: Bool = true, @ViewBuilder content: @escaping () -> Content) {
     self.title = title
     self.symbol = symbol
     self.tint = tint
     self.remove = remove
+    self.inline = inline
     self.content = content
   }
 
+  /// One line when the controls fit beside the title, as a sentence the way
+  /// Shortcuts writes its actions; the controls go underneath when they do not.
   var body: some View {
+    SwiftUI.Group {
+      if inline {
+        ViewThatFits(in: .horizontal) {
+          HStack(spacing: 8) {
+            header
+            content()
+            Spacer(minLength: 8)
+            removeButton
+          }
+          stacked
+        }
+      } else {
+        stacked
+      }
+    }
+    .padding(.horizontal, 12).padding(.vertical, 8)
+    .frame(minHeight: Metrics.blockHeight)
+    .frame(maxWidth: Metrics.blockColumn, alignment: .leading)
+    // The card is the column's width, centred; the background goes on before
+    // the frame that centres it, or it spans the whole canvas.
+    .background(
+      RoundedRectangle(cornerRadius: Metrics.blockRadius, style: .continuous)
+        .fill(Color(nsColor: .controlBackgroundColor))
+    )
+    .frame(maxWidth: .infinity)
+  }
+
+  private var stacked: some View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(spacing: 8) {
-        BlockIcon(symbol: symbol, tint: tint)
-        Text(title).font(.callout.weight(.semibold))
+        header
         Spacer()
-        if let remove {
-          RemoveButton("Remove \(title)", action: remove)
-        }
+        removeButton
       }
       content()
     }
-    .padding(12)
-    .frame(maxWidth: 640, alignment: .leading)
-    .frame(maxWidth: .infinity)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(tint.opacity(0.25)))
+  }
+
+  private var header: some View {
+    HStack(spacing: 8) {
+      BlockIcon(symbol: symbol, tint: tint, size: Metrics.iconSize)
+      Text(title).font(.system(size: Metrics.bodyText, weight: .semibold)).fixedSize()
+    }
+  }
+
+  @ViewBuilder private var removeButton: some View {
+    if let remove { RemoveButton("Remove \(title)", action: remove) }
   }
 }

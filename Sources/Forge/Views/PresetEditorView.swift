@@ -544,7 +544,7 @@ struct PresetEditorView: View {
   /// The files this preset takes, what starts it, and the test they have to
   /// pass. Always first, never removed.
   private var inputBlock: some View {
-    BlockCard(title: "Files that come in", symbol: category.icon, tint: .teal, remove: nil) {
+    BlockCard(title: "Files that come in", symbol: category.icon, tint: .teal, remove: nil, inline: false) {
       VStack(alignment: .leading, spacing: 10) {
         HStack(spacing: 10) {
           Picker("Kind", selection: $category) {
@@ -633,7 +633,6 @@ struct PresetEditorView: View {
       _ = steps.removeStep(id: step.wrappedValue.id)
     }) {
       ActionRow(action: step)
-        .padding(.leading, 22)
     }
   }
 
@@ -642,12 +641,26 @@ struct PresetEditorView: View {
       formats.removeAll()
       showsFormats = false
     }) {
-      FlowLayout(spacing: 6) {
-        Chip("Same format", selected: formats.isEmpty) { formats.removeAll() }
-        ForEach(offeredFormats) { format in
-          Chip(format.label, selected: formats.contains(format)) { toggle(format) }
+      // A menu on the word, as Shortcuts does, rather than every format at
+      // once: the list comes from what this Mac writes, ticked where chosen.
+      Menu {
+        Button { formats.removeAll() } label: {
+          if formats.isEmpty { Label("Same format", systemImage: "checkmark") } else { Text("Same format") }
         }
+        Divider()
+        ForEach(offeredFormats) { format in
+          Button { toggle(format) } label: {
+            if formats.contains(format) { Label(format.label, systemImage: "checkmark") } else { Text(format.label) }
+          }
+        }
+      } label: {
+        Text(formats.isEmpty ? "the same format" : formats.map(\.label).joined(separator: ", "))
+          .foregroundStyle(Color.accentColor)
+          .padding(.horizontal, 5).padding(.vertical, 1)
+          .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
       }
+      .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+      .accessibilityLabel(Text("Comes out as"))
       if formats.count > 1 {
         Text("\(formats.count) copies of every file, one per format.")
           .font(.caption)
@@ -660,7 +673,7 @@ struct PresetEditorView: View {
     BlockCard(title: "Names files", symbol: "textformat", tint: LibraryEntry.Group.output.color, remove: {
       nameTemplate = ""
       showsTemplate = false
-    }) {
+    }, inline: false) {
       TemplateField(title: "Names files", template: $nameTemplate, sampleExtension: outputExtension)
     }
   }

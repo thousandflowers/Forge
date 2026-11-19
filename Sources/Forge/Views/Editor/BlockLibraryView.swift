@@ -36,11 +36,11 @@ struct BlockLibraryView: View {
       Divider()
 
       ScrollView {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 14) {
           ForEach(LibraryEntry.Group.allCases, id: \.self) { group in
             let inGroup = entries.filter { $0.group == group }
             if !inGroup.isEmpty {
-              VStack(alignment: .leading, spacing: 6) {
+              VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
                   Circle().fill(group.color).frame(width: 8, height: 8)
                   Text(group.rawValue.uppercased())
@@ -83,27 +83,25 @@ struct BlockLibraryView: View {
     return LibraryTileButton(usable: usable) {
       add(entry)
     } label: {
-      HStack(spacing: 10) {
-        BlockIcon(symbol: entry.symbol, tint: entry.group.color, size: 22)
-        VStack(alignment: .leading, spacing: 2) {
-          Text(entry.title).font(.callout.weight(.medium))
-          Text(entry.summary).font(.caption).foregroundStyle(.secondary)
-        }
+      // A compact row, as in Shortcuts' library: small icon and name; what it
+      // does is in the tooltip rather than under every row.
+      HStack(spacing: 8) {
+        BlockIcon(symbol: entry.symbol, tint: entry.group.color, size: 18)
+        Text(entry.title).font(.system(size: Metrics.bodyText))
         Spacer(minLength: 4)
         Image(systemName: usable ? "plus.circle.fill" : "checkmark.circle")
-          .font(.body)
+          .font(.callout)
           .foregroundStyle(usable ? entry.group.color : Color.secondary)
       }
-      .padding(8)
+      .padding(.horizontal, 6)
+      .frame(height: 30)
       .frame(maxWidth: .infinity, alignment: .leading)
-      .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-      .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(entry.group.color.opacity(0.25)))
-      .contentShape(RoundedRectangle(cornerRadius: 10))
+      .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
     .disabled(!usable)
     .opacity(usable ? 1 : 0.45)
     .onDrag { NSItemProvider(object: entry.id as NSString) }
-    .help(usable ? "Click, or drag onto the canvas" : "Already on the canvas")
+    .help(usable ? "\(entry.summary) — click, or drag onto the canvas" : "Already on the canvas")
     .accessibilityLabel(Text("Add \(entry.title)"))
   }
 }
