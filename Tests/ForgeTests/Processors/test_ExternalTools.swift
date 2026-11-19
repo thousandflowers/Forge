@@ -198,7 +198,18 @@ final class ExternalToolTests: BaseTestCase {
   func test_aDocumentFormatPandocWritesIsDeliverable() throws {
     try requirePandoc()
     let epub = try XCTUnwrap(UTType(filenameExtension: "epub"))
+    _ = ExternalBridge.pandocFormats
     XCTAssertTrue(ExternalBridge.canWrite(epub))
+  }
+
+  /// canWrite is asked from view bodies. Running pandoc there waited on a
+  /// subprocess in the middle of a SwiftUI update, and the app aborted at
+  /// launch inside AttributeGraph. It only ever reads what pandoc already said.
+  func test_canWriteNeverRunsATool() throws {
+    let epub = try XCTUnwrap(UTType(filenameExtension: "epub"))
+    ExternalBridge.forgetToolFormats()
+    _ = ExternalBridge.canWrite(epub)
+    XCTAssertFalse(ExternalBridge.pandocHasAnswered, "canWrite asked pandoc")
   }
 
   func test_noToolClaimsToWriteAPicture() {
