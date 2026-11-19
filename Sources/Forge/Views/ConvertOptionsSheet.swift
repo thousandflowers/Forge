@@ -13,6 +13,8 @@ struct ConvertChoice: Equatable {
   var presetID: UUID?
   var format: OutputFormat = .keep
   var width: Int?
+  /// Set by the Custom size menu; nil keeps the picture's own proportions.
+  var height: Int?
   var quality: Int?
   var filter: FilterType?
   var codec: Codec?
@@ -44,6 +46,7 @@ struct ConvertChoice: Equatable {
     var updated = self
     updated.format = .keep
     updated.width = nil
+    updated.height = nil
     updated.quality = nil
     updated.filter = nil
     updated.codec = nil
@@ -54,7 +57,7 @@ struct ConvertChoice: Equatable {
     for action in preset.actions {
       switch action {
       case .convertFormat(let to): updated.format = OutputFormat(type: to)
-      case .resize(let width, _, _): updated.width = width
+      case .resize(let width, let height, _): updated.width = width; updated.height = height
       case .quality(let level): updated.quality = level
       case .filter(let type): updated.filter = type
       case .encode(let codec): updated.codec = codec
@@ -75,7 +78,7 @@ struct ConvertChoice: Equatable {
   var customActions: [Operation] {
     var actions: [Operation] = []
     if let type = format.type { actions.append(.convertFormat(to: type)) }
-    if let width { actions.append(.resize(width: width, height: nil, fitMode: fitMode)) }
+    if width != nil || height != nil { actions.append(.resize(width: width, height: height, fitMode: fitMode)) }
     if let quality { actions.append(.quality(level: quality)) }
     if let filter { actions.append(.filter(type: filter)) }
     if let codec { actions.append(.encode(codec: codec)) }
@@ -120,6 +123,7 @@ struct ConvertChoice: Equatable {
 /// something it did not do.
 struct ConvertOptionsSheet: View {
   @Environment(\.dismiss) private var dismiss
+  @State private var showingCustomSize = false
 
   let kinds: Set<ConvertKind>
   let fileCount: Int
@@ -269,23 +273,33 @@ struct ConvertOptionsSheet: View {
   private var widthField: some View {
     field("Width") {
       chips {
-        chip("As they are", selected: choice.width == nil) { edit { $0.width = nil } }
+        chip("As they are", selected: choice.width == nil && choice.height == nil) {
+          edit { $0.width = nil; $0.height = nil }
+        }
+        // A width chip means that width at the picture's own proportions, so
+        // it drops a height the Custom menu set.
         ForEach(Self.widths, id: \.self) { width in
-          chip("\(width) px", selected: choice.width == width) { edit { $0.width = width } }
+          chip("\(width) px", selected: choice.width == width && choice.height == nil) {
+            edit { $0.width = width; $0.height = nil }
+          }
         }
-        HStack(spacing: 6) {
-          TextField("Custom", text: Binding(
-            get: { choice.width.map(String.init) ?? "" },
-            set: { text in
-              let value = Int(text.trimmingCharacters(in: .whitespaces))
-              edit { $0.width = (value ?? 0) > 0 ? value : nil }
-            }
-          ))
-          .frame(width: 72)
-          Text("px").foregroundStyle(.secondary).font(.callout)
-        }
+        customSizeChip
       }
     }
+  }
+
+  /// Custom… opens the micro menu; once a size is set the chip says it.
+  private var customSizeChip: some View {
+    let isCustom = choice.height != nil || (choice.width.map { !Self.widths.contains($0) } ?? false)
+    let title = isCustom ? "\(choice.width.map(String.init) ?? "auto") × \(choice.height.map(String.init) ?? "auto")" : "Custom…"
+    return chip(title, selected: isCustom) { showingCustomSize = true }
+      .popover(isPresented: $showingCustomSize, arrowEdge: .bottom) {
+        CustomSizeMenu(
+          width: Binding(get: { choice.width }, set: { value in edit { $0.width = value } }),
+          height: Binding(get: { choice.height }, set: { value in edit { $0.height = value } }),
+          fit: Binding(get: { choice.fitMode }, set: { value in edit { $0.fitMode = value } })
+        )
+      }
   }
 
   private var chosenPreset: RulePreset? {

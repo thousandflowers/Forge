@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 struct ActionRow: View {
   @Binding var action: Action
+  @State private var showingCustomSize = false
 
   var body: some View {
     settings
@@ -45,10 +46,28 @@ struct ActionRow: View {
         }
         .labelsHidden()
         .frame(maxWidth: 130)
+        // The micro menu: a frame to drag, ready-made shapes, how it fits.
+        Button { showingCustomSize = true } label: { Image(systemName: "aspectratio") }
+          .buttonStyle(.borderless)
+          .help("Custom size: drag a frame, pick a shape")
+          .accessibilityLabel(Text("Custom size"))
+          .popover(isPresented: $showingCustomSize, arrowEdge: .bottom) {
+            CustomSizeMenu(
+              width: Binding(get: { width }, set: { setResize(width: .some($0)) }),
+              height: Binding(get: { height }, set: { setResize(height: .some($0)) }),
+              fit: Binding(get: { mode }, set: { setResize(fit: $0) })
+            )
+          }
       }
 
     case .quality(let level):
-      HStack {
+      HStack(spacing: 6) {
+        NumberToken(
+          value: Binding(get: { level }, set: { action.operation = .quality(level: $0 ?? level) }),
+          placeholder: "\(level)", range: 1...100, startingFrom: level
+        )
+        .accessibilityLabel(Text("Quality"))
+        Text("%").foregroundStyle(.secondary)
         Slider(
           value: Binding(
             get: { Double(level) },
@@ -57,7 +76,7 @@ struct ActionRow: View {
           in: 1...100,
           step: 1
         )
-        Text("\(level)").monospacedDigit().frame(width: 32, alignment: .trailing)
+        .frame(maxWidth: 160)
       }
 
     case .filter(let type):
@@ -122,12 +141,19 @@ struct ActionRow: View {
     }
   }
 
+  /// Changes one side of a resize, reading the other side from the operation
+  /// as it is now: the menu sets width and then height in one go, and a
+  /// value captured before the first change would put the width back.
+  private func setResize(width newWidth: Int?? = nil, height newHeight: Int?? = nil, fit newFit: ResizeFitMode? = nil) {
+    guard case .resize(let width, let height, let fit) = action.operation else { return }
+    action.operation = .resize(width: newWidth ?? width, height: newHeight ?? height, fitMode: newFit ?? fit)
+  }
+
+  /// A number in the sentence: click and type, ↑↓, drag sideways, Tab, Esc.
   private func numberField(_ label: String, value: Int?, set: @escaping (Int?) -> Void) -> some View {
-    TextField(label, text: Binding(
-      get: { value.map(String.init) ?? "" },
-      set: { set(Int($0.trimmingCharacters(in: .whitespaces))) }
-    ))
-    .frame(width: 70)
+    NumberToken(value: Binding(get: { value }, set: set), placeholder: "auto")
+      .help(label)
+      .accessibilityLabel(Text(label))
   }
 }
 

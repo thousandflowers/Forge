@@ -1366,3 +1366,59 @@ final class FolderSentenceTests: XCTestCase {
     XCTAssertEqual(folder.detail(presetName: "Web JPEG"), "Web JPEG · replaces the originals · subfolders too")
   }
 }
+
+/// The numbers written into a block: steps stay in range, typing keeps digits.
+final class NumberTokenTests: XCTestCase {
+  func test_aStepStaysInsideTheRange() {
+    XCTAssertEqual(NumberToken.stepped(99, by: 10, range: 1...100, startingFrom: 80), 100)
+    XCTAssertEqual(NumberToken.stepped(5, by: -10, range: 1...100, startingFrom: 80), 1)
+    XCTAssertEqual(NumberToken.stepped(1920, by: 1, range: 1...20_000, startingFrom: 1000), 1921)
+  }
+
+  func test_anEmptyValueStepsFromWhereItWouldStart() {
+    XCTAssertEqual(NumberToken.stepped(nil, by: 1, range: 1...20_000, startingFrom: 1080), 1081)
+  }
+
+  func test_typingKeepsOnlyDigits() {
+    XCTAssertEqual(NumberToken.digits(of: "19a20px"), "1920")
+    XCTAssertEqual(NumberToken.digits(of: "1234567"), "12345")
+    XCTAssertEqual(NumberToken.digits(of: "auto"), "")
+  }
+}
+
+/// The Convert sheet's Custom size has a height as well as a width.
+final class CustomSizeChoiceTests: XCTestCase {
+  func test_aCustomSizeResizesToBothSides() {
+    var choice = ConvertChoice()
+    choice.width = 1600
+    choice.height = 900
+    choice.fitMode = .cropCenter
+    XCTAssertEqual(choice.customActions, [.resize(width: 1600, height: 900, fitMode: .cropCenter)])
+  }
+
+  func test_aPresetWithBothSidesFillsBoth() {
+    let preset = RulePreset(
+      name: "Square", description: "", category: .image,
+      actions: [.resize(width: 1080, height: 1080, fitMode: .cropCenter)]
+    )
+    let choice = ConvertChoice().adopting(preset)
+    XCTAssertEqual(choice.width, 1080)
+    XCTAssertEqual(choice.height, 1080)
+  }
+
+  func test_aWidthAloneStillMeansThatWidth() {
+    var choice = ConvertChoice()
+    choice.width = 1280
+    XCTAssertEqual(choice.customActions, [.resize(width: 1280, height: nil, fitMode: .proportional)])
+  }
+}
+
+/// The Custom size menu's ready-made shapes.
+final class CustomSizeMenuTests: XCTestCase {
+  func test_aShapeGivesTheMatchingHeight() {
+    XCTAssertEqual(CustomSizeMenu.height(for: 1080, ratio: 1), 1080)
+    XCTAssertEqual(CustomSizeMenu.height(for: 1080, ratio: 4.0 / 5.0), 1350)
+    XCTAssertEqual(CustomSizeMenu.height(for: 1920, ratio: 16.0 / 9.0), 1080)
+    XCTAssertEqual(CustomSizeMenu.height(for: 3000, ratio: 3.0 / 2.0), 2000)
+  }
+}
