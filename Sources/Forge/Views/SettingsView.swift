@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct SettingsView: View {
   @EnvironmentObject private var model: AppModel
@@ -20,9 +21,18 @@ struct SettingsView: View {
       }
       Section("File handling") {
         Toggle("Create backup before overwrite", isOn: $model.settings.createBackupBeforeOverwrite)
-        Text("Backups are kept in \(PersistenceManager.shared.backupsDirectory.path).")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        HStack {
+          Text("Backups are kept in \(MonitoredFolder.abbreviated(PersistenceManager.shared.backupsDirectory)).")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          Spacer()
+          Button("Show in Finder") {
+            let backups = PersistenceManager.shared.backupsDirectory
+            try? FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
+            NSWorkspace.shared.activateFileViewerSelecting([backups])
+          }
+          .controlSize(.small)
+        }
       }
       Section("What everything starts from") {
         Picker("Resizing means", selection: $model.settings.defaultFitMode) {
