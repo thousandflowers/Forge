@@ -1542,3 +1542,29 @@ final class EmptyConditionTests: XCTestCase {
     XCTAssertFalse(named.holds(for: file), "a filled-in test still decides")
   }
 }
+
+/// The app and the `forge` command keep one history between them.
+final class SharedHistoryTests: XCTestCase {
+  func test_whatAnotherProcessWroteIsNeitherHiddenNorLost() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("history-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let app = PersistenceManager(root: root)
+    let cli = PersistenceManager(root: root)
+    func entry(_ name: String) -> ProcessingHistory {
+      ProcessingHistory(fileURL: URL(fileURLWithPath: "/tmp/\(name)"), status: .completed, duration: 0.1)
+    }
+
+    try await app.appendHistory(entry("first.png"))
+    _ = try await app.loadHistory()                 // the app now holds it in memory
+    try await Task.sleep(nanoseconds: 1_100_000_000) // a later modification time
+    try await cli.appendHistory(entry("from-cli.png"))
+    let seen = try await app.loadHistory().map(\.fileURL.lastPathComponent)
+    XCTAssertEqual(seen, ["first.png", "from-cli.png"], "the app did not see the command's run")
+
+    try await app.appendHistory(entry("second.png"))
+    let kept = try await cli.loadHistory()
+    let reopened = try await PersistenceManager(root: root).loadHistory().map(\.fileURL.lastPathComponent)
+    XCTAssertEqual(reopened, ["first.png", "from-cli.png", "second.png"], "the app's write dropped the command's run")
+    XCTAssertEqual(kept.count, 3)
+  }
+}

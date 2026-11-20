@@ -160,17 +160,30 @@ private struct PreviewThumb: View {
         peeking = false
       }
     }
-    .popover(isPresented: $peeking, arrowEdge: .top) {
-      VStack(alignment: .leading, spacing: 6) {
-        PreviewImage(url: step.url).frame(width: 300, height: 200).clipShape(RoundedRectangle(cornerRadius: 6))
-        HStack {
-          Text(step.id == 0 ? "Original" : "After \(step.title)").font(.callout.weight(.semibold))
-          Spacer()
-          Text(PreviewThumb.detail(step)).font(.caption).foregroundStyle(.secondary)
+    // Drawn over the strip rather than as a popover: a popover took the next
+    // click to close itself, so opening the big view took two.
+    .overlay(alignment: .bottomLeading) {
+      if peeking {
+        VStack(alignment: .leading, spacing: 6) {
+          PreviewImage(url: step.url).frame(width: 300, height: 200).clipShape(RoundedRectangle(cornerRadius: 6))
+          HStack {
+            Text(step.id == 0 ? "Original" : "After \(step.title)").font(.callout.weight(.semibold))
+            Spacer()
+            Text(PreviewThumb.detail(step)).font(.caption).foregroundStyle(.secondary)
+          }
         }
+        .padding(10)
+        .frame(width: 320)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .shadow(radius: 8, y: 2)
+        .fixedSize()
+        .offset(y: -48)
+        .allowsHitTesting(false)
+        .transition(.opacity)
       }
-      .padding(10)
     }
+    .zIndex(peeking ? 1 : 0)
+    .animation(.easeOut(duration: 0.12), value: peeking)
     .accessibilityLabel(Text("\(step.title), \(PreviewThumb.size(step.bytes))"))
   }
 

@@ -13,6 +13,10 @@ actor PersistenceManager {
   /// The log in memory. Appending used to re-read and re-decode the whole file
   /// for every single converted file, which turned a large batch quadratic.
   private var cachedHistory: [ProcessingHistory]?
+  /// When the file held what the cache holds. The `forge` command and the app
+  /// write the same file: a cache trusted blindly hid the command's runs, and
+  /// the app's next write threw them away.
+  private var cachedStamp: Date?
 
   /// Root of everything Forge stores for the user.
   static var supportDirectory: URL {
@@ -96,7 +100,7 @@ actor PersistenceManager {
   // MARK: - History
 
   func appendHistory(_ entry: ProcessingHistory) async throws {
-    var history = try cachedHistory ?? loadHistory()
+    var history = try loadHistory()
     history.append(entry)
     // Keep last 1000 entries
     if history.count > 1000 {
@@ -105,15 +109,27 @@ actor PersistenceManager {
     let data = try JSONEncoder().encode(history)
     try data.write(to: historyFile, options: .atomic)
     cachedHistory = history
+    cachedStamp = historyStamp()
   }
 
   func loadHistory() throws -> [ProcessingHistory] {
-    if let cachedHistory { return cachedHistory }
-    guard fileManager.fileExists(atPath: historyFile.path) else { return [] }
+    let stamp = historyStamp()
+    if let cachedHistory, stamp == cachedStamp { return cachedHistory }
+    guard fileManager.fileExists(atPath: historyFile.path) else {
+      cachedHistory = []
+      cachedStamp = nil
+      return []
+    }
     let data = try Data(contentsOf: historyFile)
     let history = try JSONDecoder().decode([ProcessingHistory].self, from: data)
     cachedHistory = history
+    cachedStamp = stamp
     return history
+  }
+
+  /// The file's modification time: one stat per append instead of a read.
+  private func historyStamp() -> Date? {
+    (try? fileManager.attributesOfItem(atPath: historyFile.path))?[.modificationDate] as? Date
   }
 
   func clearHistory() async throws {
@@ -121,6 +137,7 @@ actor PersistenceManager {
       try fileManager.removeItem(at: historyFile)
     }
     cachedHistory = []
+    cachedStamp = nil
   }
 }
 
