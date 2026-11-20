@@ -21,10 +21,26 @@ struct PreviewStrip: View {
   @State private var root = FileManager.default.temporaryDirectory
     .appendingPathComponent("ForgePreview-\(UUID().uuidString)", isDirectory: true)
 
-  /// The run is redone when the sample or the chain changes, and only then.
+  /// The run is redone when the sample or anything that decides the result
+  /// changes - the steps, the test, the formats taken, the naming - and only
+  /// then. The steps alone missed the rest: turning "Only if" off left the
+  /// last run's "left alone" on screen.
   private struct Key: Equatable {
     let sample: URL?
-    let actions: [Operation]
+    let preset: RulePreset
+
+    init(sample: URL?, preset: RulePreset) {
+      self.sample = sample
+      // A new preset's draft has a new id on every redraw, and the name and
+      // description change nothing the files go through.
+      var settled = preset
+      settled.id = Key.anyID
+      settled.name = ""
+      settled.description = ""
+      self.preset = settled
+    }
+
+    private static let anyID = UUID()
   }
 
   var body: some View {
@@ -60,7 +76,7 @@ struct PreviewStrip: View {
       use(url)
       return true
     }
-    .task(id: Key(sample: sample?.url, actions: preset.actions)) { await refresh() }
+    .task(id: Key(sample: sample?.url, preset: preset)) { await refresh() }
     .onDisappear { try? FileManager.default.removeItem(at: root) }
   }
 

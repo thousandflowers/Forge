@@ -222,6 +222,9 @@ struct Condition: Codable, Hashable, Sendable {
   }
 
   private func matches(_ candidate: String) -> Bool {
+    // No text yet is no test yet: an empty "Name is" left every file alone,
+    // silently, in a preset saved before the field was filled in.
+    guard !needle.isEmpty else { return true }
     let haystack = candidate.lowercased()
     switch comparison {
     case .equals: return haystack == needle

@@ -1524,3 +1524,21 @@ final class CapabilityWiringTests: XCTestCase {
     XCTAssertTrue(pack.isWired)
   }
 }
+
+final class EmptyConditionTests: XCTestCase {
+  func test_aTextTestWithNoTextYetLetsEveryFileThrough() throws {
+    let file = ProcessableFile(url: URL(fileURLWithPath: "/tmp/holiday.png"), fileType: .png,
+                               fileName: "holiday.png", fileSize: 10, dimensions: nil)
+    for subject in [Condition.Subject.name, .folder, .fileExtension] {
+      var empty = Condition()
+      empty.subject = subject
+      empty.comparison = .equals
+      XCTAssertTrue(empty.holds(for: file), "\(subject) with no text")
+    }
+    var named = Condition()
+    named.subject = .name
+    named.comparison = .equals
+    named.text = "other"
+    XCTAssertFalse(named.holds(for: file), "a filled-in test still decides")
+  }
+}

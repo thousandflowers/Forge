@@ -586,7 +586,7 @@ struct PresetEditorView: View {
             // The anchor keeps one width whatever is chosen: a label that grew
             // with the count moved the popover under the pointer at every click.
             .popover(isPresented: $choosingFormats, arrowEdge: .bottom) { formatsPopover }
-            Text(inputFormats.isEmpty ? "Any file Forge opens." : "\(inputFormats.count) formats chosen.")
+            Text(inputFormats.isEmpty ? "Any file Forge opens." : InputFormats.chosen(inputFormats.count))
               .font(.callout)
               .foregroundStyle(.secondary)
               .monospacedDigit()

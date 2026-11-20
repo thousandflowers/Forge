@@ -12,6 +12,11 @@ enum InputFormats {
     var id: String { kind.rawValue }
   }
 
+  /// "1 format chosen." / "3 formats chosen.", said the same in every place.
+  static func chosen(_ count: Int) -> String {
+    count == 1 ? "1 format chosen." : "\(count) formats chosen."
+  }
+
   static let groups: [Group] = {
     func extensions(_ types: some Sequence<UTType>) -> [String] {
       Array(Set(types.compactMap { $0.preferredFilenameExtension?.lowercased() })).sorted()
