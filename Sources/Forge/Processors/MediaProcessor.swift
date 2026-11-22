@@ -200,6 +200,47 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     )
   }
 
+  /// The cover picture and the chapters, which the tags do not include: a
+  /// song's cover was lost into FLAC and M4B, and an audiobook's chapters into
+  /// anything at all. Copied across by ffmpeg where it is installed, without
+  /// touching the sound already written.
+  private static func carryCoverAndChapters(from input: URL, to output: URL) {
+    guard let ffmpeg = ExternalTools.locate("ffmpeg"), let ffprobe = ExternalTools.locate("ffprobe") else { return }
+    func probe(_ url: URL, _ arguments: [String]) -> String {
+      let process = Process()
+      process.executableURL = ffprobe
+      process.arguments = ["-v", "error"] + arguments + ["-of", "csv=p=0", url.path]
+      let said = Pipe()
+      process.standardOutput = said
+      process.standardError = Pipe()
+      guard (try? process.run()) != nil else { return "" }
+      let text = String(decoding: said.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+      process.waitUntilExit()
+      return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    func cover(_ url: URL) -> Bool {
+      probe(url, ["-select_streams", "v", "-show_entries", "stream_disposition=attached_pic"]).contains("1")
+    }
+    func chapters(_ url: URL) -> Int {
+      probe(url, ["-show_chapters"]).split(whereSeparator: \.isNewline).count
+    }
+    let wantsCover = cover(input) && !cover(output) && !["wav", "aiff", "aif", "caf"].contains(output.pathExtension.lowercased())
+    let wantsChapters = chapters(input) > 0 && chapters(output) == 0
+    guard wantsCover || wantsChapters else { return }
+
+    let together = output.deletingLastPathComponent()
+      .appendingPathComponent(".forge-extras-\(UUID().uuidString).\(output.pathExtension)")
+    defer { try? FileManager.default.removeItem(at: together) }
+    var arguments = ["-hide_banner", "-loglevel", "error", "-y", "-i", output.path, "-i", input.path,
+                     "-map", "0", "-map_metadata", "0"]
+    if wantsCover { arguments += ["-map", "1:v:0", "-disposition:v:0", "attached_pic"] }
+    arguments += ["-map_chapters", wantsChapters ? "1" : "0", "-c", "copy", together.path]
+    // Worth having and not worth failing a finished conversion over.
+    guard (try? ExternalTools.run(ffmpeg, arguments)) != nil,
+          FileManager.default.fileExists(atPath: together.path) else { return }
+    _ = try? FileManager.default.replaceItemAt(output, withItemAt: together)
+  }
+
   /// How many streams of a kind ffprobe finds, or zero without ffprobe.
   private static func streams(of url: URL, kind: String) -> Int {
     guard let ffprobe = ExternalTools.locate("ffprobe") else { return 0 }
@@ -785,6 +826,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     try await Self.carryTags(
       from: input, to: output, type: outputType, privacy: PrivacyFilter.policy(in: operations)
     )
+    Self.carryCoverAndChapters(from: input, to: output)
     progress(1.0)
 
     // A ceiling is a promise about the result. Where the format gave no way
