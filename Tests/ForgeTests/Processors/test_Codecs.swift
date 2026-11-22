@@ -34,17 +34,10 @@ final class CodecTests: BaseTestCase {
     XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
     let output = try XCTUnwrap(entry.outputURL)
 
-    // Lossless of a two-second tone is far larger than the AAC of the same.
-    var lossy = RulePreset.make(format: m4a, category: .audio)
-    lossy.actions.append(.encode(codec: .aac))
-    let aac = try await coordinator().processFile(
-      try ProcessableFile(url: source),
-      with: lossy,
-      destinationMode: .copyTo,
-      destinationURL: try folder("aac")
-    ) { _ in }
-
-    XCTAssertGreaterThan(size(of: output), size(of: try XCTUnwrap(aac.outputURL)))
+    // What is inside is asked of the file, not guessed from its weight: a tone
+    // kept at its own sixteen bits is smaller lossless than as AAC.
+    let written = try AVAudioFile(forReading: output)
+    XCTAssertEqual(written.fileFormat.streamDescription.pointee.mFormatID, kAudioFormatAppleLossless)
   }
 
   /// A codec the container cannot hold has to say so, not write something else.

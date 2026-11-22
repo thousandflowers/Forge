@@ -100,7 +100,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       // the export writes the track into the container as it stands.
       let requestedType = Self.outputType(for: output, operations: operations, fallback: .mpeg4Audio)
       if FormatCatalog.isWritableVideo(requestedType) {
-        return try await handingOn(input, to: output) { try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress) }
+        return try await handingOn(input, to: output) { try await exportVideoWithinItsCeiling(asset, to: output, operations: operations, start: start, progress: progress) }
       }
       return try await handingOn(input, to: output) { try await convertAudio(input, to: output, operations: operations, start: start, progress: progress) }
     }
@@ -125,7 +125,41 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       return try await handingOn(input, to: output) { try await convertAudio(input, to: output, operations: operations, start: start, progress: progress) }
     }
 
-    return try await handingOn(input, to: output) { try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress) }
+    return try await handingOn(input, to: output) { try await exportVideoWithinItsCeiling(asset, to: output, operations: operations, start: start, progress: progress) }
+  }
+
+  /// A ceiling is a promise about the file, and an export session treats it as
+  /// an aim: asked for 500 kB it wrote 554. So it is asked again for less, in
+  /// proportion to how far over it went, until what it writes fits.
+  private func exportVideoWithinItsCeiling(
+    _ asset: AVURLAsset,
+    to output: URL,
+    operations: [Operation],
+    start: Date,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> ProcessingResult {
+    guard let ceiling = ImageProcessor.sizeCeiling(from: operations) else {
+      return try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress)
+    }
+    var aim = ceiling
+    var smallest = Int64.max
+    for _ in 0..<4 {
+      let aimed = operations.map { operation -> Operation in
+        if case .limitSize = operation { return .limitSize(bytes: aim) }
+        return operation
+      }
+      try? FileManager.default.removeItem(at: output)
+      let result = try await exportVideo(asset, to: output, operations: aimed, start: start, progress: progress)
+      if result.outputSize <= Int64(ceiling) { return result }
+      smallest = min(smallest, result.outputSize)
+      aim = max(1, Int(Double(aim) * Double(ceiling) / Double(result.outputSize) * 0.95))
+    }
+    try? FileManager.default.removeItem(at: output)
+    throw ProcessingError.conversionFailed(
+      reason: "\(asset.url.lastPathComponent) cannot be made to fit in "
+        + "\(Int64(ceiling).formatted(.byteCount(style: .file))): the smallest it came out was "
+        + "\(smallest.formatted(.byteCount(style: .file))). A smaller picture would fit; so would a shorter film."
+    )
   }
 
   // MARK: - What macOS could not do
@@ -355,9 +389,31 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       )
     }
 
+    // A codec that was asked for and that this container cannot hold: the
+    // fallback wrote H.264 into the MP4 and said nothing about the ProRes.
+    if let codec = Self.chosenCodec(in: operations), session.presetName != codec.exportPreset {
+      throw ProcessingError.conversionFailed(
+        reason: "\(codec.title) does not fit in "
+          + "\((FormatCatalog.fileExtension(for: outputType) ?? outputType.identifier).uppercased()). A MOV holds it."
+      )
+    }
+
     session.outputURL = output
     session.outputFileType = fileType
     session.shouldOptimizeForNetworkUse = true
+
+    // How small: a ceiling that was asked for, or a share of what the film
+    // would otherwise weigh for a quality below the top. The session is told
+    // the size and keeps the picture's shape and its frame rate; choosing a
+    // "low quality" preset instead shrank a 1280 x 720 film to 568 x 320.
+    var limit = ImageProcessor.sizeCeiling(from: operations).map(Int64.init)
+    if let quality = operations.compactMap(Self.qualityLevel).first, quality < 100,
+       session.presetName != AVAssetExportPresetPassthrough,
+       let whole = try? await session.estimatedOutputFileLengthInBytes, whole > 0 {
+      let share = Int64(Double(whole) * Double(quality) / 100)
+      limit = min(limit ?? share, share)
+    }
+    if let limit, session.presetName != AVAssetExportPresetPassthrough { session.fileLengthLimit = limit }
     if let resizing {
       guard session.presetName != AVAssetExportPresetPassthrough else {
         throw ProcessingError.conversionFailed(reason: "This video cannot be resized into that container")
@@ -442,17 +498,8 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   /// the named sizes stop at 640 × 480 and only ever came close to what was
   /// asked, so an exact size is drawn by `composition(for:operations:)`.
   static func videoPreset(for operations: [Operation], available: [String]) -> String {
-    if let quality = operations.compactMap(Self.qualityLevel).first {
-      let tiers = [
-        (limit: 33, preset: AVAssetExportPresetLowQuality),
-        (limit: 66, preset: AVAssetExportPresetMediumQuality),
-        (limit: 100, preset: AVAssetExportPresetHighestQuality),
-      ]
-      if let tier = tiers.first(where: { quality <= $0.limit && available.contains($0.preset) }) {
-        return tier.preset
-      }
-    }
-
+    // Always the one that keeps the picture as it is. Quality is a matter of
+    // how many bytes, and is settled by telling the session a size.
     return available.contains(AVAssetExportPresetHighestQuality)
       ? AVAssetExportPresetHighestQuality
       : AVAssetExportPresetPassthrough
@@ -603,12 +650,36 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       AVSampleRateKey: sourceFormat.sampleRate,
       AVNumberOfChannelsKey: Int(sourceFormat.channelCount),
     ]
+    // The depth the recording has, where it says: everything used to be cut
+    // to 16 bits, a 24-bit master included, and FLAC was written at 24 from a
+    // 16-bit source. A compressed source has no depth of its own and gets 16.
+    let description = inputFile.fileFormat.streamDescription.pointee
+    let sourceBits = description.mFormatID == kAudioFormatLinearPCM && description.mBitsPerChannel > 0
+      ? Int(description.mBitsPerChannel) : 16
+    let isLossy = formatID == kAudioFormatMPEG4AAC || formatID == kAudioFormatOpus
+    let seconds = sourceFormat.sampleRate > 0 ? Double(inputFile.length) / sourceFormat.sampleRate : 0
+    let ceiling = ImageProcessor.sizeCeiling(from: operations)
+
     if formatID == kAudioFormatLinearPCM {
-      settings[AVLinearPCMBitDepthKey] = 16
-      settings[AVLinearPCMIsFloatKey] = false
+      // Float stays float where the container takes it; AIFF does not.
+      let isFloat = description.mFormatFlags & kAudioFormatFlagIsFloat != 0 && !FormatCatalog.usesBigEndianPCM(outputType)
+      settings[AVLinearPCMBitDepthKey] = isFloat ? 32 : min(sourceBits, 32)
+      settings[AVLinearPCMIsFloatKey] = isFloat
       settings[AVLinearPCMIsBigEndianKey] = FormatCatalog.usesBigEndianPCM(outputType)
-    } else if let quality = operations.compactMap(Self.qualityLevel).first {
-      settings[AVEncoderBitRateKey] = Self.bitrate(forQuality: quality, channels: Int(sourceFormat.channelCount))
+    } else if isLossy {
+      // A bit rate means something to an encoder that throws sound away, and
+      // was an error to one that does not: "quality 80" on a FLAC failed.
+      var rate = operations.compactMap(Self.qualityLevel).first.map {
+        Self.bitrate(forQuality: $0, channels: Int(sourceFormat.channelCount))
+      }
+      // A size that was asked for is a bit rate, once the length is known.
+      if let ceiling, seconds > 0 {
+        let fits = Int(Double(ceiling) * 8 / seconds * 0.95)
+        rate = min(rate ?? fits, fits)
+      }
+      if let rate { settings[AVEncoderBitRateKey] = rate }
+    } else {
+      settings[AVEncoderBitDepthHintKey] = min(sourceBits, 24)
     }
 
     let totalFrames = inputFile.length
@@ -616,10 +687,29 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       progress(totalFrames > 0 ? Double(position) / Double(totalFrames) : 0)
     }
 
+    // What was written has to be something: a clip of a few milliseconds made
+    // a 42-byte FLAC that nothing opens, reported as converted.
+    guard ((try? AVAudioFile(forReading: output))?.length ?? 0) > 0 else {
+      throw ProcessingError.conversionFailed(
+        reason: "\(input.lastPathComponent) is too short to be written as "
+          + "\((FormatCatalog.fileExtension(for: outputType) ?? outputType.identifier).uppercased())."
+      )
+    }
+
     try await Self.carryTags(
       from: input, to: output, type: outputType, privacy: PrivacyFilter.policy(in: operations)
     )
     progress(1.0)
+
+    // A ceiling is a promise about the result. Where the format gave no way
+    // to keep it - nothing can make a WAV smaller - that is said, not skipped.
+    if let ceiling, let size = try? Self.fileSize(output), size > Int64(ceiling) {
+      throw ProcessingError.conversionFailed(
+        reason: "\(input.lastPathComponent) comes out at \(size.formatted(.byteCount(style: .file))), over the "
+          + "\(Int64(ceiling).formatted(.byteCount(style: .file))) asked for, and "
+          + "\((FormatCatalog.fileExtension(for: outputType) ?? "this format").uppercased()) cannot be made smaller."
+      )
+    }
 
     return ProcessingResult(
       outputURL: output,
