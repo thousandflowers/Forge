@@ -134,4 +134,34 @@ final class TextRecognitionTests: BaseTestCase {
       XCTAssertTrue(said.contains("Vision"), said)
     }
   }
+
+  /// A picture with nothing written in it left an empty text file and was
+  /// reported as converted. A recording with no speech in it was already a
+  /// failure that said so; this is the same case, said the same way.
+  func test_aPictureWithNothingWrittenInItIsAFailureThatSaysSo() async throws {
+    let source = try Fixture.image(at: path("sky.png"), width: 400, height: 300)
+    try await expectNoTextFound(in: source, category: .image)
+  }
+
+  func test_aScanWithNothingWrittenInItIsAFailureThatSaysSo() async throws {
+    let source = try Fixture.scannedPDF(at: path("blank.pdf"), pages: ["", ""])
+    try await expectNoTextFound(in: source, category: .document)
+  }
+
+  private func expectNoTextFound(in source: URL, category: PresetCategory) async throws {
+    let destination = try folder("out")
+    do {
+      let entry = try await coordinator().processFile(
+        try ProcessableFile(url: source),
+        with: .make(format: .plainText, category: category),
+        destinationMode: .copyTo,
+        destinationURL: destination
+      ) { _ in }
+      XCTAssertNotEqual(entry.status, .completed, "an empty text file was reported as a conversion")
+      XCTAssertTrue(entry.errorMessage?.contains("No text found") == true, entry.errorMessage ?? "no reason given")
+    } catch {
+      XCTAssertTrue(error.localizedDescription.contains("No text found"), error.localizedDescription)
+    }
+    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: destination.path), [])
+  }
 }

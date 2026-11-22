@@ -249,6 +249,11 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       progress(0.3 + 0.6 * Double(index + 1) / Double(pages.count))
     }
     let text = texts.joined(separator: "\u{0C}")
+    // A picture with nothing written in it is not a text file with nothing in
+    // it: said the way a recording with no speech in it is.
+    guard texts.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+      throw ProcessingError.conversionFailed(reason: "No text found")
+    }
     progress(0.9)
     try text.write(to: output, atomically: true, encoding: .utf8)
     progress(1.0)

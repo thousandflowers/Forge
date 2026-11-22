@@ -285,6 +285,10 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
 
       progress(Double(index + 1) / Double(pdf.pageCount))
     }
+    // Pages with nothing written on them, neither in the file nor to the eye.
+    guard pages.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+      throw ProcessingError.conversionFailed(reason: "No text found")
+    }
     return pages
   }
 
