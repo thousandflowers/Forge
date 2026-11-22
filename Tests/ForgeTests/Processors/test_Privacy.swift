@@ -47,11 +47,17 @@ final class PrivacyTests: BaseTestCase {
     let source = try photograph(at: path("holiday.jpg"))
     let output = try await convert(source, policy: .stripAll)
 
-    let properties = try Self.properties(of: output)
-    XCTAssertEqual(
-      properties[kCGImagePropertyOrientation] as? Int, 6,
-      "without this the photograph arrives on its side"
-    )
+    // The picture is turned upright in its pixels now, so what has to survive
+    // is not the note that said "turn me" but the turn itself: the source is
+    // stored one way and seen the other, and the output is seen the same way.
+    func seen(_ url: URL) throws -> [Int] {
+      let properties = try Self.properties(of: url)
+      let stored = [kCGImagePropertyPixelWidth, kCGImagePropertyPixelHeight].map { properties[$0] as? Int ?? 0 }
+      let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
+      return orientation >= 5 ? stored.reversed() : stored
+    }
+    XCTAssertEqual(try seen(output), try seen(source), "without this the photograph arrives on its side")
+    XCTAssertEqual(try Self.properties(of: source)[kCGImagePropertyOrientation] as? Int, 6, "the fixture is a turned one")
 
     let image = try XCTUnwrap(Self.image(at: output))
     XCTAssertNotNil(image.colorSpace, "without a profile the colours are a guess")

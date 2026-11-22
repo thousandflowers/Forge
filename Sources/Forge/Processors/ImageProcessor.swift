@@ -52,6 +52,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
 
     let outputUTI = determineOutputUTI(from: output, operations: operations)
     let inputType = UTType(filenameExtension: input.pathExtension) ?? .image
+    let orientation = Self.orientation(of: source)
 
     // An image asked for text is a reading job, not a conversion.
     if outputUTI.conforms(to: .plainText) {
@@ -68,7 +69,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     // rather than refusing a conversion the machine can plainly do. Forge does
     // not ship or download the encoder; it only notices one that is there.
     if Self.isWebP(outputUTI), let cwebp = ExternalTools.locate("cwebp") {
-      let image = try transform(frames[0].image, with: operations)
+      let image = try transform(frames[0].image, with: operations, orientation: orientation)
       progress(0.9)
       try Self.writeWebP(image, to: output, using: cwebp, quality: quality(from: operations))
       progress(1.0)
@@ -91,7 +92,10 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     rendered.reserveCapacity(frames.count)
     for (index, frame) in frames.enumerated() {
       try Task.checkCancellation()
-      rendered.append(ImageFrame(image: try transform(frame.image, with: operations), duration: frame.duration))
+      rendered.append(ImageFrame(
+        image: try transform(frame.image, with: operations, orientation: orientation),
+        duration: frame.duration
+      ))
       progress(Double(index + 1) / Double(frames.count) * 0.9)
     }
 
@@ -158,13 +162,54 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     return extras
   }
 
+  /// Which way up the file says its pixels go. One is "as stored".
+  static func orientation(of source: CGImageSource) -> CGImagePropertyOrientation {
+    let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+    let raw = (properties?[kCGImagePropertyOrientation] as? NSNumber)?.uint32Value ?? 1
+    return CGImagePropertyOrientation(rawValue: raw) ?? .up
+  }
+
   /// Apply the preset's operations to one frame and render it.
-  private func transform(_ image: CGImage, with operations: [Operation]) throws -> CGImage {
+  ///
+  /// The frame is turned the way it is seen before anything else touches it. A
+  /// phone held upright stores a sideways picture with a note saying which way
+  /// is up; working on the stored pixels meant "300 wide" was applied to what
+  /// the viewer sees as the height, and a format with nowhere to keep the note
+  /// (WebP through cwebp, GIF, BMP) came out lying on its side.
+  private func transform(
+    _ image: CGImage,
+    with operations: [Operation],
+    orientation: CGImagePropertyOrientation = .up
+  ) throws -> CGImage {
     var ciImage = CIImage(cgImage: image)
+    if orientation != .up {
+      ciImage = ciImage.oriented(orientation)
+      ciImage = ciImage.transformed(by: CGAffineTransform(
+        translationX: -ciImage.extent.minX, y: -ciImage.extent.minY
+      ))
+    }
     for operation in operations {
       ciImage = try applyOperation(operation, to: ciImage)
     }
-    guard let rendered = ciContext.createCGImage(ciImage, from: ciImage.extent) else {
+
+    // Whole pixels only. An extent ending at 533.33 was rendered 534 wide, the
+    // last column a third picture and the rest nothing.
+    let extent = CGRect(
+      x: ciImage.extent.minX.rounded(), y: ciImage.extent.minY.rounded(),
+      width: max(1, ciImage.extent.width.rounded()), height: max(1, ciImage.extent.height.rounded())
+    )
+
+    // Sixteen bits a channel stay sixteen, and a wide-gamut picture stays in
+    // its own colour space: the default is eight bits of sRGB whatever came in.
+    let deep = image.bitsPerComponent > 8
+    let space = image.colorSpace.flatMap { $0.model == .rgb && $0.supportsOutput ? $0 : nil }
+    let rendered = ciContext.createCGImage(
+      ciImage,
+      from: extent,
+      format: deep ? .RGBA16 : .RGBA8,
+      colorSpace: space ?? CGColorSpace(name: CGColorSpace.sRGB)
+    )
+    guard let rendered else {
       throw ProcessingError.conversionFailed(reason: "Failed to render frame")
     }
     return rendered
@@ -227,6 +272,15 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       options = properties
       options.removeValue(forKey: kCGImagePropertyPixelWidth)
       options.removeValue(forKey: kCGImagePropertyPixelHeight)
+      // The pixels were turned upright on the way through, so the note that
+      // said to turn them has been spent. Left in, the picture is turned twice.
+      options[kCGImagePropertyOrientation] = 1
+      if var tiff = options[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
+        tiff[kCGImagePropertyTIFFOrientation] = 1
+        options[kCGImagePropertyTIFFDictionary] = tiff
+      }
+      // Depth and colour model describe the source's pixels, not these.
+      options.removeValue(forKey: kCGImagePropertyDepth)
     }
 
     if isLossy(uti) {
@@ -396,20 +450,17 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     switch mode {
     case .proportional:
       guard let scale = asked.min() else { return image }
-      return image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+      return Self.scaled(image, to: CGSize(width: original.width * scale, height: original.height * scale))
 
     case .stretch:
-      return image.transformed(by: CGAffineTransform(
-        scaleX: targetW / original.width,
-        y: targetH / original.height
-      ))
+      return Self.scaled(image, to: CGSize(width: targetW, height: targetH))
 
     case .cropCenter:
       guard let scale = asked.max() else { return image }
-      let scaled = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+      let scaled = Self.scaled(image, to: CGSize(width: original.width * scale, height: original.height * scale))
       let crop = CGRect(
-        x: scaled.extent.origin.x + (scaled.extent.width - targetW) / 2,
-        y: scaled.extent.origin.y + (scaled.extent.height - targetH) / 2,
+        x: ((scaled.extent.width - targetW) / 2).rounded(.down),
+        y: ((scaled.extent.height - targetH) / 2).rounded(.down),
         width: targetW,
         height: targetH
       )
@@ -419,17 +470,36 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
 
     case .pad:
       let scale = asked.min() ?? 1
-      let scaled = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+      let scaled = Self.scaled(image, to: CGSize(width: original.width * scale, height: original.height * scale))
       let canvas = CGRect(x: 0, y: 0, width: targetW, height: targetH)
       let centred = scaled.transformed(by: CGAffineTransform(
-        translationX: (targetW - scaled.extent.width) / 2 - scaled.extent.origin.x,
-        y: (targetH - scaled.extent.height) / 2 - scaled.extent.origin.y
+        translationX: ((targetW - scaled.extent.width) / 2).rounded(.down),
+        y: ((targetH - scaled.extent.height) / 2).rounded(.down)
       ))
       // The image goes over the backdrop, not under it. Reversed, the padding
       // covered the picture and the result was the wrong size as well.
       let backdrop = CIImage(color: CIColor(red: 1, green: 1, blue: 1, alpha: 1)).cropped(to: canvas)
       return centred.composited(over: backdrop).cropped(to: canvas)
     }
+  }
+
+  /// The picture at exactly `size`, rounded to whole pixels, starting at zero.
+  ///
+  /// Two things a bare scale gets wrong. A size that is not a whole number of
+  /// pixels leaves a last row or column that is part picture and part nothing.
+  /// And the scaler reads a little past the edge, where there is nothing, so
+  /// the border pixels come out blended with transparency. The edge pixels are
+  /// repeated outwards first, and the result cut to whole pixels.
+  private static func scaled(_ image: CIImage, to size: CGSize) -> CIImage {
+    let extent = image.extent
+    guard extent.width > 0, extent.height > 0 else { return image }
+    let width = max(1, size.width.rounded())
+    let height = max(1, size.height.rounded())
+    return image
+      .transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+      .clampedToExtent()
+      .transformed(by: CGAffineTransform(scaleX: width / extent.width, y: height / extent.height))
+      .cropped(to: CGRect(x: 0, y: 0, width: width, height: height))
   }
 
   private func applyFilter(_ image: CIImage, type: FilterType) -> CIImage {
@@ -439,7 +509,11 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     case .sepia:
       return image.applyingFilter("CISepiaTone", parameters: [:])
     case .blur:
-      return image.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 10.0])
+      // The blur reaches past the edge, and past the edge is nothing: the
+      // border faded to transparent. Repeating the edge outwards first gives
+      // it something of the picture's own to reach into.
+      return image.clampedToExtent()
+        .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 10.0])
         .cropped(to: image.extent)
     case .sharpen:
       return image.applyingFilter("CISharpenLuminance", parameters: [:])
