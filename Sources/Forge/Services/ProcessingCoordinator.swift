@@ -294,7 +294,11 @@ actor ProcessingCoordinator {
       outputSize: results.reduce(0) { $0 + $1.outputSize },
       outputDimensions: first.outputDimensions,
       duration: results.reduce(0) { $0 + $1.duration },
-      additionalOutputs: first.additionalOutputs + results.dropFirst().map(\.outputURL),
+      // Every file of every result. The later results' own extras - pages two
+      // and three of a PDF - were left out, so a merge lost them and a watched
+      // folder did not know they were Forge's.
+      additionalOutputs: first.additionalOutputs
+        + results.dropFirst().flatMap { [$0.outputURL] + $0.additionalOutputs },
       appliedQuality: first.appliedQuality
     )
   }

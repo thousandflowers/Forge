@@ -1,4 +1,5 @@
 import XCTest
+import PDFKit
 import UniformTypeIdentifiers
 @testable import Forge
 
@@ -178,5 +179,104 @@ final class SafetyTests: BaseTestCase {
     XCTAssertEqual(copy.gate, original.gate)
     XCTAssertEqual(copy.parameters, original.parameters)
     XCTAssertNil(copy.nameTrigger, "two presets answering to one word would fight over the file")
+  }
+
+  // MARK: - Several files from one
+
+  /// Two image branches of a three-page PDF, merged, came to four pages: the
+  /// first branch's three, and only the first page of the second.
+  func test_aMergeKeepsEveryPageOfEveryCopy() async throws {
+    let source = try Fixture.pdf(at: path("doc.pdf"), pages: 3)
+    let destination = try folder("out")
+    var preset = RulePreset.make(category: .document)
+    preset.actions = [
+      .split([
+        Branch(name: "a", actions: [.convertFormat(to: .jpeg)]),
+        Branch(name: "b", actions: [.convertFormat(to: .png)]),
+      ]),
+      .merge(.pdf),
+    ]
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: preset,
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    let merged = try XCTUnwrap(PDFDocument(url: try XCTUnwrap(entry.outputURL)))
+    XCTAssertEqual(merged.pageCount, 6)
+  }
+
+  /// A watched folder tells its own output from new arrivals by what the
+  /// conversion says it wrote. A split of a several-page PDF named only some
+  /// of its files, and the rest were converted again, and again.
+  func test_aConversionNamesEveryFileItWrote() async throws {
+    let source = try Fixture.pdf(at: path("doc.pdf"), pages: 3)
+    let destination = try folder("out")
+    var preset = RulePreset.make(category: .document)
+    preset.actions = [.split([
+      Branch(name: "a", actions: [.convertFormat(to: .jpeg)]),
+      Branch(name: "b", actions: [.convertFormat(to: .png)]),
+    ])]
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: preset,
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+
+    XCTAssertEqual(contents(of: destination).count, 6)
+    XCTAssertEqual(Set(entry.outputs.map(\.lastPathComponent)), Set(contents(of: destination)))
+  }
+
+  // MARK: - Locked
+
+  /// A PDF that wants a password rendered as blank pages, was reported as
+  /// converted, and with "move" the real document was then deleted.
+  func test_aLockedPDFIsRefusedAndLeftWhereItIs() async throws {
+    let plain = try Fixture.pdf(at: path("plain.pdf"), pages: 2)
+    let source = path("locked.pdf")
+    XCTAssertTrue(try XCTUnwrap(PDFDocument(url: plain)).write(
+      to: source, withOptions: [.userPasswordOption: "secret", .ownerPasswordOption: "owner"]
+    ))
+    XCTAssertTrue(try XCTUnwrap(PDFDocument(url: source)).isLocked, "the fixture is a locked one")
+    let destination = try folder("out")
+
+    for format in [UTType.jpeg, .plainText] {
+      do {
+        _ = try await coordinator().processFile(
+          try ProcessableFile(url: source),
+          with: .make(format: format, category: .document),
+          destinationMode: .moveTo,
+          destinationURL: destination
+        ) { _ in }
+        XCTFail("a locked PDF has nothing to convert yet (\(format.identifier))")
+      } catch {
+        XCTAssertTrue(error.localizedDescription.contains("locked"), error.localizedDescription)
+      }
+    }
+    XCTAssertEqual(everything(in: destination), [])
+    XCTAssertTrue(exists(source), "a refused file stays where it was")
+  }
+
+  // MARK: - The editor's If
+
+  /// Choosing another subject changed only the comparison: the two were
+  /// written one after the other and the second write undid the first.
+  func test_aConditionAskedOfSomethingElseKeepsTheNewSubject() throws {
+    let longest = try JSONDecoder().decode(
+      Condition.self,
+      from: Data(#"{"subject":"longestSide","comparison":"greaterThan","value":2000,"text":""}"#.utf8)
+    )
+
+    let byExtension = longest.testing(.fileExtension)
+    XCTAssertEqual(byExtension.subject, .fileExtension)
+    XCTAssertEqual(byExtension.comparison, .equals, "an extension cannot be more than anything")
+
+    let byWidth = longest.testing(.width)
+    XCTAssertEqual(byWidth.subject, .width)
+    XCTAssertEqual(byWidth.comparison, .greaterThan, "a comparison that still makes sense is kept")
   }
 }

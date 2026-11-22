@@ -53,12 +53,11 @@ struct ConditionEditor: View {
       Picker("", selection: Binding(
         get: { condition.subject },
         set: { subject in
-          condition.subject = subject
-          // A comparison the new subject cannot make is swapped for its first.
-          if !subject.comparisons.contains(condition.comparison), let first = subject.comparisons.first {
-            condition.comparison = first
-          }
-          if subject == .kind, condition.kind == nil { condition.kind = .image }
+          // Changed on a copy and written back once. Written field by field,
+          // the second write read the binding before the first had landed and
+          // put the old subject back: choosing "Extension" changed only the
+          // comparison, and the subject had to be chosen a second time.
+          condition = condition.testing(subject)
         }
       )) {
         ForEach(Condition.Subject.allCases, id: \.self) { Text($0.title).tag($0) }

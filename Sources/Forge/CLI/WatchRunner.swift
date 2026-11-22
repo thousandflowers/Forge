@@ -50,7 +50,10 @@ actor WatchRunner {
         destinationMode: mode,
         destinationURL: destination
       ) { _ in }
-      if let output = entry.outputURL {
+      // Every file it wrote, not only the first: a preset that splits, or a
+      // PDF with several pages, writes several, and the ones not remembered
+      // were picked up as new arrivals and converted again, without end.
+      for output in entry.outputs {
         produced.insert(output.standardizedFileURL.path)
         print(output.path)
       }

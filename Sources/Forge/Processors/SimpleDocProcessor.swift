@@ -10,6 +10,18 @@ import UniformTypeIdentifiers
 /// PDFs are rasterised page by page; text documents are converted through
 /// AppKit's readers, so an HTML file really does come out as plain text
 /// instead of being copied across unchanged.
+extension SimpleDocProcessor {
+  /// A PDF that wants a password to be read has pages nobody can see yet.
+  /// Rendering them gave blank images, reading them gave nothing, and both
+  /// were reported as converted - with "move", at the cost of the original.
+  static func refuseIfLocked(_ pdf: PDFDocument, named name: String) throws {
+    guard pdf.isLocked else { return }
+    throw ProcessingError.conversionFailed(
+      reason: "\(name) is locked with a password. Open it in Preview, export an unlocked copy, and convert that."
+    )
+  }
+}
+
 final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
   let name = "Document Processor"
 
@@ -83,6 +95,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     guard let pdf = PDFDocument(url: input) else {
       throw ProcessingError.conversionFailed(reason: "Cannot open \(input.lastPathComponent)")
     }
+    try Self.refuseIfLocked(pdf, named: input.lastPathComponent)
     guard pdf.pageCount > 0 else {
       throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no pages")
     }
@@ -248,6 +261,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     guard let pdf = PDFDocument(url: input) else {
       throw ProcessingError.conversionFailed(reason: "Cannot open \(input.lastPathComponent)")
     }
+    try Self.refuseIfLocked(pdf, named: input.lastPathComponent)
     guard pdf.pageCount > 0 else {
       throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no pages")
     }

@@ -122,6 +122,21 @@ struct Branch: Codable, Hashable, Sendable {
 }
 
 /// Something true or false about a file before it is converted.
+extension Condition {
+  /// The same condition asked of something else, with whatever no longer
+  /// applies to it put right.
+  func testing(_ subject: Subject) -> Condition {
+    var changed = self
+    changed.subject = subject
+    // A comparison the new subject cannot make is swapped for its first.
+    if !subject.comparisons.contains(changed.comparison), let first = subject.comparisons.first {
+      changed.comparison = first
+    }
+    if subject == .kind, changed.kind == nil { changed.kind = .image }
+    return changed
+  }
+}
+
 struct Condition: Codable, Hashable, Sendable {
   enum Subject: String, Codable, CaseIterable, Sendable {
     case any, name, folder, kind, fileExtension, fileSize, longestSide, width, height
