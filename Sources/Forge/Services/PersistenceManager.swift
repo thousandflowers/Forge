@@ -103,7 +103,7 @@ actor PersistenceManager {
     var history: [ProcessingHistory]
     do {
       history = try loadHistory()
-    } catch {
+    } catch is DecodingError {
       // A History file nothing can read used to fail every conversion after
       // it, for ever: the output was written, and then reported as failed
       // because the record of it could not be added. It is set aside - not
@@ -124,7 +124,7 @@ actor PersistenceManager {
 
   private func setAsideUnreadableHistory() {
     let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "")
-    let aside = root.appendingPathComponent("History.unreadable-\(stamp).json")
+    let aside = root.appendingPathComponent("History.unreadable-\(stamp)-\(UUID().uuidString.prefix(8)).json")
     try? fileManager.moveItem(at: historyFile, to: aside)
     cachedHistory = nil
     cachedStamp = nil

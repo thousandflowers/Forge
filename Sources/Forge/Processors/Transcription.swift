@@ -84,9 +84,7 @@ enum Transcription {
     let stretches = Stretches()
     let task = recognizer.recognitionTask(with: request) { result, error in
       if let error {
-        // What was heard before the error is still what was said.
-        let heard = stretches.text
-        gate.finish(heard.isEmpty ? .failure(error) : .success(heard))
+        gate.finish(.failure(error))
         return
       }
       guard let result else { return }
@@ -124,10 +122,10 @@ private final class Stretches: @unchecked Sendable {
     guard !trimmed.isEmpty else { return }
     lock.lock()
     defer { lock.unlock() }
-    if let last = parts.last, trimmed.hasPrefix(last) {
+    // Words said twice are kept twice: a repeat that looks like the start of
+    // the stretch before it is still something that was said.
+    if let last = parts.last, trimmed.hasPrefix(last), trimmed != last {
       parts[parts.count - 1] = trimmed
-    } else if let last = parts.last, last.hasPrefix(trimmed) {
-      return
     } else {
       parts.append(trimmed)
     }

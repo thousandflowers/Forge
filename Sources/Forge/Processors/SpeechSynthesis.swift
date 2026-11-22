@@ -147,6 +147,9 @@ private final class BufferWriter: @unchecked Sendable {
   private let lock = NSLock()
   private var file: AVAudioFile?
   private var failure: Error?
+  /// Set once the file is finished. A buffer arriving after that would open
+  /// the output afresh and replace the whole reading with its last sentence.
+  private var closed = false
 
   init(output: URL, formatID: AudioFormatID, type: UTType) {
     self.output = output
@@ -157,7 +160,7 @@ private final class BufferWriter: @unchecked Sendable {
   func append(_ buffer: AVAudioPCMBuffer) {
     lock.lock()
     defer { lock.unlock() }
-    guard failure == nil else { return }
+    guard failure == nil, !closed else { return }
 
     do {
       if file == nil {
@@ -193,6 +196,7 @@ private final class BufferWriter: @unchecked Sendable {
       throw ProcessingError.conversionFailed(reason: "The synthesiser produced no audio")
     }
     file = nil
+    closed = true
   }
 }
 

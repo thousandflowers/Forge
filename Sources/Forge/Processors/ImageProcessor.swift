@@ -56,8 +56,13 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
 
     // An image asked for text is a reading job, not a conversion.
     if outputUTI.conforms(to: .plainText) {
+      // Read the way it is seen: a phone photo stored sideways was read
+      // sideways. And every page of a file that has pages - a multi-page TIFF
+      // used to give up its first and nothing else. An animation is the same
+      // picture many times, so only its first frame is read.
+      let pages = frames.count > 1 && frames.allSatisfy({ $0.duration == 0 }) ? frames : [frames[0]]
       return try Self.recognizeText(
-        in: frames[0].image,
+        in: try pages.map { try transform($0.image, with: [], orientation: orientation) },
         languages: languages(from: operations),
         to: output,
         start: start,
@@ -224,8 +229,26 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     start: Date,
     progress: @escaping @Sendable (Double) -> Void
   ) throws -> ProcessingResult {
+    try recognizeText(in: [image], languages: languages, to: output, start: start, progress: progress)
+  }
+
+  /// One text file for all the pages, a form feed between them, as a PDF's
+  /// pages are written.
+  static func recognizeText(
+    in pages: [CGImage],
+    languages: [String],
+    to output: URL,
+    start: Date,
+    progress: @escaping @Sendable (Double) -> Void
+  ) throws -> ProcessingResult {
     progress(0.3)
-    let text = try TextRecognizer.text(in: image, languages: languages)
+    var texts: [String] = []
+    for (index, page) in pages.enumerated() {
+      try Task.checkCancellation()
+      texts.append(try TextRecognizer.text(in: page, languages: languages))
+      progress(0.3 + 0.6 * Double(index + 1) / Double(pages.count))
+    }
+    let text = texts.joined(separator: "\u{0C}")
     progress(0.9)
     try text.write(to: output, atomically: true, encoding: .utf8)
     progress(1.0)

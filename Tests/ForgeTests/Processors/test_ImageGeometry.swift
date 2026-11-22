@@ -161,4 +161,25 @@ final class ImageGeometryTests: BaseTestCase {
       XCTAssertEqual(try properties(of: output)[kCGImagePropertyDepth] as? Int, 16, format.identifier)
     }
   }
+
+  // MARK: - Text
+
+  /// A file with pages gave up the text of its first and nothing else.
+  func test_everyPageOfAMultiPageImageIsRead() async throws {
+    let first = try Fixture.textImage(at: path("one.png"), text: "PAGE ONE ALPHA")
+    let second = try Fixture.textImage(at: path("two.png"), text: "PAGE TWO BRAVO")
+    let pages = path("pages.tiff")
+    let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(pages as CFURL, UTType.tiff.identifier as CFString, 2, nil))
+    for page in [first, second] {
+      let source = try XCTUnwrap(CGImageSourceCreateWithURL(page as CFURL, nil))
+      CGImageDestinationAddImage(destination, try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil)), nil)
+    }
+    XCTAssertTrue(CGImageDestinationFinalize(destination))
+
+    let output = try await convert(pages, with: .make(format: .plainText, category: .image))
+    let text = try String(contentsOf: output, encoding: .utf8).uppercased()
+
+    XCTAssertTrue(text.contains("ALPHA"), text)
+    XCTAssertTrue(text.contains("BRAVO"), "the second page was not read: \(text)")
+  }
 }
