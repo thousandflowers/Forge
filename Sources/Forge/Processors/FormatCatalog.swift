@@ -85,7 +85,13 @@ enum FormatCatalog {
 
   static func isReadableImage(_ type: UTType) -> Bool {
     if readableImageTypes.contains(type) { return true }
-    return readableImageTypes.contains { type.conforms(to: $0) }
+    if readableImageTypes.contains(where: { type.conforms(to: $0) }) { return true }
+    // One extension can belong to several types, and the one macOS files a
+    // photo under is not always the one ImageIO lists: an .orf is
+    // `com.olympus.raw-image`, and ImageIO reads `com.olympus.or-raw-image`.
+    guard let fileExtension = type.preferredFilenameExtension else { return false }
+    return UTType.types(tag: fileExtension, tagClass: .filenameExtension, conformingTo: nil)
+      .contains(where: readableImageTypes.contains)
   }
 
   static func isWritableImage(_ type: UTType) -> Bool {

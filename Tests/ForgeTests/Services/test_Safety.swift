@@ -385,4 +385,19 @@ final class SafetyTests: BaseTestCase {
     XCTAssertTrue(holds(.differs, "png"))
     XCTAssertTrue(holds(.equals, ""), "no text yet is no test yet")
   }
+
+  /// One extension, several types. macOS files an .orf as
+  /// `com.olympus.raw-image`; ImageIO lists the two types beside it. Compared
+  /// by name, every Olympus raw was "Forge cannot open ORF files", while the
+  /// list of formats said ORF was read.
+  func test_aPhotoFiledUnderAnotherNameForTheSameExtensionIsRead() throws {
+    let filed = try XCTUnwrap(UTType(filenameExtension: "orf"))
+    let listed = UTType.types(tag: "orf", tagClass: .filenameExtension, conformingTo: nil)
+      .filter(FormatCatalog.readableImageTypes.contains)
+    try XCTSkipIf(listed.isEmpty, "this Mac reads no ORF at all")
+
+    XCTAssertTrue(FormatCatalog.isReadableImage(filed), filed.identifier)
+    XCTAssertFalse(FormatCatalog.isReadableImage(.plainText))
+    XCTAssertFalse(FormatCatalog.isReadableImage(try XCTUnwrap(UTType(filenameExtension: "nothing-reads-this"))))
+  }
 }
