@@ -173,7 +173,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
 
     var extras: [URL] = []
     for (index, frame) in frames.enumerated() {
-      let destination = index == 0 ? output : output.numbered(index + 1)
+      let destination = index == 0 ? output : output.numbered(index + 1, of: frames.count)
       try ImageFrames.write([frame], to: destination, as: type, frameOptions: options)
       if index > 0 { extras.append(destination) }
     }

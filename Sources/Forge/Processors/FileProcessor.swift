@@ -99,10 +99,15 @@ enum Conversions {
 extension URL {
   /// `photo.jpg` becomes `photo-002.jpg`. Used wherever one input yields many
   /// outputs - PDF pages, and the frames of an animation.
-  func numbered(_ index: Int) -> URL {
+  ///
+  /// - Parameter total: how many there will be, where that is known, so that
+  ///   the thousandth sorts after the nine hundred and ninety-ninth rather than
+  ///   between the hundredth and the hundred-and-first.
+  func numbered(_ index: Int, of total: Int = 0) -> URL {
     let base = deletingPathExtension().lastPathComponent
     let ext = pathExtension
-    let name = String(format: "%@-%03d", base, index)
+    let digits = max(3, String(total).count)
+    let name = "\(base)-" + String(repeating: "0", count: max(0, digits - String(index).count)) + "\(index)"
     return deletingLastPathComponent()
       .appendingPathComponent(ext.isEmpty ? name : "\(name).\(ext)")
   }

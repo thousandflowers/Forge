@@ -274,6 +274,12 @@ enum ExternalBridge {
       // Sound asked of a film is the sound alone. Without this the picture
       // went into the .m4a as well, since the container will hold one.
       if targetType.map(MediaProcessor.isSoundOnly) ?? false { arguments.append("-vn") }
+      // An Ogg file holds Opus unless something else was asked for. Left to
+      // itself, an ffmpeg built without Vorbis puts FLAC in it - which is what
+      // `--to opus` produced, and which macOS cannot then read back.
+      if ["ogg", "oga", "opus"].contains(target), MediaProcessor.chosenCodec(in: operations) == nil {
+        arguments += ["-c:a", "libopus"]
+      }
       if let filter = Self.scaling(in: operations) { arguments += ["-vf", filter] }
       // The encoder that was asked for, and how hard to squeeze: both were
       // dropped on this path, so a codec chosen for an MKV made no difference.

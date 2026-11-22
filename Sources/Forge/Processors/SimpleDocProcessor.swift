@@ -180,7 +180,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       try Task.checkCancellation()
       guard let page = pdf.page(at: index) else { continue }
 
-      let destination = index == 0 ? output : output.numbered(index + 1)
+      let destination = index == 0 ? output : output.numbered(index + 1, of: pdf.pageCount)
       let dimensions = try render(page, to: destination, as: outputUTI, operations: operations)
       if index == 0 { firstDimensions = dimensions }
       written.append(destination)

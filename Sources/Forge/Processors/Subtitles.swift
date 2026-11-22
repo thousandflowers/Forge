@@ -62,13 +62,28 @@ enum Subtitles {
   private static func parseTimed(_ text: String, separator: String) -> [Cue] {
     var cues: [Cue] = []
 
-    for block in text.components(separatedBy: "\n\n") {
+    // A line holding only spaces separates two cues as an empty one does:
+    // read literally, the cues on either side of it became one.
+    let tidy = text.split(separator: "\n", omittingEmptySubsequences: false)
+      .map { $0.allSatisfy(\.isWhitespace) ? "" : String($0) }
+      .joined(separator: "\n")
+
+    for block in tidy.components(separatedBy: "\n\n") {
       let lines = block.split(separator: "\n", omittingEmptySubsequences: false)
         .map { $0.trimmingCharacters(in: .whitespaces) }
         .filter { !$0.isEmpty }
       guard !lines.isEmpty else { continue }
 
-      guard let timing = lines.firstIndex(where: { $0.contains(separator) }) else { continue }
+      guard let timing = lines.firstIndex(where: { $0.contains(separator) }) else {
+        // No times in it: the rest of what the cue before was saying, after a
+        // blank line inside it. Ended there, the second half was thrown away.
+        // A header or a note is neither, and is passed over.
+        let isAside = ["WEBVTT", "NOTE", "STYLE", "REGION"].contains { lines[0].hasPrefix($0) }
+        if !isAside, let last = cues.popLast() {
+          cues.append(Cue(start: last.start, end: last.end, text: last.text + "\n\n" + lines.joined(separator: "\n")))
+        }
+        continue
+      }
       let parts = lines[timing].components(separatedBy: separator)
       guard parts.count >= 2,
             let start = seconds(from: parts[0]),
@@ -177,11 +192,13 @@ enum Subtitles {
   }
 
   static func stamp(_ seconds: TimeInterval, separator: String) -> String {
-    let whole = max(0, Int(seconds))
-    let milliseconds = Int(((max(0, seconds) - Double(whole)) * 1000).rounded())
+    // Rounded once, as thousandths, and then taken apart: rounding the
+    // fraction alone turned 1.9996 into one second and a thousand thousandths.
+    let thousandths = Int((max(0, seconds) * 1000).rounded())
+    let whole = thousandths / 1000
     return String(
       format: "%02d:%02d:%02d%@%03d",
-      whole / 3600, (whole % 3600) / 60, whole % 60, separator, milliseconds
+      whole / 3600, (whole % 3600) / 60, whole % 60, separator, thousandths % 1000
     )
   }
 }

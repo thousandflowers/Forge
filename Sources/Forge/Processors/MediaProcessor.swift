@@ -281,12 +281,38 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     generator.requestedTimeToleranceAfter = .zero
     generator.maximumSize = try await Self.frameSize(for: operations, asset: asset)
 
-    let step = 1 / Self.framesPerSecond
+    // A whole number of hundredths of a second, because that is the only
+    // delay a GIF can state: a twelfth of a second was written as 0.08 and the
+    // animation ran four per cent fast. Sampling at what will be written keeps
+    // it in time.
+    let step = (100 / Self.framesPerSecond).rounded() / 100
     let times = stride(from: 0, to: duration, by: step).map {
       CMTime(seconds: $0, preferredTimescale: 600)
     }
     guard !times.isEmpty else {
       throw ProcessingError.conversionFailed(reason: "The video is too short to sample")
+    }
+
+    // Stills are written as they are made. Held until the end, ninety seconds
+    // of film was a gigabyte of frames in memory before the first was saved.
+    if !FormatCatalog.holdsMultipleFrames(type) {
+      var extras: [URL] = []
+      var first: CGImage?
+      for (index, time) in times.enumerated() {
+        try Task.checkCancellation()
+        let image = try generator.copyCGImage(at: time, actualTime: nil)
+        let destination = index == 0 ? output : output.numbered(index + 1, of: times.count)
+        _ = try Self.writeFrames([ImageFrame(image: image, duration: step)], to: destination, as: type, operations: operations)
+        if index == 0 { first = image } else { extras.append(destination) }
+        progress(Double(index + 1) / Double(times.count))
+      }
+      return ProcessingResult(
+        outputURL: output,
+        outputSize: try Self.fileSize(output),
+        outputDimensions: first.map { ($0.width, $0.height) },
+        duration: Date().timeIntervalSince(start),
+        additionalOutputs: extras
+      )
     }
 
     var frames: [ImageFrame] = []
@@ -316,7 +342,10 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     guard let track = try await asset.loadTracks(withMediaType: .video).first else {
       return CGSize(width: defaultFrameSide, height: defaultFrameSide)
     }
-    let natural = try await track.load(.naturalSize)
+    // As it is shown: a film shot upright is stored on its side with a note to
+    // turn it, and measured as stored its frames came out a third the size.
+    let stored = try await track.load(.naturalSize)
+    let natural = stored.applying(try await track.load(.preferredTransform))
     if let asked = operations.compactMap(resizeRequest).first,
        let size = renderSize(natural: CGSize(width: abs(natural.width), height: abs(natural.height)),
                              width: asked.width, height: asked.height, mode: .proportional) {

@@ -62,7 +62,7 @@ Some conversions are not settings, they are things Forge works out from what you
 | You do this | Forge does this |
 | --- | --- |
 | Rename a file `holiday_10MB.jpg` | Compresses it under ten megabytes, keeping the best quality that fits |
-| Convert a video to JPEG or PNG | Exports every frame, into a folder named after the clip |
+| Convert a video to JPEG or PNG | Exports its frames, twelve a second, into a folder named after the clip |
 | Convert a video to GIF | Turns the clip into an animated GIF, and a GIF back into video |
 | Convert a recording to `.txt`, `.rtf`, `.docx` or `.pdf` | Transcribes it on device, into that format |
 | Convert a scan or a photo to text | Reads it with Vision, on device |
