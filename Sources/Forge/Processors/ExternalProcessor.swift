@@ -282,9 +282,13 @@ enum ExternalBridge {
         // Every picture, every soundtrack and every subtitle, not ffmpeg's
         // choice of one of each. The question marks let a film without one
         // through.
-        arguments += ["-map", "0:v?", "-map", "0:a?", "-map", "0:s?"]
-        // An MP4 or a MOV holds its subtitles as mov_text and nothing else.
-        if ["mp4", "m4v", "mov"].contains(target) { arguments += ["-c:s", "mov_text"] }
+        arguments += ["-map", "0:v?", "-map", "0:a?"]
+        // Subtitles only where the container has a way to hold them: an MP4 or
+        // a MOV as mov_text, Matroska and WebM as text of their own. Mapped into
+        // anything else - an MXF, an AVI - ffmpeg stopped looking for an encoder.
+        if ["mp4", "m4v", "mov"].contains(target) { arguments += ["-map", "0:s?", "-c:s", "mov_text"] }
+        if target == "mkv" { arguments += ["-map", "0:s?", "-c:s", "srt"] }
+        if target == "webm" { arguments += ["-map", "0:s?", "-c:s", "webvtt"] }
       }
       // An Ogg file holds Opus unless something else was asked for. Left to
       // itself, an ffmpeg built without Vorbis puts FLAC in it - which is what
@@ -292,6 +296,9 @@ enum ExternalBridge {
       if ["ogg", "oga", "opus"].contains(target), MediaProcessor.chosenCodec(in: operations) == nil {
         arguments += ["-c:a", "libopus"]
       }
+      // MXF takes sound at 48 kHz and nothing else; a film recorded at 44.1
+      // failed with ffmpeg's "only 48khz is implemented".
+      if target == "mxf" { arguments += ["-ar", "48000"] }
       if let filter = Self.scaling(in: operations) { arguments += ["-vf", filter] }
       // The encoder that was asked for, and how hard to squeeze: both were
       // dropped on this path, so a codec chosen for an MKV made no difference.

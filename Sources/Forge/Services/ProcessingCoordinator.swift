@@ -378,6 +378,7 @@ actor ProcessingCoordinator {
     guard processors.contains(where: { $0.canProcess(file) }) else {
       throw ProcessingError.unreadableFormat(file.fileType)
     }
+    try Completeness.refuseIfIncomplete(file.url)
 
     // A preset says what it cares about; Settings says the rest; and what is
     // written into the file's own name beats both, because somebody typed it
@@ -455,6 +456,16 @@ actor ProcessingCoordinator {
 
     guard let result = attempt else {
       throw declined ?? ProcessingError.unreadableFormat(file.fileType)
+    }
+    // A ceiling is a promise about the result. Pictures, sound and film work
+    // towards it; for the rest - a PDF, a document, data - there is nothing to
+    // turn down, and the ceiling was simply not looked at. It is now: a file
+    // over it is not handed over as though it fitted.
+    if let ceiling = ImageProcessor.sizeCeiling(from: operations), result.outputSize > Int64(ceiling) {
+      throw ProcessingError.conversionFailed(
+        reason: "\(file.fileName) comes out at \(result.outputSize.formatted(.byteCount(style: .file))), over the "
+          + "\(Int64(ceiling).formatted(.byteCount(style: .file))) asked for, and Forge has no way to make this kind of file smaller."
+      )
     }
 
     try Task.checkCancellation()

@@ -148,6 +148,12 @@ enum ImageFrames {
     frameOptions: [CFString: Any],
     loopCount: Int
   ) throws -> Bool {
+    // ImageIO's PBM writer writes a PPM: colour, three bytes a pixel, under a
+    // name that promises one bit. A PBM is black and white, so it is written
+    // here.
+    if let pbm = UTType("public.pbm"), type.conforms(to: pbm), let first = frames.first {
+      return writeBitmap(first.image, to: output)
+    }
     guard let destination = CGImageDestinationCreateWithURL(
       output as CFURL,
       type.identifier as CFString,
@@ -172,6 +178,31 @@ enum ImageFrames {
     }
 
     return CGImageDestinationFinalize(destination)
+  }
+
+  /// A one-bit Netpbm file: black where the picture is darker than mid grey.
+  private static func writeBitmap(_ image: CGImage, to output: URL) -> Bool {
+    let width = image.width, height = image.height
+    guard width > 0, height > 0, let context = CGContext(
+      data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width,
+      space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue
+    ) else { return false }
+    // Transparent counts as white, as it does on a page.
+    context.setFillColor(gray: 1, alpha: 1)
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    guard let pixels = context.data?.assumingMemoryBound(to: UInt8.self) else { return false }
+
+    var data = Data("P4\n\(width) \(height)\n".utf8)
+    let rowBytes = (width + 7) / 8
+    for y in 0..<height {
+      var row = [UInt8](repeating: 0, count: rowBytes)
+      for x in 0..<width where pixels[y * width + x] < 128 {
+        row[x / 8] |= 0x80 >> UInt8(x % 8)
+      }
+      data.append(contentsOf: row)
+    }
+    return (try? data.write(to: output, options: .atomic)) != nil
   }
 
   // MARK: - Per-format frame timing

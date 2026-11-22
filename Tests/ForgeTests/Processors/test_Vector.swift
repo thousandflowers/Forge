@@ -71,10 +71,12 @@ final class VectorTests: BaseTestCase {
     let output = try XCTUnwrap(entry.outputURL)
     XCTAssertEqual(output.pathExtension, "png")
 
-    // Drawn into a square box, keeping the artwork's own two-to-one shape.
+    // Drawn at the size the drawing gives itself, keeping its two-to-one
+    // shape. It used to be 1024 across whatever the drawing said.
     let size = try pixels(of: output)
-    XCTAssertEqual(size.width, VectorProcessor.defaultSide)
-    XCTAssertEqual(size.height, VectorProcessor.defaultSide / 2)
+    let stated = try XCTUnwrap(VectorProcessor.statedSize(of: source))
+    XCTAssertEqual(size.width, Int(stated.width))
+    XCTAssertEqual(size.height, Int(stated.height))
   }
 
   /// A resize decides the size the vector is drawn at, rather than being

@@ -730,7 +730,10 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // to 44.1 kHz stereo is not a conversion the user requested.
     var settings: [String: Any] = [
       AVFormatIDKey: formatID,
-      AVSampleRateKey: sourceFormat.sampleRate,
+      // Opus is made at 48 kHz and a handful of rates below it, and refuses
+      // the rest - 44.1 kHz, the commonest of all, included.
+      AVSampleRateKey: formatID == kAudioFormatOpus && ![8_000, 12_000, 16_000, 24_000, 48_000].contains(sourceFormat.sampleRate)
+        ? 48_000 : sourceFormat.sampleRate,
       AVNumberOfChannelsKey: Int(sourceFormat.channelCount),
     ]
     // The depth the recording has, where it says: everything used to be cut

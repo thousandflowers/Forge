@@ -115,7 +115,7 @@ final class VectorProcessor: FileProcessor, @unchecked Sendable {
     defer { try? FileManager.default.removeItem(at: scratch) }
 
     let plain = try Self.unpacked(input, into: scratch)
-    let raster = try await Self.draw(plain, side: Self.side(for: operations), into: scratch)
+    let raster = try await Self.draw(plain, side: Self.side(for: operations, drawing: plain), into: scratch)
     progress(0.5)
 
     return try await images.process(raster, to: output, with: operations) { fraction in
@@ -126,12 +126,41 @@ final class VectorProcessor: FileProcessor, @unchecked Sendable {
   /// How large to draw. A resize already says what size the picture should end
   /// up at, and drawing straight to it spares the one indignity a vector never
   /// has to suffer: being rasterized at one size and scaled to another.
-  static func side(for operations: [Operation]) -> Int {
+  static func side(for operations: [Operation], drawing: URL? = nil) -> Int {
     let asked = operations.compactMap { operation -> Int? in
       guard case .resize(let width, let height, _) = operation else { return nil }
       return [width, height].compactMap { $0 }.max()
     }
-    return max(asked.max() ?? defaultSide, 1)
+    // Otherwise the size the drawing says it is. Every SVG came out 1024
+    // pixels across, a 300-pixel badge included.
+    let own = drawing.flatMap(Self.statedSize).map { Int(max($0.width, $0.height).rounded()) }
+    return max(asked.max() ?? own ?? defaultSide, 1)
+  }
+
+  /// The size an SVG gives itself: its width and height in pixels, or failing
+  /// those its view box. Units other than pixels are not guessed at.
+  static func statedSize(of url: URL) -> CGSize? {
+    guard let head = try? String(contentsOf: url, encoding: .utf8),
+          let open = head.range(of: "<svg"),
+          let close = head[open.upperBound...].firstIndex(of: ">") else { return nil }
+    let tag = String(head[open.upperBound..<close])
+    func attribute(_ name: String) -> String? {
+      guard let match = tag.range(of: #"\b"# + name + #"\s*=\s*["']([^"']*)["']"#, options: .regularExpression) else { return nil }
+      let pair = tag[match]
+      guard let quote = pair.firstIndex(where: { $0 == "\"" || $0 == "'" }) else { return nil }
+      return String(pair[pair.index(after: quote)...].dropLast())
+    }
+    func pixels(_ text: String?) -> Double? {
+      guard let text = text?.trimmingCharacters(in: .whitespaces) else { return nil }
+      let number = text.hasSuffix("px") ? String(text.dropLast(2)) : text
+      return Double(number).flatMap { $0 > 0 ? $0 : nil }
+    }
+    if let width = pixels(attribute("width")), let height = pixels(attribute("height")) {
+      return CGSize(width: width, height: height)
+    }
+    let box = (attribute("viewBox") ?? "").split(whereSeparator: { $0 == " " || $0 == "," }).compactMap { Double($0) }
+    guard box.count == 4, box[2] > 0, box[3] > 0 else { return nil }
+    return CGSize(width: box[2], height: box[3])
   }
 
   private static func draw(_ url: URL, side: Int, into folder: URL) async throws -> URL {
