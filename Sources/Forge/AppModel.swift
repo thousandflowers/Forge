@@ -150,17 +150,7 @@ final class AppModel: ObservableObject {
   }
 
   func duplicatePreset(_ preset: RulePreset) {
-    savePreset(
-      RulePreset(
-        name: "\(preset.name) copy",
-        description: preset.description,
-        targetFormat: preset.targetFormat,
-        resize: preset.resize,
-        quality: preset.quality,
-        filters: preset.filters,
-        category: preset.category
-      )
-    )
+    savePreset(preset.duplicate())
   }
 
   /// Write presets to a file, so one of them — or the lot — can be kept or

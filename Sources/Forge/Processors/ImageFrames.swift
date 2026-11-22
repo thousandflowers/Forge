@@ -106,7 +106,10 @@ enum ImageFrames {
     }
 
     guard CGImageDestinationFinalize(destination) else {
-      throw ProcessingError.conversionFailed(reason: "Cannot write \(output.lastPathComponent)")
+      let format = (FormatCatalog.fileExtension(for: type) ?? type.identifier).uppercased()
+      throw ProcessingError.conversionFailed(
+        reason: "Cannot write \(output.lastPathComponent) as \(format): macOS refused this image in that format."
+      )
     }
   }
 
