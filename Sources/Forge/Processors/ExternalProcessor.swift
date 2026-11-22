@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import UniformTypeIdentifiers
 
@@ -240,7 +241,11 @@ enum ExternalBridge {
         toolName: "pandoc",
         // Plain text is read as Markdown, which it is a subset of: pandoc has
         // no reader called "plain", so a .txt could not become an EPUB.
-        arguments: ["--standalone"] + (source == "txt" ? ["-f", "markdown"] : []) + [input.path, "-o", output.path]
+        // Pictures travel inside the file, and are looked for beside the source.
+        arguments: ["--standalone"] + (source == "txt" ? ["-f", "markdown"] : [])
+          + (target == "html" ? ["--embed-resources"] : [])
+          + Self.statedDetails(of: input).flatMap { ["-M", "\($0.key)=\($0.value)"] }
+          + ["--resource-path", input.deletingLastPathComponent().path, input.path, "-o", output.path]
       )
     }
 
@@ -383,6 +388,24 @@ enum ExternalBridge {
       }
     }
     return nil
+  }
+
+  /// Who wrote a document and what it is called, where the system reads them
+  /// and pandoc does not: a Word file written by macOS keeps them where pandoc
+  /// does not look, and they were lost on the way through it. Only the
+  /// formats the system reads without a web view, so this is safe off the
+  /// main thread.
+  private static func statedDetails(of input: URL) -> [String: String] {
+    let readers: [String: NSAttributedString.DocumentType] = ["docx": .officeOpenXML, "odt": .openDocument, "rtf": .rtf]
+    guard let reader = readers[input.pathExtension.lowercased()] else { return [:] }
+    var read: NSDictionary?
+    _ = try? NSAttributedString(url: input, options: [.documentType: reader], documentAttributes: &read)
+    let found = (read as? [NSAttributedString.DocumentAttributeKey: Any]) ?? [:]
+    var details: [String: String] = [:]
+    for (key, name) in [(NSAttributedString.DocumentAttributeKey.title, "title"), (.author, "author"), (.subject, "subject")] {
+      if let value = found[key] as? String, !value.isEmpty { details[name] = value }
+    }
+    return details
   }
 
   private static func size(in operations: [Operation]) -> (width: Int?, height: Int?)? {

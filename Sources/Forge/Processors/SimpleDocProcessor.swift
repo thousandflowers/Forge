@@ -467,6 +467,19 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       throw ProcessingError.unsupportedConversion(from: inputType, to: outputType)
     }
 
+    // The system's reader keeps the words and loses the rest of a document:
+    // its links, its footnotes, its pictures, often its tables. pandoc keeps
+    // them, so where it is installed and can do the pair it is asked instead.
+    // Not into a PDF, which pandoc writes only through LaTeX; and not where
+    // the author is to be removed, which the system's path does and pandoc's
+    // does not.
+    let source = input.pathExtension.lowercased()
+    let target = output.pathExtension.lowercased()
+    if !outputType.conforms(to: .pdf), PrivacyFilter.policy(in: operations) != .stripAll,
+       ExternalBridge.couldPlan(from: source, to: target) {
+      throw ProcessingError.unsupportedConversion(from: inputType, to: outputType)
+    }
+
     let document = try DocumentText.read(input, as: inputType)
     let details = DocumentText.details(of: input, as: inputType, keeping: PrivacyFilter.policy(in: operations))
     progress(0.7)
