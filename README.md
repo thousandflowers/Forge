@@ -154,13 +154,7 @@ It backs off while a batch is running. A warm Mac, Low Power Mode or memory pres
 
 Grab the latest `.dmg` from the [Releases page](https://github.com/thousandflowers/Forge/releases), open it, drag Forge to Applications. Universal build, Apple silicon and Intel, macOS 13 Ventura or later.
 
-The build is unsigned, so on first launch right click the app and choose Open.
-
-### Homebrew
-
-```bash
-brew install --cask thousandflowers/tap/forge
-```
+The build is not notarized, so macOS stops the first launch. On macOS 15 or later, open Forge once, dismiss the warning, then go to System Settings, Privacy & Security, and click **Open Anyway**. On macOS 13 and 14, right click the app and choose Open.
 
 ### From source
 
