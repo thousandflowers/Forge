@@ -271,10 +271,27 @@ enum ExternalBridge {
         // would try to carry the picture and the sound into a .srt.
         arguments += ["-map", "0:s:0"]
       }
-      if let size = Self.size(in: operations) {
-        // -2 rather than -1 for the side that follows: some encoders refuse an
-        // odd number of pixels, and this rounds to an even one.
-        arguments += ["-vf", "scale=\(size.width ?? -2):\(size.height ?? -2)"]
+      // Sound asked of a film is the sound alone. Without this the picture
+      // went into the .m4a as well, since the container will hold one.
+      if targetType.map(MediaProcessor.isSoundOnly) ?? false { arguments.append("-vn") }
+      if let filter = Self.scaling(in: operations) { arguments += ["-vf", filter] }
+      // The encoder that was asked for, and how hard to squeeze: both were
+      // dropped on this path, so a codec chosen for an MKV made no difference.
+      for operation in operations {
+        switch operation {
+        case .encode(let codec):
+          if let name = Self.ffmpegName[codec] { arguments += [codec.isVideo ? "-c:v" : "-c:a", name] }
+        case .quality(let level):
+          if targetType.map(MediaProcessor.isSoundOnly) ?? false {
+            arguments += ["-b:a", "\(MediaProcessor.bitrate(forQuality: level, channels: 2) / 1000)k"]
+          } else {
+            // 100 is visually lossless and 1 is barely a picture: the encoders'
+            // own scale runs the other way, from about 16 to about 40.
+            arguments += ["-crf", "\(40 - level * 24 / 100)"]
+          }
+        default:
+          break
+        }
       }
       // ffmpeg carries every tag across unless told otherwise, so a privacy
       // level was a promise this path did not keep. It removes a named tag or
@@ -312,6 +329,34 @@ enum ExternalBridge {
       )
     }
 
+    return nil
+  }
+
+  /// What ffmpeg calls each encoder.
+  private static let ffmpegName: [Codec: String] = [
+    .h264: "libx264", .hevc: "libx265", .proRes422: "prores_ks", .proRes4444: "prores_ks",
+    .aac: "aac", .appleLossless: "alac", .flac: "flac", .linearPCM: "pcm_s16le", .opus: "libopus",
+  ]
+
+  /// The new size as ffmpeg's scale filter, honouring the fit. A bare scale to
+  /// both sides stretched every film, whatever fit had been chosen.
+  private static func scaling(in operations: [Operation]) -> String? {
+    for operation in operations {
+      guard case .resize(let width, let height, let mode) = operation, width != nil || height != nil else { continue }
+      // -2 rather than -1 for a side that follows: some encoders refuse an odd
+      // number of pixels, and this rounds to an even one.
+      guard let width, let height else { return "scale=\(width ?? -2):\(height ?? -2)" }
+      switch mode {
+      case .stretch:
+        return "scale=\(width):\(height)"
+      case .proportional:
+        return "scale=\(width):\(height):force_original_aspect_ratio=decrease:force_divisible_by=2"
+      case .cropCenter:
+        return "scale=\(width):\(height):force_original_aspect_ratio=increase,crop=\(width):\(height)"
+      case .pad:
+        return "scale=\(width):\(height):force_original_aspect_ratio=decrease,pad=\(width):\(height):(ow-iw)/2:(oh-ih)/2"
+      }
+    }
     return nil
   }
 
@@ -438,6 +483,17 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
   /// film has no subtitles in it.
   static func explain(_ error: Error, about input: URL) -> Error {
     let said = error.localizedDescription
+
+    // ffmpeg could not read the file either. Its own account - "moov atom not
+    // found" - is true and means nothing to anybody who has not written a
+    // demuxer; what it means is that the file is not whole.
+    if said.contains("[in#") || said.contains("Error opening input")
+        || said.contains("Invalid data found when processing input") {
+      return ProcessingError.conversionFailed(
+        reason: "\(input.lastPathComponent) cannot be opened: it looks damaged or incomplete. "
+          + "If it is still being copied or downloaded, try again once it has arrived."
+      )
+    }
 
     if said.contains("matches no streams") {
       return ProcessingError.conversionFailed(

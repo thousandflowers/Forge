@@ -52,10 +52,12 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       throw CancellationError()
     } catch {
       // AVFoundation's own words are "Cannot Open", in the system language,
-      // which say neither what nor why.
-      throw ProcessingError.conversionFailed(
-        reason: "\(input.lastPathComponent) cannot be opened: it looks damaged or incomplete. "
-          + "If it is still being copied or downloaded, try again once it has arrived."
+      // which say neither what nor why. It lists AVI and MPEG among the files
+      // it reads and opens few of them, so "damaged" was said of files that
+      // play: a tool that can do the pair is asked before anything is said.
+      throw Self.handedOn(input, to: output) ?? ProcessingError.conversionFailed(
+        reason: "\(input.lastPathComponent) cannot be opened by macOS: it may use a codec macOS has no reader for, "
+          + "or be damaged or still arriving.\(Self.whatWouldRead)"
       )
     }
 
@@ -98,9 +100,9 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       // the export writes the track into the container as it stands.
       let requestedType = Self.outputType(for: output, operations: operations, fallback: .mpeg4Audio)
       if FormatCatalog.isWritableVideo(requestedType) {
-        return try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress)
+        return try await handingOn(input, to: output) { try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress) }
       }
-      return try await convertAudio(input, to: output, operations: operations, start: start, progress: progress)
+      return try await handingOn(input, to: output) { try await convertAudio(input, to: output, operations: operations, start: start, progress: progress) }
     }
 
     // A video asked to become an image is a frame export, not a re-encode:
@@ -120,10 +122,48 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       guard !audioTracks.isEmpty else {
         throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no sound to keep")
       }
-      return try await convertAudio(input, to: output, operations: operations, start: start, progress: progress)
+      return try await handingOn(input, to: output) { try await convertAudio(input, to: output, operations: operations, start: start, progress: progress) }
     }
 
-    return try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress)
+    return try await handingOn(input, to: output) { try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress) }
+  }
+
+  // MARK: - What macOS could not do
+
+  /// Run the work; if macOS itself gave up on it - a codec it has no reader
+  /// for, a sample rate its encoder will not take - hand the pair to a tool
+  /// that can, or say which tool would. Its own error was a number: "Core
+  /// Audio error 1954115647".
+  private func handingOn(
+    _ input: URL, to output: URL, _ work: () async throws -> ProcessingResult
+  ) async throws -> ProcessingResult {
+    do {
+      return try await work()
+    } catch let error as ProcessingError {
+      throw error
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      throw Self.handedOn(input, to: output) ?? ProcessingError.conversionFailed(
+        reason: "macOS cannot make \(input.lastPathComponent) into \(output.pathExtension.uppercased()) "
+          + "(\(error.localizedDescription)).\(Self.whatWouldRead)"
+      )
+    }
+  }
+
+  /// "This pair is not mine", if a tool here would take it: the coordinator
+  /// then asks the next processor, which is the tools.
+  private static func handedOn(_ input: URL, to output: URL) -> ProcessingError? {
+    let source = input.pathExtension.lowercased()
+    let target = output.pathExtension.lowercased()
+    guard ExternalBridge.couldPlan(from: source, to: target) else { return nil }
+    return .unsupportedConversion(
+      from: UTType(filenameExtension: source) ?? .movie, to: UTType(filenameExtension: target) ?? .data
+    )
+  }
+
+  private static var whatWouldRead: String {
+    ExternalTools.locate("ffmpeg") == nil ? " ffmpeg reads most of what macOS does not: brew install ffmpeg" : ""
   }
 
   /// Audio that is not also a movie: `.m4a`, `.wav`, `.flac`, not `.mp4`.
@@ -376,9 +416,9 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     case .cancelled:
       throw CancellationError()
     default:
-      throw ProcessingError.conversionFailed(
-        reason: session.error?.localizedDescription ?? "Video export did not complete"
-      )
+      // The session's own error, as it is: the caller decides whether a tool
+      // can do what macOS could not before anything is said about it.
+      throw session.error ?? ProcessingError.conversionFailed(reason: "Video export did not complete")
     }
 
     progress(1.0)
@@ -710,7 +750,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   }
 
   /// Map a 1-100 quality level onto a per-channel bitrate.
-  private static func bitrate(forQuality quality: Int, channels: Int) -> Int {
+  static func bitrate(forQuality quality: Int, channels: Int) -> Int {
     let perChannel = 32_000 + (max(1, min(100, quality)) * 1_280)
     return perChannel * max(1, channels)
   }
