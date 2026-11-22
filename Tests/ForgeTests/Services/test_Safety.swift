@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 import AVFoundation
 import PDFKit
 import UniformTypeIdentifiers
@@ -146,6 +147,56 @@ final class SafetyTests: BaseTestCase {
       everything(in: destination).filter { $0.hasPrefix(".") }, [],
       "hidden scratch files left in the destination"
     )
+  }
+
+  /// An OBJ keeps its materials in a library beside it. Model I/O wrote that
+  /// under Forge's scratch name, where it stayed: a hidden `.forge-….mtl` in
+  /// the user's folder, and an OBJ whose first lines pointed at it.
+  func test_anOBJBringsItsMaterialsUnderItsOwnName() async throws {
+    let source = path("shape.stl")
+    // A tetrahedron, as ASCII STL.
+    let corners = ["0 0 0", "1 0 0", "0 1 0", "0 0 1"]
+    let faces = [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]].map { face in
+      "facet normal 0 0 0\n outer loop\n" + face.map { "  vertex \(corners[$0])\n" }.joined() + " endloop\nendfacet\n"
+    }
+    try Data(("solid t\n" + faces.joined() + "endsolid t\n").utf8).write(to: source)
+    let destination = try folder("out")
+    let obj = try XCTUnwrap(UTType(filenameExtension: "obj"))
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: obj, category: .model),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+
+    XCTAssertEqual(everything(in: destination).sorted(), ["shape.mtl", "shape.obj"])
+    let written = try String(contentsOf: destination.appendingPathComponent("shape.obj"), encoding: .utf8)
+    XCTAssertTrue(written.contains("mtllib shape.mtl"), written)
+    XCTAssertFalse(written.contains(".forge-"), written)
+  }
+
+  /// OpenDocument was handed to the reader for Word files, which refused it:
+  /// every ODT was "Cannot read", into every format.
+  func test_anOpenDocumentFileIsRead() async throws {
+    let source = path("letter.odt")
+    let words = NSAttributedString(string: "HeadingAlpha and the rest of the letter.")
+    try words.data(
+      from: NSRange(location: 0, length: words.length),
+      documentAttributes: [.documentType: NSAttributedString.DocumentType.openDocument]
+    ).write(to: source)
+    let destination = try folder("out")
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .plainText, category: .document),
+      destinationMode: .copyTo,
+      destinationURL: destination
+    ) { _ in }
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+    let text = try String(contentsOf: try XCTUnwrap(entry.outputURL), encoding: .utf8)
+    XCTAssertTrue(text.contains("HeadingAlpha"), text)
   }
 
   // MARK: - Sound that is not there

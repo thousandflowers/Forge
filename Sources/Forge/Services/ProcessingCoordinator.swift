@@ -588,6 +588,15 @@ actor ProcessingCoordinator {
       return destination
     }
 
+    // A file that names its companions - an OBJ names its material library -
+    // named them while they still had the scratch name. Only looked at when
+    // there are companions: a lone output has nobody to name.
+    // ponytail: reads each file whole; a size ceiling if frame folders get slow.
+    for url in moved.isEmpty ? [] : [primary] + moved {
+      guard let text = try? String(contentsOf: url, encoding: .utf8), text.contains(workBase) else { continue }
+      try text.replacingOccurrences(of: workBase, with: finalBase).write(to: url, atomically: true, encoding: .utf8)
+    }
+
     return (primary, moved)
   }
 

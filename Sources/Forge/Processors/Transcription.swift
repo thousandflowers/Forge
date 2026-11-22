@@ -55,6 +55,24 @@ enum Transcription {
       throw ProcessingError.validationFailed(message: "Speech recognition was not granted.")
     }
 
+    // One recording at a time. Handed several at once - which is what a batch
+    // does - the recogniser answered most of them "No speech detected".
+    await Turn.shared.take()
+    do {
+      let text = try await recognise(url, locale: locale, progress: progress)
+      await Turn.shared.give()
+      return text
+    } catch {
+      await Turn.shared.give()
+      throw error
+    }
+  }
+
+  private static func recognise(
+    _ url: URL,
+    locale: String?,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> String {
     let chosen = locale.map(Locale.init(identifier:)) ?? Locale.current
     guard let recognizer = SFSpeechRecognizer(locale: chosen) else {
       throw ProcessingError.validationFailed(message: "No recogniser for \(chosen.identifier).")
@@ -106,6 +124,31 @@ enum Transcription {
     }
 
     return try await gate.value()
+  }
+}
+
+/// Whose turn it is with the recogniser: one caller holds it, the rest wait
+/// in the order they came.
+private actor Turn {
+  static let shared = Turn()
+
+  private var taken = false
+  private var waiting: [CheckedContinuation<Void, Never>] = []
+
+  func take() async {
+    guard taken else {
+      taken = true
+      return
+    }
+    await withCheckedContinuation { waiting.append($0) }
+  }
+
+  func give() {
+    if waiting.isEmpty {
+      taken = false
+    } else {
+      waiting.removeFirst().resume()
+    }
   }
 }
 

@@ -17,7 +17,8 @@ enum DocumentText {
       (.html, .html),
       (.rtf, .rtf),
       (UTType("public.rtfd"), .rtfd),
-      (UTType("org.oasis-open.opendocument.text"), .officeOpenXML),
+      // Not `.officeOpenXML`: that is Word's reader, and it refuses an ODT.
+      (UTType("org.oasis-open.opendocument.text"), .openDocument),
       (UTType("org.openxmlformats.wordprocessingml.document"), .officeOpenXML),
     ]
     return candidates.reduce(into: [:]) { result, candidate in
