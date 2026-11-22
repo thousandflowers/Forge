@@ -48,6 +48,37 @@ enum PrivacyFilter {
   ]
 
   /// Whole blocks that exist to say who, what and when.
+  /// The place by name. A photo app that knows the coordinates usually writes
+  /// the city beside them, and taking one without the other left "Venezia,
+  /// Dorsoduro" in a file whose location had been removed.
+  private static let locationIPTC: Set<String> = [
+    kCGImagePropertyIPTCCity as String,
+    kCGImagePropertyIPTCSubLocation as String,
+    kCGImagePropertyIPTCProvinceState as String,
+    kCGImagePropertyIPTCCountryPrimaryLocationCode as String,
+    kCGImagePropertyIPTCCountryPrimaryLocationName as String,
+    kCGImagePropertyIPTCContentLocationCode as String,
+    kCGImagePropertyIPTCContentLocationName as String,
+  ]
+
+  /// What a PNG says about its maker in its own words. Not EXIF, so none of
+  /// the lists above saw it, and ImageIO writes it out again as XMP in
+  /// whatever format is asked for. The rest of the block is how the picture is
+  /// drawn - gamma, chromaticities, interlacing - and stays.
+  private static let identifyingPNG: Set<String> = [
+    kCGImagePropertyPNGAuthor as String,
+    kCGImagePropertyPNGCopyright as String,
+    kCGImagePropertyPNGSoftware as String,
+    kCGImagePropertyPNGDescription as String,
+    kCGImagePropertyPNGTitle as String,
+    kCGImagePropertyPNGComment as String,
+    kCGImagePropertyPNGCreationTime as String,
+    kCGImagePropertyPNGModificationTime as String,
+    kCGImagePropertyPNGDisclaimer as String,
+    kCGImagePropertyPNGSource as String,
+    kCGImagePropertyPNGWarning as String,
+  ]
+
   private static let identifyingBlocks: Set<String> = [
     kCGImagePropertyIPTCDictionary as String,
     kCGImagePropertyExifAuxDictionary as String,
@@ -79,6 +110,10 @@ enum PrivacyFilter {
     kCGImagePropertyTIFFCopyright as String,
     kCGImagePropertyTIFFDateTime as String,
     kCGImagePropertyTIFFHostComputer as String,
+    // The caption and the document's name: free text, and the likeliest place
+    // for "Mario's house".
+    kCGImagePropertyTIFFImageDescription as String,
+    kCGImagePropertyTIFFDocumentName as String,
   ]
 
   /// The properties to write, given the ones that were read.
@@ -97,7 +132,7 @@ enum PrivacyFilter {
       }
       if locationBlocks.contains(name) { continue }
       if policy == .stripLocation {
-        kept[key] = value
+        kept[key] = name == kCGImagePropertyIPTCDictionary as String ? strip(locationIPTC, from: value) : value
         continue
       }
       if identifyingBlocks.contains(name) { continue }
@@ -110,6 +145,8 @@ enum PrivacyFilter {
         kept[key] = strip(identifyingExif, from: value)
       } else if name == kCGImagePropertyTIFFDictionary as String {
         kept[key] = strip(identifyingTIFF, from: value)
+      } else if name == kCGImagePropertyPNGDictionary as String {
+        kept[key] = strip(identifyingPNG, from: value)
       } else {
         kept[key] = value
       }

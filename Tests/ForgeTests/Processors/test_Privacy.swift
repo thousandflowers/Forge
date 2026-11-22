@@ -41,6 +41,91 @@ final class PrivacyTests: BaseTestCase {
     XCTAssertNil(exif[kCGImagePropertyExifBodySerialNumber])
   }
 
+  /// "Remove the location" took the coordinates and left the name of the place:
+  /// city, province, country and neighbourhood, which any photo app that knows
+  /// them writes beside the coordinates. Measured in JPEG, PNG, HEIC and TIFF.
+  func test_stripLocation_takesTheNameOfThePlaceToo() async throws {
+    let source = try Fixture.image(at: path("venice.jpg"), metadata: [
+      kCGImagePropertyGPSDictionary: [
+        kCGImagePropertyGPSLatitude: 45.4408,
+        kCGImagePropertyGPSLongitude: 12.3155,
+      ] as [CFString: Any],
+      kCGImagePropertyIPTCDictionary: [
+        kCGImagePropertyIPTCCity: "Venezia",
+        kCGImagePropertyIPTCSubLocation: "Dorsoduro",
+        kCGImagePropertyIPTCProvinceState: "Veneto",
+        kCGImagePropertyIPTCCountryPrimaryLocationName: "Italia",
+        kCGImagePropertyIPTCCountryPrimaryLocationCode: "ITA",
+        kCGImagePropertyIPTCByline: ["Mario Rossi"],
+      ] as [CFString: Any],
+    ])
+    try Self.expect(["Venezia", "Dorsoduro", "Veneto", "Italia", "Mario Rossi"], in: source)
+
+    let output = try await convert(source, policy: .stripLocation)
+
+    try Self.expectNone(of: ["Venezia", "Dorsoduro", "Veneto", "Italia"], in: output)
+    try Self.expect(["Mario Rossi"], in: output)  // who took it was not asked about
+  }
+
+  /// "Remove identifying metadata" left the caption - the line most likely to
+  /// say whose house it is.
+  func test_stripAll_takesTheCaption() async throws {
+    let source = try Fixture.image(at: path("house.jpg"), metadata: [
+      kCGImagePropertyTIFFDictionary: [
+        kCGImagePropertyTIFFImageDescription: "Casa di Mario",
+        kCGImagePropertyTIFFDocumentName: "mario-privato",
+      ] as [CFString: Any],
+    ])
+    try Self.expect(["Casa di Mario", "mario-privato"], in: source)
+
+    let output = try await convert(source, policy: .stripAll)
+
+    try Self.expectNone(of: ["Casa di Mario", "mario-privato"], in: output)
+  }
+
+  /// A PNG says who made it in its own words - Author, Software, Comment -
+  /// which are not EXIF and were carried across whole, then written out again
+  /// as XMP in whatever format was asked for.
+  func test_stripAll_takesWhatAPNGSaysAboutItsAuthor() async throws {
+    let source = try Fixture.image(at: path("drawing.png"), metadata: [
+      kCGImagePropertyPNGDictionary: [
+        kCGImagePropertyPNGAuthor: "Mario Rossi",
+        kCGImagePropertyPNGSoftware: "SecretApp",
+        kCGImagePropertyPNGDescription: "Casa di Mario",
+        kCGImagePropertyPNGTitle: "titolo-privato",
+        kCGImagePropertyPNGCopyright: "diritti-di-mario",
+      ] as [CFString: Any],
+    ])
+    try Self.expect(["Mario Rossi", "SecretApp"], in: source)
+    let words = ["Mario Rossi", "SecretApp", "Casa di Mario", "titolo-privato", "diritti-di-mario"]
+
+    for format in [UTType.png, .jpeg] {
+      var preset = RulePreset.make(format: format, category: .image)
+      preset.actions.append(.stripMetadata(policy: .stripAll))
+      let entry = try await coordinator().processFile(
+        try ProcessableFile(url: source), with: preset,
+        destinationMode: .copyTo, destinationURL: try folder("out-\(format.preferredFilenameExtension ?? "x")")
+      ) { _ in }
+      try Self.expectNone(of: words, in: try XCTUnwrap(entry.outputURL))
+    }
+  }
+
+  /// The words, looked for in the bytes: a tag removed under one name and
+  /// written again under another (IPTC as XMP) is still in the file.
+  private static func expectNone(of words: [String], in url: URL, file: StaticString = #filePath, line: UInt = #line) throws {
+    let bytes = try Data(contentsOf: url)
+    for word in words {
+      XCTAssertNil(bytes.range(of: Data(word.utf8)), "\(url.lastPathComponent) still says “\(word)”", file: file, line: line)
+    }
+  }
+
+  private static func expect(_ words: [String], in url: URL, file: StaticString = #filePath, line: UInt = #line) throws {
+    let bytes = try Data(contentsOf: url)
+    for word in words {
+      XCTAssertNotNil(bytes.range(of: Data(word.utf8)), "\(url.lastPathComponent) should say “\(word)”", file: file, line: line)
+    }
+  }
+
   /// The critical one. A file that has been made anonymous and unreadable is
   /// not a success.
   func test_stripAll_keepsTheOrientationAndTheColourProfile() async throws {
