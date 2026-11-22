@@ -204,7 +204,8 @@ enum ExternalBridge {
       return true
     }
     if ExternalTools.locate("pandoc") != nil, let known = formats.peek(),
-       known.read.contains(name(of: source)), known.write.contains(name(of: target)) {
+       source == "txt" ? !known.read.isEmpty : known.read.contains(name(of: source)),
+       known.write.contains(name(of: target)) {
       return true
     }
 
@@ -237,7 +238,9 @@ enum ExternalBridge {
       return Plan(
         tool: pandoc,
         toolName: "pandoc",
-        arguments: ["--standalone", input.path, "-o", output.path]
+        // Plain text is read as Markdown, which it is a subset of: pandoc has
+        // no reader called "plain", so a .txt could not become an EPUB.
+        arguments: ["--standalone"] + (source == "txt" ? ["-f", "markdown"] : []) + [input.path, "-o", output.path]
       )
     }
 
@@ -376,7 +379,7 @@ enum ExternalBridge {
   }
 
   private static func pandocReads(_ ext: String) -> Bool {
-    pandocFormats.read.contains(name(of: ext))
+    ext.lowercased() == "txt" ? !pandocFormats.read.isEmpty : pandocFormats.read.contains(name(of: ext))
   }
 
   private static func pandocWrites(_ ext: String) -> Bool {
@@ -390,7 +393,15 @@ enum ExternalBridge {
 
   private static func askPandoc() -> (read: Set<String>, write: Set<String>) {
     guard let pandoc = ExternalTools.locate("pandoc") else { return ([], []) }
-    return (list(pandoc, "--list-input-formats"), list(pandoc, "--list-output-formats"))
+    // Its own internal formats are in both lists - `json`, `native` and `xml`
+    // are how pandoc writes down a document it has parsed, not JSON or XML as
+    // anybody means them. Left in, a CSV asked for XML became pandoc's notes
+    // on a table, reported as converted.
+    let itsOwn: Set<String> = ["json", "native", "xml"]
+    return (
+      list(pandoc, "--list-input-formats").subtracting(itsOwn),
+      list(pandoc, "--list-output-formats").subtracting(itsOwn)
+    )
   }
 
   private static func list(_ tool: URL, _ argument: String) -> Set<String> {

@@ -149,6 +149,11 @@ final class DataProcessor: FileProcessor, @unchecked Sendable {
       throw ProcessingError.conversionFailed(
         reason: "JSON has no way to write \(number.stringValue), and this file holds one."
       )
+    case let number as NSNumber where CFNumberIsFloatType(number) && !(number is NSDecimalNumber):
+      // Written as the shortest number that reads back the same, which is the
+      // one somebody typed: left to the serialiser, 3.14 came out with every
+      // digit the machine holds, 3.1400000000000001.
+      return NSDecimalNumber(string: "\(number.doubleValue)")
     default:
       return value
     }
@@ -195,7 +200,31 @@ enum Separated {
 
   static func table(from text: String, separator: Character) throws -> Table {
     let records = parse(text, separator: separator)
-    guard let header = records.first else { return Table(columns: [], rows: []) }
+    guard let stated = records.first else { return Table(columns: [], rows: []) }
+    // One line and nothing under it, opening like JSON: a JSON file under a
+    // table's name. Read as a table it is a header with no rows, and came out
+    // as an empty list, reported as converted.
+    if records.count == 1, let opening = text.first(where: { !$0.isWhitespace }), "[{".contains(opening) {
+      throw ProcessingError.conversionFailed(
+        reason: "This file is called a table and holds JSON. Give it the .json extension and it will convert."
+      )
+    }
+    // Every cell needs a heading of its own to be kept under. A second column
+    // called "name" replaced the first, and a row longer than the header lost
+    // whatever did not fit beneath it; a repeat is numbered, and what has no
+    // heading is given one.
+    let widest = records.map(\.count).max() ?? stated.count
+    var header: [String] = []
+    for index in 0..<widest {
+      let wanted = index < stated.count && !stated[index].isEmpty ? stated[index] : "column \(index + 1)"
+      var name = wanted
+      var copy = 2
+      while header.contains(name) {
+        name = "\(wanted) \(copy)"
+        copy += 1
+      }
+      header.append(name)
+    }
     let rows = records.dropFirst().map { record in
       var row: [String: String] = [:]
       for (index, column) in header.enumerated() where index < record.count {

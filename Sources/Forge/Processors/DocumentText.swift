@@ -60,16 +60,14 @@ enum DocumentText {
   @MainActor
   static func read(_ url: URL, as type: UTType) throws -> NSAttributedString {
     if let markdown, type.conforms(to: markdown) {
-      let source = try String(contentsOf: url, encoding: .utf8)
-      let parsed = try AttributedString(
-        markdown: source,
-        options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-      )
-      return NSAttributedString(parsed)
+      return try rendered(markdown: try text(in: url))
     }
 
     guard let documentType = readable.first(where: { type.conforms(to: $0.key) })?.value else {
       throw ProcessingError.unreadableFormat(type)
+    }
+    if documentType == .plain {
+      return NSAttributedString(string: try text(in: url))
     }
     guard let document = try? NSAttributedString(
       url: url,
@@ -103,6 +101,108 @@ enum DocumentText {
     let all = (read as? Details) ?? [:]
     let wanted = policy == .stripAll ? title : descriptive
     return all.filter { wanted.contains($0.key) }
+  }
+
+  // MARK: - Plain text, in whatever it was saved as
+
+  /// The words in a text file. UTF-8 where it is UTF-8; otherwise the encoding
+  /// is worked out, with Windows' Latin-1 tried first: left to the default, a
+  /// file from an older Windows program was read as Mac Roman and "Café" came
+  /// back "CafÈ". A file that is not text at all - a picture renamed .txt -
+  /// is refused rather than typed out as whatever its bytes happen to spell.
+  static func text(in url: URL) throws -> String {
+    let data = try Data(contentsOf: url)
+    if let utf8 = String(data: data, encoding: .utf8) { return utf8 }
+
+    let startsLikeUTF16 = data.starts(with: [0xFF, 0xFE]) || data.starts(with: [0xFE, 0xFF])
+    guard startsLikeUTF16 || !data.prefix(8192).contains(0) else {
+      throw ProcessingError.conversionFailed(
+        reason: "\(url.lastPathComponent) is not text: it holds something else under that name."
+      )
+    }
+    var converted: NSString?
+    let found = NSString.stringEncoding(
+      for: data,
+      encodingOptions: [
+        .suggestedEncodingsKey: [String.Encoding.windowsCP1252.rawValue],
+        .allowLossyKey: false,
+      ],
+      convertedString: &converted,
+      usedLossyConversion: nil
+    )
+    guard found != 0, let converted else {
+      throw ProcessingError.conversionFailed(reason: "\(url.lastPathComponent) is in an encoding Forge cannot work out.")
+    }
+    return converted as String
+  }
+
+  // MARK: - Markdown, as what it means
+
+  /// Markdown read for its meaning rather than its characters: a heading is
+  /// larger and bold, emphasis is emphasis, a list item has a bullet, and the
+  /// hashes and asterisks are gone. Read inline only, as it was, a heading
+  /// reached a Word file as a line beginning with a hash.
+  @MainActor
+  private static func rendered(markdown source: String) throws -> NSAttributedString {
+    let parsed = try AttributedString(markdown: source, options: .init(interpretedSyntax: .full))
+    let base = NSFont.systemFontSize
+    let headingScale: [CGFloat] = [2.0, 1.5, 1.25, 1.1, 1.0, 1.0]
+    let spaced = NSMutableParagraphStyle()
+    spaced.paragraphSpacing = base * 0.6
+
+    let result = NSMutableAttributedString()
+    var previous: PresentationIntent?
+    var started = false
+
+    for run in parsed.runs {
+      let block = run.presentationIntent
+      var font = NSFont.systemFont(ofSize: base)
+      var isListItem = false
+      var row: Int?
+      for component in block?.components ?? [] {
+        switch component.kind {
+        case .header(let level):
+          font = NSFont.boldSystemFont(ofSize: base * headingScale[min(max(level, 1), headingScale.count) - 1])
+        case .codeBlock:
+          font = NSFont.monospacedSystemFont(ofSize: base, weight: .regular)
+        case .listItem:
+          isListItem = true
+        case .tableRow(let index):
+          row = index
+        case .tableHeaderRow:
+          row = -1
+          font = NSFont.boldSystemFont(ofSize: base)
+        default:
+          break
+        }
+      }
+      if let inline = run.inlinePresentationIntent {
+        if inline.contains(.code) { font = NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .regular) }
+        if inline.contains(.stronglyEmphasized) { font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask) }
+        if inline.contains(.emphasized) { font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) }
+      }
+
+      if started, block != previous {
+        // A new block is a new line; the next cell of the same table row is
+        // the same line, a tab along.
+        let sameRow = row != nil && previous?.components.contains { component in
+          if case .tableRow(let index) = component.kind { return index == row }
+          if case .tableHeaderRow = component.kind { return row == -1 }
+          return false
+        } == true
+        result.append(NSAttributedString(string: sameRow ? "\t" : "\n"))
+        if isListItem, !sameRow { result.append(NSAttributedString(string: "\u{2022} ", attributes: [.font: font])) }
+      } else if !started, isListItem {
+        result.append(NSAttributedString(string: "\u{2022} ", attributes: [.font: font]))
+      }
+      started = true
+      previous = block
+
+      var attributes: [NSAttributedString.Key: Any] = [.font: font, .paragraphStyle: spaced]
+      if let link = run.link { attributes[.link] = link }
+      result.append(NSAttributedString(string: String(parsed[run.range].characters), attributes: attributes))
+    }
+    return result
   }
 
   // MARK: - Writing

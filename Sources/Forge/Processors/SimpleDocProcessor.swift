@@ -37,7 +37,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     return types
   }()
 
-  private let ciContext = CIContext(options: [.cacheIntermediates: false])
+  private let images = ImageProcessor()
 
   func canProcess(_ file: ProcessableFile) -> Bool {
     Self.readableTypes.contains { file.fileType.conforms(to: $0) }
@@ -47,8 +47,15 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     // Any document can be read aloud, and written as any document format.
     if FormatCatalog.audioFormatID(for: target) != nil { return true }
     if target.conforms(to: .plainText) || DocumentText.canWrite(target) { return true }
+    // Plain text is Markdown already; a PDF's words can go to whatever a tool writes.
+    if let markdown = DocumentText.markdown, target.conforms(to: markdown) {
+      return file.fileType.conforms(to: .plainText) && !file.fileType.conforms(to: markdown)
+    }
+    if file.fileType.conforms(to: .pdf), ExternalBridge.couldPlan(from: "txt", to: Conversions.fileExtension(of: target)) {
+      return true
+    }
     // Pictures of the pages: only a PDF has pages to draw.
-    return file.fileType.conforms(to: .pdf) && FormatCatalog.isWritableImage(target)
+    return file.fileType.conforms(to: .pdf) && Self.isAPictureFormat(target)
   }
 
   func process(
@@ -79,13 +86,18 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       // new pages would lose every picture and every layout; a picture of each
       // page, which is what this did, lost every word instead.
       if outputType.conforms(to: .pdf) {
-        return try keepPDF(input, at: output, operations: operations, progress: progress)
+        return try await keepPDF(input, at: output, operations: operations, progress: progress)
       }
       // Asked for another document format, it becomes that document's text.
       if DocumentText.canWrite(outputType) {
         return try await rewritePDF(input, as: outputType, at: output, operations: operations, progress: progress)
       }
-      return try renderPDF(input, to: output, operations: operations, progress: progress)
+      // And for one only a tool writes - an EPUB, an ODT - the tool is given
+      // the words. A Word file could become an EPUB and a PDF could not.
+      if ExternalBridge.couldPlan(from: "txt", to: output.pathExtension.lowercased()) {
+        return try handToATool(input, at: output, operations: operations, progress: progress)
+      }
+      return try await renderPDF(input, to: output, operations: operations, progress: progress)
     }
 
     return try await convertText(
@@ -108,7 +120,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     at output: URL,
     operations: [Operation],
     progress: @escaping @Sendable (Double) -> Void
-  ) throws -> ProcessingResult {
+  ) async throws -> ProcessingResult {
     let start = Date()
 
     guard let pdf = PDFDocument(url: input) else {
@@ -141,12 +153,51 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       try Task.checkCancellation()
       guard let page = pdf.page(at: index) else { continue }
       let drawn = scratch.appendingPathComponent("\(index).pdf")
-      _ = try render(page, to: drawn, as: .pdf, operations: operations)
+      _ = try await render(page, to: drawn, as: .pdf, operations: operations)
       pages.append(drawn)
       progress(Double(index + 1) / Double(pdf.pageCount))
     }
     try Merger.pdf(from: pages, to: output)
     return try Self.result(output, since: start)
+  }
+
+  /// The PDF's words, written out and given to whichever tool writes the
+  /// format that was asked for.
+  private func handToATool(
+    _ input: URL,
+    at output: URL,
+    operations: [Operation],
+    progress: @escaping @Sendable (Double) -> Void
+  ) throws -> ProcessingResult {
+    let start = Date()
+    let words = try pdfPages(from: input, operations: operations) { progress($0 * 0.6) }
+      .joined(separator: Self.paragraphBreak)
+
+    let folder = FileManager.default.temporaryDirectory
+      .appendingPathComponent("forge-words-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let written = folder.appendingPathComponent(input.deletingPathExtension().lastPathComponent + ".txt")
+    try words.write(to: written, atomically: true, encoding: .utf8)
+
+    guard let plan = ExternalBridge.plan(from: written, to: output, operations: operations) else {
+      throw ProcessingError.unsupportedConversion(
+        from: .pdf, to: UTType(filenameExtension: output.pathExtension) ?? .data
+      )
+    }
+    do {
+      try ExternalTools.run(plan.tool, plan.arguments)
+    } catch {
+      throw ExternalProcessor.explain(error, about: input)
+    }
+    progress(1.0)
+    return try Self.result(output, since: start)
+  }
+
+  /// What a page can be drawn into: what macOS writes, and WebP where cwebp
+  /// is installed, as for any other picture.
+  private static func isAPictureFormat(_ type: UTType) -> Bool {
+    FormatCatalog.isWritableImage(type) || (ImageProcessor.isWebP(type) && ExternalTools.locate("cwebp") != nil)
   }
 
   /// Rasterise every page. The first lands on `output`; the rest become
@@ -157,7 +208,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     to output: URL,
     operations: [Operation],
     progress: @escaping @Sendable (Double) -> Void
-  ) throws -> ProcessingResult {
+  ) async throws -> ProcessingResult {
     let start = Date()
 
     guard let pdf = PDFDocument(url: input) else {
@@ -169,7 +220,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     }
 
     let outputUTI = Self.outputUTI(for: output, operations: operations, fallback: .jpeg)
-    guard FormatCatalog.isWritableImage(outputUTI) else {
+    guard Self.isAPictureFormat(outputUTI) else {
       throw ProcessingError.unsupportedConversion(from: .pdf, to: outputUTI)
     }
 
@@ -181,7 +232,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       guard let page = pdf.page(at: index) else { continue }
 
       let destination = index == 0 ? output : output.numbered(index + 1, of: pdf.pageCount)
-      let dimensions = try render(page, to: destination, as: outputUTI, operations: operations)
+      let dimensions = try await render(page, to: destination, as: outputUTI, operations: operations)
       if index == 0 { firstDimensions = dimensions }
       written.append(destination)
 
@@ -202,56 +253,49 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     )
   }
 
+  /// A page as a picture: drawn, and then handed to the picture path like any
+  /// other picture. Doing the steps here instead meant a second, poorer copy
+  /// of them - a crop was ignored, WebP was refused - and a page that is
+  /// turned in the file was drawn into the shape it has before it is turned,
+  /// and came out small.
   private func render(
     _ page: PDFPage,
     to destination: URL,
     as uti: UTType,
     operations: [Operation]
-  ) throws -> (width: Int, height: Int) {
+  ) async throws -> (width: Int, height: Int) {
     let bounds = page.bounds(for: .mediaBox)
+    let turned = page.rotation % 180 != 0
+    let shown = CGSize(width: turned ? bounds.height : bounds.width, height: turned ? bounds.width : bounds.height)
     // 2x the PDF's 72 dpi so text stays readable, but capped: a poster-sized
     // page at 2x is hundreds of megabytes of bitmap.
     let maximumSide: CGFloat = 4096
-    let longestSide = max(bounds.width, bounds.height)
+    let longestSide = max(shown.width, shown.height)
     let renderScale = longestSide > 0 ? min(2, maximumSide / longestSide) : 1
-    let size = CGSize(width: bounds.width * renderScale, height: bounds.height * renderScale)
+    let size = CGSize(width: shown.width * renderScale, height: shown.height * renderScale)
 
     let thumbnail = page.thumbnail(of: size, for: .mediaBox)
     guard let cgImage = thumbnail.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
       throw ProcessingError.conversionFailed(reason: "Cannot rasterise page")
     }
 
-    // Page images take the same operations as any other image, so a preset that
-    // resizes or filters applies here too rather than being quietly ignored.
-    var image = CIImage(cgImage: cgImage)
-    for operation in operations {
-      image = Self.apply(operation, to: image)
-    }
-
-    guard let rendered = ciContext.createCGImage(image, from: image.extent) else {
+    let drawn = FileManager.default.temporaryDirectory
+      .appendingPathComponent("forge-page-\(UUID().uuidString).png")
+    defer { try? FileManager.default.removeItem(at: drawn) }
+    guard let png = CGImageDestinationCreateWithURL(drawn as CFURL, UTType.png.identifier as CFString, 1, nil) else {
       throw ProcessingError.conversionFailed(reason: "Cannot render page")
     }
-    guard let imageDestination = CGImageDestinationCreateWithURL(
-      destination as CFURL,
-      uti.identifier as CFString,
-      1,
-      nil
-    ) else {
-      throw ProcessingError.conversionFailed(
-        reason: "Cannot write \(FormatCatalog.fileExtension(for: uti) ?? uti.identifier)"
-      )
+    CGImageDestinationAddImage(png, cgImage, nil)
+    guard CGImageDestinationFinalize(png) else {
+      throw ProcessingError.conversionFailed(reason: "Cannot render page")
     }
 
-    var options: [CFString: Any] = [:]
-    if uti.conforms(to: .jpeg) || uti.conforms(to: .heic) {
-      options[kCGImageDestinationLossyCompressionQuality] = Self.quality(from: operations)
-    }
-    CGImageDestinationAddImage(imageDestination, rendered, options as CFDictionary)
-
-    guard CGImageDestinationFinalize(imageDestination) else {
-      throw ProcessingError.conversionFailed(reason: "Cannot write \(destination.lastPathComponent)")
-    }
-    return (rendered.width, rendered.height)
+    // The format is said outright: the chain may name another (PDF to PDF
+    // redraws into PDF pages whatever the preset's own target).
+    let steps = operations.filter { if case .convertFormat = $0 { return false } else { return true } }
+      + [.convertFormat(to: uti)]
+    let result = try await images.process(drawn, to: destination, with: steps) { _ in }
+    return result.outputDimensions ?? (cgImage.width, cgImage.height)
   }
 
   // MARK: - Speaking
@@ -410,6 +454,15 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     let start = Date()
     progress(0.2)
 
+    // Plain text is Markdown already: nothing has to write it, only to say so.
+    // It was refused, since nothing on the system writes Markdown.
+    if let markdown = DocumentText.markdown, outputType.conforms(to: markdown),
+       inputType.conforms(to: .plainText), !inputType.conforms(to: markdown) {
+      try DocumentText.text(in: input).write(to: output, atomically: true, encoding: .utf8)
+      progress(1.0)
+      return try Self.result(output, since: start)
+    }
+
     guard DocumentText.canWrite(outputType) else {
       throw ProcessingError.unsupportedConversion(from: inputType, to: outputType)
     }
@@ -431,40 +484,6 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       return to
     }.first
     return requested ?? UTType(filenameExtension: output.pathExtension) ?? fallback
-  }
-
-
-  private static func quality(from operations: [Operation]) -> Float {
-    let level = operations.compactMap { operation -> Int? in
-      guard case .quality(let level) = operation else { return nil }
-      return level
-    }.first
-    return Float(level ?? ImageProcessor.defaultQuality) / 100.0
-  }
-
-  private static func apply(_ operation: Operation, to image: CIImage) -> CIImage {
-    switch operation {
-    case .convertFormat, .quality, .recognizeText, .encode, .limitSize, .stripMetadata, .when, .split, .join, .merge:
-      return image
-    case .resize(let width, let height, _):
-      let target = CGSize(
-        width: CGFloat(width ?? Int(image.extent.width)),
-        height: CGFloat(height ?? Int(image.extent.height))
-      )
-      guard target.width > 0, target.height > 0, image.extent.width > 0, image.extent.height > 0 else {
-        return image
-      }
-      let scale = min(target.width / image.extent.width, target.height / image.extent.height)
-      return image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-    case .filter(let type):
-      switch type {
-      case .grayscale: return image.applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0])
-      case .sepia: return image.applyingFilter("CISepiaTone", parameters: [:])
-      case .blur: return image.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 10.0]).cropped(to: image.extent)
-      case .sharpen: return image.applyingFilter("CISharpenLuminance", parameters: [:])
-      case .invert: return image.applyingFilter("CIColorInvert", parameters: [:])
-      }
-    }
   }
 }
 

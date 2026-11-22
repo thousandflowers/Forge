@@ -124,4 +124,36 @@ final class DataEdgeTests: BaseTestCase {
     XCTAssertTrue(text.contains("on = true"), text)
     XCTAssertTrue(text.contains("list = [0, 1, 2]"), text)
   }
+
+  // MARK: - A second pass
+
+  /// 3.14 was written back as 3.1400000000000001: the number as the machine
+  /// holds it, not as anybody wrote it.
+  func test_aNumberIsWrittenTheWayItWasWritten() async throws {
+    let source = try write(#"{"pi":3.14,"tenth":0.1,"big":1e21,"whole":2,"negative":-0.5}"#, to: "numbers.json")
+    let text = try String(contentsOf: try await convert(source, to: .json), encoding: .utf8)
+    for expected in ["3.14", "0.1", "-0.5"] {
+      XCTAssertTrue(text.contains(": \(expected),") || text.contains(": \(expected)\n") || text.contains(":\(expected)"), "\(expected) in \(text)")
+    }
+    XCTAssertFalse(text.contains("3.1400000000000001"), text)
+    XCTAssertFalse(text.contains("0.10000000000000001"), text)
+  }
+
+  /// Two columns of one name kept only the last, and a row longer than the
+  /// header lost what did not fit under it.
+  func test_aTableKeepsEveryCellEvenUnderARepeatedOrMissingHeading() throws {
+    let table = try Separated.table(from: "name,name,city\nAda,Lovelace,London,extra\n", separator: ",")
+    XCTAssertEqual(table.columns.count, 4, "\(table.columns)")
+    XCTAssertEqual(Set(table.columns).count, 4, "every column has a name of its own: \(table.columns)")
+    let row = try XCTUnwrap(table.rows.first)
+    XCTAssertEqual(Set(row.values), ["Ada", "Lovelace", "London", "extra"])
+  }
+
+  /// `a.b.c = 2` is a path, not a key with dots in it.
+  func test_aDottedTOMLKeyIsAPath() throws {
+    let read = try Toml.object(from: "a.b.c = 2\n\"x.y\" = 3\n[t]\nu.v = \"w\"\n")
+    XCTAssertEqual(((read["a"] as? [String: Any])?["b"] as? [String: Any])?["c"] as? Int, 2)
+    XCTAssertEqual(read["x.y"] as? Int, 3, "a quoted key keeps its dot")
+    XCTAssertEqual(((read["t"] as? [String: Any])?["u"] as? [String: Any])?["v"] as? String, "w")
+  }
 }

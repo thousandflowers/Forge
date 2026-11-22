@@ -44,13 +44,19 @@ enum Toml {
       }
 
       guard let equals = indexOfAssignment(in: line) else { throw unreadable(number, raw) }
-      let key = try bareKey(String(line[line.startIndex..<equals]), number, raw)
+      // `a.b.c = 2` is a path into nested tables; in quotes it is one key
+      // with dots in it. It was always read as the second.
+      let named = String(line[line.startIndex..<equals])
+      let isQuoted = strip(named).hasPrefix("\"") || strip(named).hasPrefix("'")
+      let keys = isQuoted ? [try bareKey(named, number, raw)] : try keyPath(named, number, raw)
       let value = try scalar(String(line[line.index(after: equals)...]), number, raw)
 
       if let arrayPath {
-        appendToLastTable(at: arrayPath, key: key, value: value, in: &root)
+        // ponytail: two dotted keys sharing a prefix in one array table keep the last; merge them if that turns up.
+        let nested = keys.dropFirst().reversed().reduce(value) { inner, key in [key: inner] as [String: Any] }
+        appendToLastTable(at: arrayPath, key: keys[0], value: nested, in: &root)
       } else {
-        insert(value, at: path + [key], in: &root)
+        insert(value, at: path + keys, in: &root)
       }
     }
 
