@@ -112,11 +112,68 @@ final class DocumentConversionTests: BaseTestCase {
     XCTAssertTrue(try String(contentsOf: output, encoding: .utf8).contains("Forge on the web"))
   }
 
-  /// PDF to PDF stays a page-for-page render, not the text poured into new pages.
-  func test_pdfToPDFStillRendersPages() async throws {
-    let source = try Fixture.pdf(at: path("three.pdf"), pages: 3)
-    let output = try await convert(source, to: .pdf)
-    XCTAssertTrue(FileManager.default.fileExists(atPath: output.path))
+  /// Three pages of words, with an author, the way a contract arrives.
+  @MainActor private func contract() throws -> URL {
+    let document = PDFDocument()
+    for (index, words) in ["Forge keeps the words", "on every page", "of the contract"].enumerated() {
+      let page = path("page-\(index).pdf")
+      try DocumentText.write(NSAttributedString(string: words), to: page, as: .pdf)
+      document.insert(try XCTUnwrap(PDFDocument(url: page)?.page(at: 0)), at: index)
+    }
+    document.documentAttributes = [PDFDocumentAttribute.authorAttribute: "Mario Rossi"]
+    let url = path("contract.pdf")
+    XCTAssertTrue(document.write(to: url))
+    return url
+  }
+
+  private func files(beside url: URL) throws -> [String] {
+    try FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path).sorted()
+  }
+
+  /// PDF to PDF was a picture of every page, one file per page: the words
+  /// could no longer be found or copied, and a three-page contract came back
+  /// as three files. With nothing that redraws a page, it is the same document.
+  func test_pdfToPDFKeepsTheDocument() async throws {
+    let output = try await convert(try await contract(), to: .pdf)
+
+    XCTAssertEqual(try files(beside: output), ["contract.pdf"], "one document in, one document out")
+    let written = try XCTUnwrap(PDFDocument(url: output))
+    XCTAssertEqual(written.pageCount, 3)
+    let words = written.string ?? ""
+    for expected in ["Forge keeps the words", "on every page", "of the contract"] {
+      XCTAssertTrue(words.contains(expected), "lost “\(expected)”; has: \(words)")
+    }
+  }
+
+  /// The use the README shows: the same contract, without who wrote it.
+  func test_pdfToPDFWithoutItsAuthorStillHasItsWords() async throws {
+    var preset = RulePreset.make(format: .pdf, category: .document)
+    preset.actions.append(.stripMetadata(policy: .stripAll))
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: try await contract()), with: preset,
+      destinationMode: .copyTo, destinationURL: try folder("anonymous")
+    ) { _ in }
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+
+    let written = try XCTUnwrap(PDFDocument(url: try XCTUnwrap(entry.outputURL)))
+    XCTAssertEqual(written.pageCount, 3)
+    XCTAssertTrue(written.string?.contains("of the contract") == true)
+    XCTAssertNil(written.documentAttributes?[PDFDocumentAttribute.authorAttribute], "who wrote it is gone")
+  }
+
+  /// Asked to redraw the pages - in grey, or smaller - they are pictures of
+  /// pages, and still one document in the order they were in.
+  func test_pdfRedrawnIsStillOneDocument() async throws {
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: try await contract()),
+      with: .make(format: .pdf, filters: [.grayscale], category: .document),
+      destinationMode: .copyTo, destinationURL: try folder("grey")
+    ) { _ in }
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+
+    let output = try XCTUnwrap(entry.outputURL)
+    XCTAssertEqual(try files(beside: output), ["contract.pdf"])
+    XCTAssertEqual(PDFDocument(url: output)?.pageCount, 3)
   }
 
   func test_plainTextRoundTrip() async throws {

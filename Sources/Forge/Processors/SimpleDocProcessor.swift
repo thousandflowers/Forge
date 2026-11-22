@@ -67,10 +67,14 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       if outputType.conforms(to: .plainText) {
         return try readText(from: input, operations: operations, to: output, progress: progress)
       }
+      // Asked to stay a PDF it stays the document it was. Pouring the text into
+      // new pages would lose every picture and every layout; a picture of each
+      // page, which is what this did, lost every word instead.
+      if outputType.conforms(to: .pdf) {
+        return try keepPDF(input, at: output, operations: operations, progress: progress)
+      }
       // Asked for another document format, it becomes that document's text.
-      // PDF to PDF stays a render: pouring the text into new pages would lose
-      // every picture and every layout the original had.
-      if !outputType.conforms(to: .pdf), DocumentText.canWrite(outputType) {
+      if DocumentText.canWrite(outputType) {
         return try await rewritePDF(input, as: outputType, at: output, operations: operations, progress: progress)
       }
       return try renderPDF(input, to: output, operations: operations, progress: progress)
@@ -80,6 +84,60 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
   }
 
   // MARK: - PDF
+
+  /// A PDF that is to stay a PDF: one document in, one document out.
+  ///
+  /// With nothing in the chain that redraws a page it is the file itself, so
+  /// its words can still be found and copied and its links still go somewhere;
+  /// who wrote it is taken off afterwards, where the privacy level asks. A
+  /// chain that does redraw - a filter, a new size - makes pictures of the
+  /// pages, which is what was asked for, and keeps them in one file in the
+  /// order they were in.
+  private func keepPDF(
+    _ input: URL,
+    at output: URL,
+    operations: [Operation],
+    progress: @escaping @Sendable (Double) -> Void
+  ) throws -> ProcessingResult {
+    let start = Date()
+
+    guard let pdf = PDFDocument(url: input) else {
+      throw ProcessingError.conversionFailed(reason: "Cannot open \(input.lastPathComponent)")
+    }
+    try Self.refuseIfLocked(pdf, named: input.lastPathComponent)
+    guard pdf.pageCount > 0 else {
+      throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no pages")
+    }
+
+    let redraws = operations.contains { operation in
+      switch operation {
+      case .resize, .filter: return true
+      default: return false
+      }
+    }
+    guard redraws else {
+      try Data(contentsOf: input, options: .mappedIfSafe).write(to: output, options: .atomic)
+      progress(1.0)
+      return try Self.result(output, since: start)
+    }
+
+    let scratch = FileManager.default.temporaryDirectory
+      .appendingPathComponent("forge-pages-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: scratch) }
+
+    var pages: [URL] = []
+    for index in 0..<pdf.pageCount {
+      try Task.checkCancellation()
+      guard let page = pdf.page(at: index) else { continue }
+      let drawn = scratch.appendingPathComponent("\(index).pdf")
+      _ = try render(page, to: drawn, as: .pdf, operations: operations)
+      pages.append(drawn)
+      progress(Double(index + 1) / Double(pdf.pageCount))
+    }
+    try Merger.pdf(from: pages, to: output)
+    return try Self.result(output, since: start)
+  }
 
   /// Rasterise every page. The first lands on `output`; the rest become
   /// siblings numbered after it, because a document converter that silently

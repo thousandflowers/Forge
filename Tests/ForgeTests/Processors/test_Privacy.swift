@@ -204,6 +204,47 @@ final class PrivacyTests: BaseTestCase {
   }
 
   /// A PDF has no location, so asking for the location to go changes nothing.
+  /// A PDF says who wrote it twice: in its Info dictionary, and in an XMP
+  /// packet. Taking the first and copying the second across left the name in a
+  /// file that had been through "remove identifying metadata" - which is what
+  /// `contract_privacy.pdf` in the README is for.
+  func test_pdf_losesItsAuthorFromTheXMPPacketToo() throws {
+    let url = path("contract.pdf")
+    var box = CGRect(x: 0, y: 0, width: 300, height: 200)
+    let context = try XCTUnwrap(CGContext(url as CFURL, mediaBox: &box, [
+      kCGPDFContextAuthor: "Mario Rossi",
+      kCGPDFContextTitle: "Contratto",
+    ] as CFDictionary))
+    let packet = """
+    <?xpacket begin="\u{FEFF}" id="W5M0MpCehiHzreSzNTczkc9d"?>
+    <x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about="" xmlns:pdf="http://ns.adobe.com/pdf/1.3/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <pdf:Author>Mario Rossi</pdf:Author><dc:creator><rdf:Seq><rdf:li>Mario Rossi</rdf:li></rdf:Seq></dc:creator>
+    </rdf:Description></rdf:RDF></x:xmpmeta>
+    <?xpacket end="w"?>
+    """
+    context.addDocumentMetadata(Data(packet.utf8) as CFData)
+    for _ in 0..<2 {
+      context.beginPDFPage(nil)
+      context.setFillColor(CGColor(gray: 0.5, alpha: 1))
+      context.fill(box)
+      context.endPDFPage()
+    }
+    context.closePDF()
+    try Self.expect(["Mario Rossi"], in: url)
+    XCTAssertTrue(Self.packet(of: url).contains("Mario Rossi"), "the fixture carries the packet")
+
+    try PrivacyFilter.strip(pdfAt: url, to: .stripAll)
+
+    // Both ways: in the bytes, and in the packet as a reader decodes it, since
+    // a packet can be stored compressed and say nothing to a search.
+    try Self.expectNone(of: ["Mario Rossi"], in: url)
+    XCTAssertFalse(Self.packet(of: url).contains("Mario Rossi"), Self.packet(of: url))
+    let document = try XCTUnwrap(PDFDocument(url: url), "and it is still a PDF")
+    XCTAssertEqual(document.pageCount, 2)
+    XCTAssertEqual(document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String, "Contratto")
+  }
+
   func test_pdf_isLeftAloneWhenOnlyTheLocationWasAskedAbout() throws {
     let source = try Self.pdf(at: path("contract.pdf"), author: "Somebody Real", title: "Contract")
     try PrivacyFilter.strip(pdfAt: source, to: .stripLocation)
@@ -356,6 +397,16 @@ final class PrivacyTests: BaseTestCase {
 
     XCTAssertEqual(entry.status, .completed)
     return try XCTUnwrap(entry.outputURL)
+  }
+
+  /// The document's XMP packet, decoded the way a reader would.
+  private static func packet(of url: URL) -> String {
+    guard let document = CGPDFDocument(url as CFURL), let catalog = document.catalog else { return "" }
+    var stream: CGPDFStreamRef?
+    guard CGPDFDictionaryGetStream(catalog, "Metadata", &stream), let stream else { return "" }
+    var format = CGPDFDataFormat.raw
+    guard let data = CGPDFStreamCopyData(stream, &format) else { return "" }
+    return String(decoding: data as Data, as: UTF8.self)
   }
 
   private static func properties(of url: URL) throws -> [CFString: Any] {

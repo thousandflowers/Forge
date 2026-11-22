@@ -180,9 +180,20 @@ enum PrivacyFilter {
     if let title = pdf.documentAttributes?[PDFDocumentAttribute.titleAttribute] {
       attributes[PDFDocumentAttribute.titleAttribute] = title
     }
-    pdf.documentAttributes = attributes
 
-    guard pdf.write(to: url) else {
+    // A PDF says who wrote it twice: in its Info dictionary and in an XMP
+    // packet. Rewriting the same document changed the first and carried the
+    // second across untouched - compressed, where no search finds it. The
+    // pages are moved into a new document, which has neither.
+    let clean = PDFDocument()
+    while let page = pdf.page(at: 0) {
+      pdf.removePage(at: 0)
+      clean.insert(page, at: clean.pageCount)
+    }
+    clean.outlineRoot = pdf.outlineRoot
+    clean.documentAttributes = attributes
+
+    guard clean.write(to: url) else {
       throw ProcessingError.conversionFailed(
         reason: "Cannot rewrite \(url.lastPathComponent) without its author details"
       )
