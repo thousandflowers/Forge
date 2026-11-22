@@ -38,6 +38,7 @@ private struct FolderRow: View {
   let folder: MonitoredFolder
 
   private var preset: RulePreset? { model.presets.first { $0.id == folder.ruleId } }
+  @State private var confirmingRemoval = false
 
   var body: some View {
     HStack(spacing: 14) {
@@ -65,14 +66,22 @@ private struct FolderRow: View {
       Menu {
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder.url]) }
         Divider()
-        Button("Remove", role: .destructive) { remove() }
+        Button("Remove…", role: .destructive) { confirmingRemoval = true }
       } label: { Image(systemName: "ellipsis.circle") }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .accessibilityLabel("More")
     }
     .padding(.vertical, 6)
     .contextMenu {
       Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder.url]) }
+      Button("Remove…", role: .destructive) { confirmingRemoval = true }
+    }
+    // Deleting a preset asks; so does clearing the history. This went at once.
+    .confirmationDialog("Stop watching “\(folder.displayName)”?", isPresented: $confirmingRemoval) {
       Button("Remove", role: .destructive) { remove() }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("Forge stops converting what arrives in it. The folder and everything in it stay where they are.")
     }
   }
 

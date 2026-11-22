@@ -11,6 +11,11 @@ struct TemplateField: View {
   /// What the sample file is converted to, so the preview says `.jpeg` rather
   /// than guessing.
   var sampleExtension: String = "jpeg"
+  /// The size the example pretends the file came out at. A preset that
+  /// resizes to 800 was shown `holiday_v1920.jpeg`: the example was a number
+  /// of its own, and read like a promise.
+  var sampleWidth: Int = 1920
+  var sampleHeight: Int = 1080
   /// Shown when the field is empty, for a preset with no template of its own
   /// that follows the general one.
   var placeholder: String = "{name}"
@@ -60,7 +65,7 @@ struct TemplateField: View {
     )
     // The dynamic half is filled in on purpose: a preview whose second half was
     // still `{width}` would say nothing about what the name becomes.
-    let dynamic = NameTemplate.Dynamic(width: 1920, height: 1080, bytes: 2_400_000, quality: 72)
+    let dynamic = NameTemplate.Dynamic(width: sampleWidth, height: sampleHeight, bytes: 2_400_000, quality: 72)
 
     let resolved = NameTemplate.resolve(text, with: context, and: dynamic)
     let name = resolved.isEmpty ? context.name : resolved

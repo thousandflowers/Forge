@@ -24,6 +24,10 @@ struct MenuBarView: View {
 
       if let last = model.history.first {
         Text("Last: \(last.fileURL.lastPathComponent) — \(last.status.displayName)")
+        // Why, when it failed: it used to be in History and nowhere else.
+        if last.status != .completed, let reason = last.errorMessage {
+          Text(reason)
+        }
       }
 
       Button("Open Forge") {
@@ -46,12 +50,15 @@ struct MenuBarView: View {
     files.allowsMultipleSelection = true
     files.canChooseDirectories = false
     files.prompt = "Convert"
+    // Both panels were titled "Open" and said nothing else.
+    files.message = "Choose the files to convert with “\(preset.name)”."
     guard files.runModal() == .OK, !files.urls.isEmpty else { return }
 
     let destination = NSOpenPanel()
     destination.canChooseDirectories = true
     destination.canChooseFiles = false
     destination.prompt = "Save Into"
+    destination.message = "Choose the folder the converted files go into."
     guard destination.runModal() == .OK, let folder = destination.url else { return }
 
     model.convertFromMenuBar(files.urls, with: preset, into: folder)

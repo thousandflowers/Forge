@@ -50,6 +50,8 @@ private struct HistoryRow: View {
         .foregroundStyle(entry.status.color)
         .font(.title3)
         .help(entry.status.displayName)
+        // VoiceOver read the symbol's own name: "selected", "close".
+        .accessibilityLabel(entry.status.displayName)
 
       VStack(alignment: .leading, spacing: 2) {
         Text(entry.fileURL.lastPathComponent)

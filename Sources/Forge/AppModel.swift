@@ -283,8 +283,13 @@ final class AppModel: ObservableObject {
         limit: limit,
         coordinator: self.coordinator
       ) { event in
-        guard case .finished(_, _, _, let outputs, _) = event, !outputs.isEmpty else { return }
-        Task { @MainActor in outputs.forEach(self.remember) }
+        guard case .finished(_, let status, _, let outputs, let reason) = event else { return }
+        Task { @MainActor in
+          outputs.forEach(self.remember)
+          // A conversion started from the menu bar that fails has no row to
+          // turn red. It said nothing unless notifications were on.
+          if status == .failed, let reason { self.lastError = reason }
+        }
       }
 
       await self.refreshHistory()
@@ -306,7 +311,16 @@ final class AppModel: ObservableObject {
       return
     }
     preset.position = (presets.map(\.position).max() ?? 0) + 1
+    // A run that was not a saved preset - the command line, a batch set up by
+    // hand - has no name worth keeping: "command line (from history)". It is
+    // named after what it was done to.
+    if !presets.contains(where: { $0.id == entry.ruleId }) {
+      preset.name = "Like \(entry.fileURL.lastPathComponent)"
+    }
     savePreset(preset)
+    // And shown: nothing on the History screen changed, so there was no way
+    // to tell it had been saved.
+    section = .presets
   }
 
   func open(_ urls: [URL]) {

@@ -474,19 +474,32 @@ struct PresetEditorView: View {
     let root = container == Self.rootID
     let empty = root ? steps.isEmpty && !showsFormats && parameters.isEmpty : false
     return connected {
-      Text(empty ? "Drag a block here from the library, or click it. They run top to bottom."
-        : root ? "Drop the next block here" : "Drop the next step of this path here")
-        .font(root ? .callout : .caption)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, root ? 14 : 8)
-        .background(
-          RoundedRectangle(cornerRadius: 10)
-            .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
-            .foregroundStyle(isDropTarget(.endOf(container)) ? Color.accentColor : Color.secondary.opacity(0.3))
-        )
-        .frame(maxWidth: 640)
-        .frame(maxWidth: .infinity)
+      // A menu as well as a place to drop. Clicking a block in the library adds
+      // it to the end of the preset, so the only way into a path of an If or a
+      // Split was to drag: nothing for the keyboard, nothing for VoiceOver.
+      Menu {
+        ForEach(LibraryEntry.all(for: category).filter(available)) { entry in
+          Button(entry.title) { land(entry.id, at: .endOf(container)) }
+        }
+      } label: {
+        Text(empty ? "Drag a block here from the library, or click it. They run top to bottom."
+          : root ? "Drop the next block here, or choose one" : "Drop the next step of this path here, or choose one")
+          .font(root ? .callout : .caption)
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity)
+          .padding(.vertical, root ? 14 : 8)
+          .contentShape(Rectangle())
+      }
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .accessibilityLabel(root ? "Add a block at the end" : "Add a step to this path")
+      .background(
+        RoundedRectangle(cornerRadius: 10)
+          .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
+          .foregroundStyle(isDropTarget(.endOf(container)) ? Color.accentColor : Color.secondary.opacity(0.3))
+      )
+      .frame(maxWidth: 640)
+      .frame(maxWidth: .infinity)
     }
     .dropSpot(.endOf(container), into: self)
   }
@@ -699,7 +712,10 @@ struct PresetEditorView: View {
       nameTemplate = ""
       showsTemplate = false
     }, inline: false) {
-      TemplateField(title: "Names files", template: $nameTemplate, sampleExtension: outputExtension)
+      TemplateField(
+        title: "Names files", template: $nameTemplate, sampleExtension: outputExtension,
+        sampleWidth: exampleSize.width, sampleHeight: exampleSize.height
+      )
     }
   }
 
@@ -748,6 +764,22 @@ struct PresetEditorView: View {
   }
 
   // MARK: - Formats
+
+  /// The size the name example shows: the one this preset resizes to, where
+  /// it resizes, keeping the example photograph's shape for a side left out.
+  private var exampleSize: (width: Int, height: Int) {
+    let photograph = (width: 1920, height: 1080)
+    for step in steps {
+      guard case .resize(let width, let height, _) = step.operation else { continue }
+      switch (width, height) {
+      case (let width?, let height?): return (width, height)
+      case (let width?, nil): return (width, width * photograph.height / photograph.width)
+      case (nil, let height?): return (height * photograph.width / photograph.height, height)
+      case (nil, nil): continue
+      }
+    }
+    return photograph
+  }
 
   private var outputExtension: String {
     formats.compactMap { $0.type.flatMap(FormatCatalog.fileExtension(for:)) }.first ?? "jpeg"
