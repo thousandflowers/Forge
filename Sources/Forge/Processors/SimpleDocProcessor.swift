@@ -80,7 +80,9 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       return try renderPDF(input, to: output, operations: operations, progress: progress)
     }
 
-    return try await convertText(input, from: inputType, to: outputType, at: output, progress: progress)
+    return try await convertText(
+      input, from: inputType, to: outputType, at: output, operations: operations, progress: progress
+    )
   }
 
   // MARK: - PDF
@@ -394,6 +396,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     from inputType: UTType,
     to outputType: UTType,
     at output: URL,
+    operations: [Operation],
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
     let start = Date()
@@ -404,8 +407,9 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     }
 
     let document = try DocumentText.read(input, as: inputType)
+    let details = DocumentText.details(of: input, as: inputType, keeping: PrivacyFilter.policy(in: operations))
     progress(0.7)
-    try DocumentText.write(document, to: output, as: outputType)
+    try DocumentText.write(document, to: output, as: outputType, details: details)
     progress(1.0)
     return try Self.result(output, since: start)
   }

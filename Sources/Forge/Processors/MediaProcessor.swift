@@ -318,11 +318,12 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     if privacy.removesSomething {
       if let filter = PrivacyFilter.filter(for: privacy) {
         session.metadataItemFilter = filter
-      } else {
-        session.metadata = PrivacyFilter.metadata(
-          try await asset.load(.metadata), to: privacy
-        )
       }
+      // Both, at the thorough level: AVFoundation's filter lets the copyright
+      // line and the camera through, and that line is usually somebody's name.
+      session.metadata = PrivacyFilter.metadata(
+        try await asset.load(.metadata), to: privacy
+      )
     }
     // Metadata is deliberately not set: an export session with none of its own
     // carries the source's across, and setting it to the common key space
@@ -589,9 +590,13 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     type: UTType,
     privacy: PrivacyPolicy = .keepAll
   ) async throws {
-    let tags = PrivacyFilter.metadata(
+    var tags = PrivacyFilter.metadata(
       try await AVURLAsset(url: input).load(.metadata), to: privacy
     )
+    // Into another format, only the names every format shares mean anything.
+    if UTType(filenameExtension: input.pathExtension) != type {
+      tags = await PrivacyFilter.portable(tags)
+    }
     guard !tags.isEmpty else { return }
 
     guard let session = AVAssetExportSession(
@@ -600,7 +605,12 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     ) else { return }
 
     let fileType = AVFileType(type.identifier)
-    guard session.supportedFileTypes.contains(fileType) else { return }
+    guard session.supportedFileTypes.contains(fileType) else {
+      // FLAC, WAV, AIFF: macOS writes the sound and has no way to write a tag.
+      // ffmpeg does, where it is installed; without it they go untagged.
+      try? await Self.tagWithFFmpeg(output, tags)
+      return
+    }
 
     let tagged = output.deletingLastPathComponent()
       .appendingPathComponent(".forge-tags-\(UUID().uuidString).\(output.pathExtension)")
@@ -609,12 +619,48 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     session.metadata = tags
 
     await session.export()
-    guard session.status == .completed else {
-      // Tags are worth having and not worth failing a conversion over: the
-      // audio is already written and correct.
+    // Tags are worth having and not worth failing a conversion over: the audio
+    // is already written and correct. WAV, AIFF and CAF either refuse this
+    // export or go through it without complaint and without the tags; for
+    // those ffmpeg is asked, where it is installed.
+    // Not merely "has metadata": a WAV comes back with one item, its length.
+    let written = (try? await AVURLAsset(url: tagged).load(.metadata)) ?? []
+    guard session.status == .completed, written.contains(where: { $0.commonKey != nil }) else {
       try? FileManager.default.removeItem(at: tagged)
+      try? await Self.tagWithFFmpeg(output, tags)
       return
     }
+    _ = try FileManager.default.replaceItemAt(output, withItemAt: tagged)
+  }
+
+  /// The tags, written by ffmpeg onto a copy of the finished file. Only what
+  /// was asked to be kept is named, so nothing else can come across.
+  private static func tagWithFFmpeg(_ output: URL, _ tags: [AVMetadataItem]) async throws {
+    guard let ffmpeg = ExternalTools.locate("ffmpeg") else { return }
+    // Where ffmpeg's name for a tag is not the one AVFoundation uses.
+    let itsName: [AVMetadataKey: String] = [
+      .commonKeyAlbumName: "album", .commonKeyCopyrights: "copyright", .commonKeyCreationDate: "date",
+      .commonKeyDescription: "comment", .commonKeyType: "genre",
+    ]
+    var named: [String] = []
+    for tag in tags {
+      guard let key = tag.commonKey, let value = try? await tag.load(.stringValue) else { continue }
+      named += ["-metadata", "\(itsName[key] ?? key.rawValue)=\(value)"]
+    }
+    guard !named.isEmpty else { return }
+    // AIFF has room for a name and little else unless its tags go in an ID3
+    // chunk, which ffmpeg writes only when asked.
+    if UTType(filenameExtension: output.pathExtension)?.conforms(to: .aiff) == true {
+      named += ["-write_id3v2", "1"]
+    }
+
+    let tagged = output.deletingLastPathComponent()
+      .appendingPathComponent(".forge-tags-\(UUID().uuidString).\(output.pathExtension)")
+    defer { try? FileManager.default.removeItem(at: tagged) }
+    try ExternalTools.run(ffmpeg, [
+      "-hide_banner", "-loglevel", "error", "-y", "-i", output.path,
+      "-map", "0", "-c", "copy", "-map_metadata", "-1",
+    ] + named + [tagged.path])
     _ = try FileManager.default.replaceItemAt(output, withItemAt: tagged)
   }
 

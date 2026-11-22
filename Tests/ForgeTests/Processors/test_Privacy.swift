@@ -1,4 +1,6 @@
 import XCTest
+import AppKit
+import AVFoundation
 import ImageIO
 import PDFKit
 import UniformTypeIdentifiers
@@ -180,6 +182,120 @@ final class PrivacyTests: BaseTestCase {
     XCTAssertNil(stripped[kCGImagePropertyIPTCDictionary])
     XCTAssertEqual(stripped[kCGImagePropertyOrientation] as? Int, 6)
     XCTAssertNotNil(stripped[kCGImagePropertyProfileName])
+  }
+
+  // MARK: - Films and recordings
+
+  private func film(at name: String) async throws -> URL {
+    let url = path(name)
+    try await Fixture.writePictureTrack(to: url, seconds: 1, size: CGSize(width: 320, height: 240), metadata: [
+      Fixture.tag(.commonIdentifierTitle, "Titolo Film"),
+      Fixture.tag(.commonIdentifierLocation, "+45.4408+012.3155/"),
+      Fixture.tag(.commonIdentifierCopyrights, "diritti-di-mario"),
+      Fixture.tag(.commonIdentifierMake, "TestCam"),
+      Fixture.tag(.commonIdentifierDescription, "nota privata"),
+    ])
+    return url
+  }
+
+  private func run(_ source: URL, to format: UTType, _ policy: PrivacyPolicy, category: PresetCategory) async throws -> URL {
+    var preset = RulePreset.make(format: format, category: category)
+    preset.actions.append(.stripMetadata(policy: policy))
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source), with: preset,
+      destinationMode: .copyTo, destinationURL: try folder("out-\(UUID().uuidString.prefix(6))")
+    ) { _ in }
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+    return try XCTUnwrap(entry.outputURL)
+  }
+
+  /// "Remove the location" left where a film was shot in the film: the test
+  /// for a location key looked for the word in the key's name, and QuickTime
+  /// calls it `©xyz`.
+  func test_film_stripLocation_takesWhereItWasShot() async throws {
+    let source = try await film(at: "holiday.mov")
+    try Self.expect(["+45.4408", "Titolo Film"], in: source)
+
+    for format in [UTType.quickTimeMovie, .mpeg4Movie] {
+      let output = try await run(source, to: format, .stripLocation, category: .video)
+      try Self.expectNone(of: ["+45.4408", "45.44"], in: output)
+      try Self.expect(["Titolo Film"], in: output)  // only the place was asked about
+    }
+  }
+
+  /// "Remove identifying metadata" left the copyright line and the camera.
+  func test_film_stripAll_takesTheCopyrightTheCameraAndTheNote() async throws {
+    let source = try await film(at: "holiday.mov")
+    try Self.expect(["diritti-di-mario", "TestCam", "nota privata"], in: source)
+
+    for format in [UTType.quickTimeMovie, .mpeg4Movie] {
+      let output = try await run(source, to: format, .stripAll, category: .video)
+      try Self.expectNone(of: ["diritti-di-mario", "TestCam", "nota privata", "+45.4408"], in: output)
+    }
+  }
+
+  /// On a recording it removed nothing at all: the comment and the copyright
+  /// line stayed. What the recording is called and who performs it stay on
+  /// purpose - that is what a music file is.
+  func test_recording_stripAll_takesTheNoteAndTheCopyrightAndKeepsTheTitle() async throws {
+    let source = try await Fixture.taggedAudio(at: path("song.m4a"), title: "Titolo Brano", artist: "Banda", more: [
+      Fixture.tag(.commonIdentifierCopyrights, "diritti-di-mario"),
+      Fixture.tag(.commonIdentifierDescription, "nota privata"),
+      Fixture.tag(.commonIdentifierSoftware, "SecretApp"),
+    ])
+    try Self.expect(["diritti-di-mario", "Titolo Brano"], in: source)
+    let m4a = try XCTUnwrap(UTType("com.apple.m4a-audio"))
+
+    let output = try await run(source, to: m4a, .stripAll, category: .audio)
+
+    try Self.expectNone(of: ["diritti-di-mario", "nota privata", "SecretApp"], in: output)
+    try Self.expect(["Titolo Brano", "Banda"], in: output)
+  }
+
+  /// Keeping everything lost everything whenever the recording changed family:
+  /// the tags were handed over under the names the old format calls them, and
+  /// the new one did not know those names.
+  func test_recording_keepsItsTagsWhenItChangesFamily() async throws {
+    let source = try await Fixture.taggedAudio(
+      at: path("memo.mov"), title: "Titolo Brano", artist: "Banda",
+      preset: AVAssetExportPresetPassthrough, fileType: .mov
+    )
+    try Self.expect(["Titolo Brano", "Banda"], in: source)
+    let m4a = try XCTUnwrap(UTType("com.apple.m4a-audio"))
+
+    let output = try await run(source, to: m4a, .keepAll, category: .audio)
+
+    try Self.expect(["Titolo Brano", "Banda"], in: output)
+  }
+
+  // MARK: - Documents
+
+  /// Keeping everything lost who wrote a document and what it is called.
+  @MainActor
+  func test_document_keepsItsAuthorAndTitle_andLosesTheAuthorWhenAsked() async throws {
+    let source = path("letter.docx")
+    let words = NSAttributedString(string: "HeadingAlpha and the rest of the letter.")
+    try words.data(from: NSRange(location: 0, length: words.length), documentAttributes: [
+      .documentType: NSAttributedString.DocumentType.officeOpenXML,
+      .author: "Mario Rossi", .title: "Titolo Documento", .company: "Azienda Privata",
+    ]).write(to: source)
+    let docx = try XCTUnwrap(UTType("org.openxmlformats.wordprocessingml.document"))
+    func attributes(of url: URL) throws -> [NSAttributedString.DocumentAttributeKey: Any] {
+      var read: NSDictionary?
+      _ = try NSAttributedString(url: url, options: [:], documentAttributes: &read)
+      return (read as? [NSAttributedString.DocumentAttributeKey: Any]) ?? [:]
+    }
+    XCTAssertEqual(try attributes(of: source)[.author] as? String, "Mario Rossi", "the fixture carries it")
+
+    let kept = try attributes(of: try await run(source, to: docx, .keepAll, category: .document))
+    XCTAssertEqual(kept[.author] as? String, "Mario Rossi")
+    XCTAssertEqual(kept[.title] as? String, "Titolo Documento")
+
+    let stripped = try await run(source, to: docx, .stripAll, category: .document)
+    let left = try attributes(of: stripped)
+    XCTAssertNil(left[.author])
+    XCTAssertNil(left[.company])
+    XCTAssertEqual(left[.title] as? String, "Titolo Documento", "what it is called is not who wrote it")
   }
 
   // MARK: - PDF

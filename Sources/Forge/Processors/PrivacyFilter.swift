@@ -219,10 +219,36 @@ enum PrivacyFilter {
     case .stripLocation:
       return items.filter { !isLocation($0) }
     case .stripAll:
-      // Deliberately narrow rather than empty: a title and an artist are what a
-      // music file is, and removing those is not privacy, it is loss.
-      return items.filter { !isLocation($0) && !isIdentifying($0) }
+      // Kept by name, not removed by name. A list of what gives somebody away
+      // is never finished - it missed the copyright line, the comment and the
+      // encoder - and a list of what a recording *is* can be: what it is
+      // called, who performs it, which album, which track. Those stay, because
+      // removing them is not privacy, it is loss.
+      return items.filter(saysWhatItIs)
     }
+  }
+
+  /// The same tags under the names every container shares.
+  ///
+  /// A tag is filed under the name its own format gives it - `TIT2` in an MP3,
+  /// `©nam` in an M4A - and handed across as it was, a recording that changed
+  /// family arrived with none: the new format did not know the old names.
+  /// What has no shared name cannot be carried and is left behind.
+  static func portable(_ items: [AVMetadataItem]) async -> [AVMetadataItem] {
+    var seen: Set<AVMetadataKey> = []
+    var carried: [AVMetadataItem] = []
+    for item in items {
+      guard let key = item.commonKey, !seen.contains(key),
+            let value = try? await item.load(.value) else { continue }
+      seen.insert(key)
+      let copy = AVMutableMetadataItem()
+      copy.keySpace = .common
+      copy.key = key.rawValue as NSString
+      copy.value = value
+      copy.extendedLanguageTag = item.extendedLanguageTag
+      carried.append(copy)
+    }
+    return carried
   }
 
   /// What an export session should be told, where the session filters for
@@ -233,14 +259,22 @@ enum PrivacyFilter {
   }
 
   private static func isLocation(_ item: AVMetadataItem) -> Bool {
+    if item.commonKey == .commonKeyLocation { return true }
     guard let identifier = item.identifier?.rawValue.lowercased() else { return false }
-    return identifier.contains("location")
+    // Not only the word: QuickTime user data files the place under `©xyz`,
+    // and 3GPP under `loci`.
+    return ["location", "xyz", "loci", "gps"].contains { identifier.contains($0) }
   }
 
-  private static func isIdentifying(_ item: AVMetadataItem) -> Bool {
+  private static let whatARecordingIs: Set<AVMetadataKey> = [
+    .commonKeyTitle, .commonKeyArtist, .commonKeyAlbumName, .commonKeyArtwork,
+  ]
+
+  private static func saysWhatItIs(_ item: AVMetadataItem) -> Bool {
+    if let key = item.commonKey { return whatARecordingIs.contains(key) }
     guard let identifier = item.identifier?.rawValue.lowercased() else { return false }
-    return ["make", "model", "software", "creationdate", "author", "owner", "device"]
-      .contains { identifier.contains($0) }
+    // Track, disc and genre have no shared name; each format has its own.
+    return ["trkn", "tracknumber", "disk", "discnumber", "gnre", "genre"].contains { identifier.contains($0) }
   }
 }
 

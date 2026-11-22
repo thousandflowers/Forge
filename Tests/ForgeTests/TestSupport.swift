@@ -368,7 +368,10 @@ enum Fixture {
     at url: URL,
     seconds: Double = 1,
     title: String,
-    artist: String
+    artist: String,
+    more: [AVMetadataItem] = [],
+    preset: String = AVAssetExportPresetAppleM4A,
+    fileType: AVFileType = .m4a
   ) async throws -> URL {
     let plain = url.deletingLastPathComponent()
       .appendingPathComponent("plain-\(UUID().uuidString).wav")
@@ -377,16 +380,16 @@ enum Fixture {
 
     guard let session = AVAssetExportSession(
       asset: AVURLAsset(url: plain),
-      presetName: AVAssetExportPresetAppleM4A
+      presetName: preset
     ) else {
       throw Failure("Cannot make a tagged recording")
     }
     session.outputURL = url
-    session.outputFileType = .m4a
+    session.outputFileType = fileType
     session.metadata = [
       tag(.commonIdentifierTitle, title),
       tag(.commonIdentifierArtist, artist),
-    ]
+    ] + more
     await session.export()
     guard session.status == .completed else {
       throw Failure("Cannot write a tagged recording: \(session.error?.localizedDescription ?? "-")")
@@ -394,7 +397,7 @@ enum Fixture {
     return url
   }
 
-  private static func tag(_ identifier: AVMetadataIdentifier, _ value: String) -> AVMetadataItem {
+  static func tag(_ identifier: AVMetadataIdentifier, _ value: String) -> AVMetadataItem {
     let item = AVMutableMetadataItem()
     item.identifier = identifier
     item.keySpace = .common
@@ -402,7 +405,7 @@ enum Fixture {
     return item
   }
 
-  private static func writePictureTrack(
+  static func writePictureTrack(
     to url: URL,
     seconds: Double,
     size: CGSize,
