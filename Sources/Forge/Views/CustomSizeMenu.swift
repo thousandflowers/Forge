@@ -56,8 +56,12 @@ struct CustomSizeMenu: View {
       // and ran into the popover's edges.
       .pickerStyle(.menu).labelsHidden().fixedSize()
       .accessibilityLabel(Text("How it fits"))
-      Text("From \(Int(source.width)) × \(Int(source.height))")
-        .font(.caption).foregroundStyle(.secondary)
+      // Only when it is a real picture's size. With none to show, the frame is
+      // a stand-in, and "From 3000 × 2000" under it was a size no file had.
+      if image != nil {
+        Text("From \(Int(source.width)) × \(Int(source.height))")
+          .font(.caption).foregroundStyle(.secondary)
+      }
     }
     .padding(14)
     .onAppear { shape = Self.proportion(width: width, height: height) }

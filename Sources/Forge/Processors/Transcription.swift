@@ -78,15 +78,22 @@ enum Transcription {
     let seconds = (try? await AVURLAsset(url: url).load(.duration).seconds) ?? 0
     let budget = min(max(seconds * 2, 30), 600)
 
+    // A long recording is recognised a stretch at a time, and each answer
+    // holds only its own stretch. Keeping just the final one returned the last
+    // minute of a three-minute recording and called it the transcript.
+    let stretches = Stretches()
     let task = recognizer.recognitionTask(with: request) { result, error in
       if let error {
-        gate.finish(.failure(error))
+        // What was heard before the error is still what was said.
+        let heard = stretches.text
+        gate.finish(heard.isEmpty ? .failure(error) : .success(heard))
         return
       }
       guard let result else { return }
       progress(0.5)
+      stretches.add(result.bestTranscription.formattedString)
       if result.isFinal {
-        gate.finish(.success(result.bestTranscription.formattedString))
+        gate.finish(.success(stretches.text))
       }
     }
     let deadline = Task {
@@ -101,6 +108,35 @@ enum Transcription {
     }
 
     return try await gate.value()
+  }
+}
+
+/// The transcript so far, a stretch at a time.
+///
+/// An answer either carries on from the one before - the same words and more -
+/// in which case it replaces it, or starts afresh, in which case it follows it.
+private final class Stretches: @unchecked Sendable {
+  private let lock = NSLock()
+  private var parts: [String] = []
+
+  func add(_ text: String) {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    lock.lock()
+    defer { lock.unlock() }
+    if let last = parts.last, trimmed.hasPrefix(last) {
+      parts[parts.count - 1] = trimmed
+    } else if let last = parts.last, last.hasPrefix(trimmed) {
+      return
+    } else {
+      parts.append(trimmed)
+    }
+  }
+
+  var text: String {
+    lock.lock()
+    defer { lock.unlock() }
+    return parts.joined(separator: " ")
   }
 }
 
