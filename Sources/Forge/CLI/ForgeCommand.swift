@@ -153,6 +153,8 @@ struct RecipeOptions: ParsableArguments {
       category: .custom,
       ocrLanguages: languages
     )
+    // The extension as typed, where the format goes by more than one.
+    if let format { preset.outputExtension = format.lowercased() }
     if let codec {
       guard Codec.available.contains(codec) else {
         throw ValidationError("This Mac cannot encode \(codec.title). Try `forge formats`.")

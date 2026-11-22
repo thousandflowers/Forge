@@ -617,9 +617,10 @@ actor ProcessingCoordinator {
     // format takes the format's own name.
     let format = preset.targetFormat ?? file.fileType
     let own = file.url.pathExtension
-    let outputExtension = (format.tags[.filenameExtension] ?? []).contains(own.lowercased())
-      ? own
-      : FormatCatalog.fileExtension(for: format) ?? own
+    let asked = preset.outputExtension.flatMap { (format.tags[.filenameExtension] ?? []).contains($0) ? $0 : nil }
+    let outputExtension = asked
+      ?? ((format.tags[.filenameExtension] ?? []).contains(own.lowercased()) ? own : nil)
+      ?? FormatCatalog.fileExtension(for: format) ?? own
     let suffix = Self.sizeSuffix(for: preset)
     let context = Self.nameContext(
       for: file, preset: preset, operations: operations, extension: outputExtension, counter: counter

@@ -48,6 +48,10 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   /// from the output's name.
   var nameTrigger: String? = nil
 
+  /// The extension asked for, where it is one of several the format goes by:
+  /// `--to jpg` was written as `.jpeg`. Nil takes the format's own name.
+  var outputExtension: String? = nil
+
   /// A test the file has to pass, or the preset leaves it alone.
   var gate: Condition? = nil
 
@@ -218,7 +222,7 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
 extension RulePreset {
   private enum CodingKeys: String, CodingKey {
     case id, name, description, category, position, isEnabled, actions
-    case parameters, nameTemplate, inputFormats, nameTrigger, gate
+    case parameters, nameTemplate, inputFormats, nameTrigger, gate, outputExtension
     // The shape presets were saved in before they became a chain.
     case targetFormat, resize, quality, filters, ocrLanguages
   }
@@ -244,6 +248,7 @@ extension RulePreset {
     nameTemplate = try container.decodeIfPresent(String.self, forKey: .nameTemplate)
     inputFormats = try container.decodeIfPresent([String].self, forKey: .inputFormats)
     nameTrigger = try container.decodeIfPresent(String.self, forKey: .nameTrigger)
+    outputExtension = try container.decodeIfPresent(String.self, forKey: .outputExtension)
     gate = try container.decodeIfPresent(Condition.self, forKey: .gate)
 
     if let actions = try container.decodeIfPresent([Operation].self, forKey: .actions) {
@@ -273,6 +278,7 @@ extension RulePreset {
     try container.encodeIfPresent(nameTemplate, forKey: .nameTemplate)
     try container.encodeIfPresent(inputFormats, forKey: .inputFormats)
     try container.encodeIfPresent(nameTrigger, forKey: .nameTrigger)
+    try container.encodeIfPresent(outputExtension, forKey: .outputExtension)
     try container.encodeIfPresent(gate, forKey: .gate)
   }
 

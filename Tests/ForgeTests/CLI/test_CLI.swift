@@ -236,6 +236,19 @@ final class CommandParsingTests: BaseTestCase {
     XCTAssertEqual(changed.outputURL?.lastPathComponent, "photo.jpeg", "a new format takes the format's own name")
   }
 
+  /// `--to jpg` wrote `.jpeg`, and `--to tif` `.tiff`.
+  func test_theExtensionTypedIsTheExtensionWritten() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 40, height: 30)
+    for (typed, expected) in [("jpg", "photo.jpg"), ("jpeg", "photo.jpeg"), ("tif", "photo.tif")] {
+      let preset = try resolving(["photo.png", "--to", typed])
+      let entry = try await coordinator().processFile(
+        try ProcessableFile(url: source), with: preset,
+        destinationMode: .copyTo, destinationURL: try folder("out-\(typed)")
+      ) { _ in }
+      XCTAssertEqual(entry.outputURL?.lastPathComponent, expected)
+    }
+  }
+
   /// Markdown was written as `.markdown`, which nothing else calls it.
   func test_markdownIsCalledMd() throws {
     let markdown = try XCTUnwrap(UTType(filenameExtension: "md"))
