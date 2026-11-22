@@ -148,6 +148,8 @@ struct ConvertOptionsSheet: View {
   @State private var showingCustomSize = false
 
   let kinds: Set<ConvertKind>
+  /// The files themselves, since what is offered depends on what each one is.
+  let sources: [ProcessableFile]
   let fileCount: Int
   let totalSize: Int64
   let presets: [RulePreset]
@@ -249,8 +251,11 @@ struct ConvertOptionsSheet: View {
   /// makes JPEGs and happens to be filed under Video was not being offered for
   /// a picture, and nothing anywhere said why.
   private var offeredPresets: [RulePreset] {
-    let fitting = presets.filter { $0.suits(kinds) }
-    return fitting.isEmpty ? presets : fitting
+    // By the files, not only by their kind: a JPEG preset is right for "a
+    // document" that is a PDF and wrong for one that is a Word file. And no
+    // falling back to every preset when none fits - that offered exactly the
+    // conversions that could not finish.
+    presets.filter { $0.suits(kinds) && $0.suits(sources) }
   }
 
   private var presetField: some View {
@@ -274,7 +279,7 @@ struct ConvertOptionsSheet: View {
             edit { $0.format = .keep }
           }
         }
-        ForEach(kind.outputGroups.filter { !$0.formats.isEmpty }) { group in
+        ForEach(kind.outputGroups(for: sources).filter { !$0.formats.isEmpty }) { group in
           VStack(alignment: .leading, spacing: 5) {
             Text(group.title)
               .font(.caption)

@@ -43,6 +43,14 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     Self.readableTypes.contains { file.fileType.conforms(to: $0) }
   }
 
+  func takes(_ file: ProcessableFile, to target: UTType) -> Bool {
+    // Any document can be read aloud, and written as any document format.
+    if FormatCatalog.audioFormatID(for: target) != nil { return true }
+    if target.conforms(to: .plainText) || DocumentText.canWrite(target) { return true }
+    // Pictures of the pages: only a PDF has pages to draw.
+    return file.fileType.conforms(to: .pdf) && FormatCatalog.isWritableImage(target)
+  }
+
   func process(
     _ input: URL,
     to output: URL,

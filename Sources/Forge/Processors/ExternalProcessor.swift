@@ -170,9 +170,51 @@ enum ExternalBridge {
     return isTimeBased && ExternalTools.locate("ffmpeg") != nil
   }
 
+  /// The subtitle formats ffmpeg writes. It reads the track out of a film and
+  /// has no writer for the rest: asked for an SBV it answered "Unable to
+  /// choose an output format", which went to the user as it stood.
+  private static let subtitlesFFmpegWrites: Set<String> = ["srt", "vtt", "webvtt"]
+
+  private static func isASubtitleNoToolWrites(_ target: String) -> Bool {
+    Subtitles.carriesCues(target) && !subtitlesFFmpegWrites.contains(target)
+  }
+
+  /// Whether `plan` would find a tool for the pair, judged by the two
+  /// extensions: the same conditions in the same order. The conformance tests
+  /// fail if the two part.
+  ///
+  /// This is asked while a sheet is being drawn, so pandoc is consulted only
+  /// if it has already answered: running it there waited on a subprocess in
+  /// the middle of a SwiftUI update.
+  static func couldPlan(from source: String, to target: String) -> Bool {
+    if isASubtitleNoToolWrites(target) { return false }
+    let nowhere = URL(fileURLWithPath: "/dev/null")
+    if ExternalTools.locate("fonttools") != nil,
+       Fonts.arguments(from: source, to: target, input: nowhere, output: nowhere) != nil {
+      return true
+    }
+    if ExternalTools.locate("pandoc") != nil, let known = formats.peek(),
+       known.read.contains(name(of: source)), known.write.contains(name(of: target)) {
+      return true
+    }
+
+    let sourceType = UTType(filenameExtension: source)
+    let wantsTheSubtitles = Subtitles.carriesCues(target)
+      && (sourceType?.conforms(to: .audiovisualContent) ?? false)
+    let wantsSomethingStill = !wantsTheSubtitles && (UTType(filenameExtension: target).map {
+      $0.conforms(to: .image) || $0.conforms(to: .text) || $0.conforms(to: .pdf)
+    } ?? false)
+    let sourceIsTimeBased = sourceType.map {
+      $0.conforms(to: .audiovisualContent) || $0.conforms(to: .audio)
+    } ?? false
+    if !wantsSomethingStill, sourceIsTimeBased, ExternalTools.locate("ffmpeg") != nil { return true }
+    return wantsSomethingStill && libreOffice != nil
+  }
+
   static func plan(from input: URL, to output: URL, operations: [Operation]) -> Plan? {
     let source = input.pathExtension.lowercased()
     let target = output.pathExtension.lowercased()
+    if isASubtitleNoToolWrites(target) { return nil }
 
     if let fonttools = ExternalTools.locate("fonttools"),
        let arguments = Fonts.arguments(from: source, to: target, input: input, output: output) {
@@ -320,6 +362,10 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
 
   func canProcess(_ file: ProcessableFile) -> Bool {
     ExternalBridge.canHandle(file.fileType)
+  }
+
+  func takes(_ file: ProcessableFile, to target: UTType) -> Bool {
+    ExternalBridge.couldPlan(from: file.url.pathExtension.lowercased(), to: Conversions.fileExtension(of: target))
   }
 
   func process(

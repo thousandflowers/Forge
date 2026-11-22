@@ -15,6 +15,10 @@ final class ModelProcessor: FileProcessor, @unchecked Sendable {
     return MDLAsset.canImportFileExtension(ext.lowercased())
   }
 
+  func takes(_ file: ProcessableFile, to target: UTType) -> Bool {
+    MDLAsset.canExportFileExtension(Conversions.fileExtension(of: target))
+  }
+
   func process(
     _ input: URL,
     to output: URL,

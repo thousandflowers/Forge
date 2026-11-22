@@ -23,6 +23,10 @@ final class DataProcessor: FileProcessor, @unchecked Sendable {
     Toml.handles(file.url.pathExtension) || Self.readable.contains { file.fileType.conforms(to: $0) }
   }
 
+  func takes(_ file: ProcessableFile, to target: UTType) -> Bool {
+    Toml.handles(Conversions.fileExtension(of: target)) || Self.readable.contains { target.conforms(to: $0) }
+  }
+
   func process(
     _ input: URL,
     to output: URL,

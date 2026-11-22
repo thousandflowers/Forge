@@ -39,6 +39,13 @@ protocol FileProcessor: AnyObject, Sendable {
 
   func canProcess(_ file: ProcessableFile) -> Bool
 
+  /// Whether this processor would take the file to that format, judged by the
+  /// two formats alone. It is what `process` decides before it starts, asked
+  /// ahead of time, so that the sheet offers only what will be attempted.
+  /// What is inside a file can still stop a conversion - a film with no
+  /// subtitle track has none to give - and that is said when it happens.
+  func takes(_ file: ProcessableFile, to target: UTType) -> Bool
+
   /// Process the input file and write to output location.
   /// - Parameters:
   ///   - input: Source file URL
@@ -54,6 +61,40 @@ protocol FileProcessor: AnyObject, Sendable {
   ) async throws -> ProcessingResult
 }
 
+/// Every processor, in the order they are asked. A processor that reads a file
+/// and turns the pair down hands it to the next one that reads it, so whether a
+/// file can become something is whether any of them takes it there.
+enum Conversions {
+  static let processors: [FileProcessor] = [
+    // Before the image processor, which would claim an SVG through
+    // `readableImageTypes` and then hand ImageIO a file it cannot decode.
+    VectorProcessor(),
+    ImageProcessor(),
+    // Before the media path: AVFoundation lists WebVTT among the types it
+    // opens, and then finds no tracks in one, so a subtitle handed to it fails
+    // with "contains no audio or video tracks" rather than being converted.
+    SubtitleProcessor(),
+    MediaProcessor(),
+    // Before the document reader: JSON and CSV are plain text as far as the
+    // system is concerned, and the document reader would take them.
+    DataProcessor(),
+    SimpleDocProcessor(),
+    ModelProcessor(),
+    // Last: a conversion macOS can do itself is still done by macOS, and a
+    // tool the user installed is only asked about what is left over.
+    ExternalProcessor(),
+  ]
+
+  static func can(_ file: ProcessableFile, become target: UTType) -> Bool {
+    processors.contains { $0.canProcess(file) && $0.takes(file, to: target) }
+  }
+
+  /// The extension a format is written under, which is how the processors
+  /// that work by name know it.
+  static func fileExtension(of type: UTType) -> String {
+    (FormatCatalog.fileExtension(for: type) ?? type.preferredFilenameExtension ?? "").lowercased()
+  }
+}
 
 extension URL {
   /// `photo.jpg` becomes `photo-002.jpg`. Used wherever one input yields many

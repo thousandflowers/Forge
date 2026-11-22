@@ -26,6 +26,13 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     FormatCatalog.isReadableImage(file.fileType)
   }
 
+  func takes(_ file: ProcessableFile, to target: UTType) -> Bool {
+    // Text is a reading job; WebP is written by cwebp where it is installed.
+    if target.conforms(to: .plainText) { return true }
+    if Self.isWebP(target), ExternalTools.locate("cwebp") != nil { return true }
+    return FormatCatalog.isWritableImage(target) || FormatCatalog.isWritableVideo(target)
+  }
+
   func process(
     _ input: URL,
     to output: URL,

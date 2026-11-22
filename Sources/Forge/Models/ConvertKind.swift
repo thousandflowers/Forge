@@ -256,7 +256,34 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
 }
 
 /// One labelled row of output formats in the Convert sheet.
+extension ConvertKind {
+  /// The outputs for these files in particular. A kind says what files of the
+  /// sort can become - "a document can become a picture" is true of a PDF and
+  /// of nothing else filed with it - so each format is kept only if every file
+  /// here can become it. A batch is offered what all of it can finish.
+  func outputGroups(for files: [ProcessableFile]) -> [OutputGroup] {
+    // One file of each extension answers for the rest.
+    let distinct = Dictionary(grouping: files) { $0.url.pathExtension.lowercased() }.compactMap(\.value.first)
+    return outputGroups.map { group in
+      OutputGroup(group.title, group.formats.filter { format in
+        guard let type = format.type else { return true }
+        return distinct.allSatisfy { Conversions.can($0, become: type) }
+      })
+    }
+  }
+}
+
 extension RulePreset {
+  /// Whether these files in particular can become what the preset writes:
+  /// every one of them, since a batch is offered what all of it can finish. A
+  /// preset that names no format - it resizes, or filters - asks nothing of
+  /// the file and suits anything.
+  func suits(_ files: [ProcessableFile]) -> Bool {
+    guard let format = targetFormat else { return true }
+    let distinct = Dictionary(grouping: files) { $0.url.pathExtension.lowercased() }.compactMap(\.value.first)
+    return distinct.allSatisfy { Conversions.can($0, become: format) }
+  }
+
   /// Whether this preset is worth offering for the kinds of file in hand.
   ///
   /// Judged by what it writes, not by the shelf it was filed on: a preset that

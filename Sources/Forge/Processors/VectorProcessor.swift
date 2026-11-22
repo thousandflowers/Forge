@@ -98,6 +98,11 @@ final class VectorProcessor: FileProcessor, @unchecked Sendable {
     FormatCatalog.isRasterizableVector(file.fileType)
   }
 
+  /// Drawn first, then whatever a picture can become.
+  func takes(_ file: ProcessableFile, to target: UTType) -> Bool {
+    images.takes(file, to: target)
+  }
+
   func process(
     _ input: URL,
     to output: URL,

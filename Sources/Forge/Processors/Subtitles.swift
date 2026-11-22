@@ -194,6 +194,10 @@ final class SubtitleProcessor: FileProcessor, @unchecked Sendable {
     Subtitles.reads(file.url.pathExtension)
   }
 
+  func takes(_ file: ProcessableFile, to target: UTType) -> Bool {
+    Subtitles.writes(Conversions.fileExtension(of: target))
+  }
+
   func process(
     _ input: URL,
     to output: URL,

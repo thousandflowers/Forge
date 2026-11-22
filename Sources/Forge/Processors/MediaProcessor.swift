@@ -23,6 +23,16 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     FormatCatalog.isReadableMedia(file.fileType)
   }
 
+  func takes(_ file: ProcessableFile, to target: UTType) -> Bool {
+    // A subtitle is the track inside the film, which only the tools reach.
+    if Subtitles.carriesCues(Conversions.fileExtension(of: target)) { return false }
+    // Words are a transcript; sound and film containers are what this writes.
+    if Self.isWords(target) { return true }
+    if FormatCatalog.audioFormatID(for: target) != nil || FormatCatalog.isWritableVideo(target) { return true }
+    // Frames, of something that has a picture.
+    return !file.fileType.conforms(to: .audio) && FormatCatalog.isWritableImage(target)
+  }
+
   func process(
     _ input: URL,
     to output: URL,
@@ -76,6 +86,11 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       return try await transcribe(
         input, to: output, as: wanted, operations: operations, start: start, progress: progress
       )
+    }
+    // Words asked of a film with no soundtrack: there is nothing to write down,
+    // which is not the same as these two formats being impossible.
+    if Self.isWords(wanted) {
+      throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no sound to turn into words")
     }
 
     if videoTracks.isEmpty {

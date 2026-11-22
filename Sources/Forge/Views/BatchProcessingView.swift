@@ -107,6 +107,7 @@ struct BatchProcessingView: View {
     .sheet(isPresented: $showingOptions) {
       ConvertOptionsSheet(
         kinds: kinds,
+        sources: vm.files,
         fileCount: vm.files.count,
         totalSize: totalSize,
         presets: offeredPresets,
@@ -345,9 +346,14 @@ struct BatchProcessingView: View {
       .sorted { $0.kind.rawValue < $1.kind.rawValue }
   }
 
-  /// The presets the sheet shows: the ones that take at least one of these files.
+  /// The presets the sheet shows: the ones that take at least one of these
+  /// files, and whose format every one of them can become. Decided here as
+  /// well as in the sheet, because this list is also what a choice carried
+  /// over from the last batch is checked against.
   private var offeredPresets: [RulePreset] {
-    model.usablePresets.filter { preset in vm.files.contains { preset.accepts($0.url) } }
+    model.usablePresets.filter { preset in
+      vm.files.contains { preset.accepts($0.url) } && preset.suits(kinds) && preset.suits(vm.files)
+    }
   }
 
   private func clear() {

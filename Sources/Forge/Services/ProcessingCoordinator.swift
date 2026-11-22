@@ -4,28 +4,9 @@ import UniformTypeIdentifiers
 /// Runs conversions, decides where their output lands, and keeps every write
 /// off the file the user already has on disk.
 actor ProcessingCoordinator {
-  /// The processors, in the order they get asked. Images first because ImageIO
-  /// reads the widest set of types; documents last because their readers are
-  /// the most permissive about what counts as text.
-  private let processors: [FileProcessor] = [
-    // Before the image processor, which would claim an SVG through
-    // `readableImageTypes` and then hand ImageIO a file it cannot decode.
-    VectorProcessor(),
-    ImageProcessor(),
-    // Before the media path: AVFoundation lists WebVTT among the types it
-    // opens, and then finds no tracks in one, so a subtitle handed to it fails
-    // with "contains no audio or video tracks" rather than being converted.
-    SubtitleProcessor(),
-    MediaProcessor(),
-    // Before the document reader: JSON and CSV are plain text as far as the
-    // system is concerned, and the document reader would take them.
-    DataProcessor(),
-    SimpleDocProcessor(),
-    ModelProcessor(),
-    // Last: a conversion macOS can do itself is still done by macOS, and a
-    // tool the user installed is only asked about what is left over.
-    ExternalProcessor(),
-  ]
+  /// The processors, in the order they get asked: the same list the sheet
+  /// consults to decide what to offer.
+  private let processors: [FileProcessor] = Conversions.processors
 
   private let persistence: PersistenceManager
   private var settings: AppSettings

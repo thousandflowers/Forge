@@ -52,6 +52,24 @@ enum FormatCatalog {
   ///
   /// Notably excludes WebP: macOS reads it but ships no encoder for it.
   static let writableImageTypes: Set<UTType> = Self.types(CGImageDestinationCopyTypeIdentifiers())
+    .filter(Self.writesAPicture)
+
+  /// ImageIO's list says what it has an encoder for, not what the encoder
+  /// does: DDS is on it and no DDS is ever written. So each format is asked
+  /// to write one small square picture, once, and offered only if it does.
+  private static func writesAPicture(as type: UTType) -> Bool {
+    let side = 256
+    guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+          let context = CGContext(
+            data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+            space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+          ),
+          let image = context.makeImage(),
+          let destination = CGImageDestinationCreateWithData(NSMutableData(), type.identifier as CFString, 1, nil)
+    else { return false }
+    CGImageDestinationAddImage(destination, image, nil)
+    return CGImageDestinationFinalize(destination)
+  }
 
   // MARK: - Audio and video
 
@@ -60,6 +78,10 @@ enum FormatCatalog {
   /// is made per file rather than guessed from the extension.
   static let readableMediaTypes: Set<UTType> = Set(
     AVURLAsset.audiovisualTypes().compactMap { UTType($0.rawValue) }
+      // AVFoundation's list includes what a player follows as well as what it
+      // plays: playlists and caption files, in which it then finds no tracks.
+      // Filed as films, they were offered a film's formats and failed in all.
+      .filter { $0.conforms(to: .audiovisualContent) || $0.conforms(to: .audio) }
   )
 
   /// Movie containers AVFoundation can export to. The export itself validates

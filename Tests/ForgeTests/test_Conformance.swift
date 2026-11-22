@@ -5,9 +5,9 @@ import PDFKit
 import UniformTypeIdentifiers
 @testable import Forge
 
-/// Everything Forge offers, tried on real files: each kind of file it says it
-/// reads, into every format it offers for that kind, and through every preset
-/// that suits it.
+/// Everything Forge offers, tried on real files: each file it says it reads,
+/// into every format the sheet would offer for that file, and through every
+/// preset that suits it.
 ///
 /// The rule is the one a person relies on. A conversion either leaves a file
 /// that opens, or says why it did not. What it must never do is report success
@@ -38,6 +38,9 @@ final class ConformanceTests: BaseTestCase {
     case timedOut
     /// Scratch files left where the user would find them.
     case leftover
+    /// Offered, and then turned down for being that pair of formats - which is
+    /// what the sheet promises never to do.
+    case offeredAndTurnedDown
 
     var isHonest: Bool { self == .ok || self == .refused }
   }
@@ -208,6 +211,7 @@ final class ConformanceTests: BaseTestCase {
       }
       guard entry.status == .completed else {
         let reason = entry.errorMessage ?? ""
+        if reason.hasPrefix("Forge cannot convert") { return made(.offeredAndTurnedDown, reason) }
         if !strays().isEmpty { return made(.leftover, "\(strays()) after: \(reason)") }
         return made(reason.isEmpty ? .empty : .refused, reason.isEmpty ? "failed without a reason" : reason)
       }
@@ -220,6 +224,8 @@ final class ConformanceTests: BaseTestCase {
       return made(.ok, entry.outputs.map(\.path).joined(separator: " "))
     } catch is TimedOut {
       return made(.timedOut, "no answer in 180 seconds")
+    } catch ProcessingError.unsupportedConversion(let from, let to) {
+      return made(.offeredAndTurnedDown, "\(from.identifier) to \(to.identifier)")
     } catch {
       if !strays().isEmpty { return made(.leftover, "\(strays()) after: \(error.localizedDescription)") }
       let reason = error.localizedDescription
@@ -266,6 +272,9 @@ final class ConformanceTests: BaseTestCase {
   /// Every file, into every format Forge offers for its kind.
   func test_everyOfferedConversionLeavesAFileThatOpensOrSaysWhy() async throws {
     var jobs: [Job] = []
+    // Asked here, where waiting is allowed: the sheet only uses what pandoc
+    // has already said, and in the app it has said it by the time one opens.
+    _ = ExternalBridge.pandocFormats
     var unplaced: [String] = []
     for file in try fixtures() {
       // A file Forge opens but has no kind for is offered nothing at all.
@@ -273,7 +282,7 @@ final class ConformanceTests: BaseTestCase {
         unplaced.append(file.url.lastPathComponent)
         continue
       }
-      let formats = Set(kind.outputGroups.flatMap(\.formats).compactMap(\.type))
+      let formats = Set(kind.outputGroups(for: [file]).flatMap(\.formats).compactMap(\.type))
       for format in formats.sorted(by: { $0.identifier < $1.identifier }) {
         jobs.append((file, .make(format: format, category: .custom), OutputFormat(type: format).label))
       }
@@ -301,7 +310,7 @@ final class ConformanceTests: BaseTestCase {
     var jobs: [Job] = []
     for preset in presets.sorted(by: { $0.name < $1.name }) {
       for file in files {
-        guard let kind = ConvertKind(fileType: file.fileType), preset.suits([kind]) else { continue }
+        guard let kind = ConvertKind(fileType: file.fileType), preset.suits([kind]), preset.suits([file]) else { continue }
         jobs.append((file, preset, preset.name))
       }
     }
