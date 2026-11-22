@@ -42,18 +42,46 @@ final class ModelProcessor: FileProcessor, @unchecked Sendable {
 
     progress(0.6)
     try Task.checkCancellation()
-    try asset.export(to: output)
+
+    // Model I/O names what is inside a file after the file: the root of a USD,
+    // the material library of an OBJ. Written straight to Forge's scratch
+    // name, a model came out with a root called `_forge_` and a string of
+    // digits. So it is written under the model's own name, in a folder of its
+    // own, and moved into place.
+    let stem = input.deletingPathExtension().lastPathComponent
+    let workshop = FileManager.default.temporaryDirectory
+      .appendingPathComponent("forge-model-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: workshop, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: workshop) }
+
+    let named = workshop.appendingPathComponent("\(stem).\(outputExtension)")
+    try asset.export(to: named)
+
+    let scratch = output.deletingPathExtension().lastPathComponent
+    for made in try FileManager.default.contentsOfDirectory(at: workshop, includingPropertiesForKeys: nil) {
+      // Companions keep the scratch name, which is how they are found and
+      // given the real one when the conversion lands; what names them inside
+      // the model is changed to match.
+      let landing = made.lastPathComponent == named.lastPathComponent
+        ? output
+        : output.deletingLastPathComponent().appendingPathComponent("\(scratch).\(made.pathExtension)")
+      if let text = try? String(contentsOf: made, encoding: .utf8), text.contains("\(stem).") {
+        try text.replacingOccurrences(of: "\(stem).", with: "\(scratch).").write(to: landing, atomically: true, encoding: .utf8)
+      } else {
+        try? FileManager.default.removeItem(at: landing)
+        try FileManager.default.moveItem(at: made, to: landing)
+      }
+    }
     progress(1.0)
 
     // Some formats are more than one file: an OBJ keeps its materials in a
     // library beside it, written under the same name. Said out loud here, it
     // is named and moved with the model instead of staying behind as scratch.
-    let stem = output.deletingPathExtension().lastPathComponent
     let beside = (try? FileManager.default.contentsOfDirectory(
       at: output.deletingLastPathComponent(), includingPropertiesForKeys: nil
     )) ?? []
     let companions = beside.filter {
-      $0.lastPathComponent != output.lastPathComponent && $0.deletingPathExtension().lastPathComponent == stem
+      $0.lastPathComponent != output.lastPathComponent && $0.deletingPathExtension().lastPathComponent == scratch
     }
 
     let attributes = try FileManager.default.attributesOfItem(atPath: output.path)

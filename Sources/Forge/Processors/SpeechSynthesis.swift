@@ -1,4 +1,5 @@
 import AVFoundation
+import NaturalLanguage
 import Foundation
 import UniformTypeIdentifiers
 
@@ -15,6 +16,11 @@ enum SpeechSynthesis {
   /// Languages there is at least one voice for.
   static var languages: [String] {
     Set(voices.map(\.language)).sorted()
+  }
+
+  /// The language a text is written in, as far as can be told from the text.
+  static func language(of text: String) -> String? {
+    NLLanguageRecognizer.dominantLanguage(for: text)?.rawValue
   }
 
   static func voice(for language: String?) -> AVSpeechSynthesisVoice? {
@@ -45,8 +51,11 @@ enum SpeechSynthesis {
       throw ProcessingError.unsupportedConversion(from: .plainText, to: type)
     }
 
+    // The voice follows the text where nobody chose one. The Mac's own voice
+    // reading a language it does not speak says nothing at all: Japanese came
+    // out as a silent file.
     let utterance = AVSpeechUtterance(string: trimmed)
-    if let voice = voice(for: language) { utterance.voice = voice }
+    if let voice = voice(for: language ?? Self.language(of: trimmed)) { utterance.voice = voice }
 
     let writer = BufferWriter(output: output, formatID: formatID, type: type)
     let synthesizer = AVSpeechSynthesizer()

@@ -90,7 +90,7 @@ struct RecipeOptions: ParsableArguments {
   // file that followed for a second language.
   @Option(
     name: .customLong("ocr-language"),
-    help: "Language to look for when reading text or speech, e.g. it-IT. Several: it-IT,en-US. Omit to detect automatically."
+    help: "Language of the text in a picture, of the speech in a recording, or of the voice that reads a document: it-IT. Several for text: it-IT,en-US. Without it, text is detected; speech is taken to be in the Mac's language."
   )
   var ocrLanguages: [String] = []
 

@@ -134,7 +134,11 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
     }
     if let quality { actions.append(.quality(level: quality)) }
     actions.append(contentsOf: filters.map { .filter(type: $0) })
-    if targetFormat?.conforms(to: .plainText) == true {
+    // The language travels with the chain whenever one was given, not only
+    // into plain text: a recording transcribed into a Word file, or a document
+    // read aloud, asks the same question - which language is this in - and the
+    // answer was being dropped on the way.
+    if targetFormat?.conforms(to: .plainText) == true || !ocrLanguages.isEmpty {
       actions.append(.recognizeText(languages: ocrLanguages))
     }
     return actions
