@@ -104,6 +104,93 @@ final class MonitoredFolderWatcherTests: BaseTestCase {
     let names = try await seen.wait(for: 1, timeout: 10)
     XCTAssertEqual(names.map(\.lastPathComponent), ["shallow.png"])
   }
+
+  private func watch(_ watched: URL, subfolders: Bool = false, gone: (@Sendable () -> Void)? = nil) throws -> (MonitoredFolderWatcher, Collector) {
+    let seen = Collector()
+    let watcher = MonitoredFolderWatcher()
+    try watcher.startWatching(
+      folder: MonitoredFolder(url: watched, ruleId: UUID(), destinationMode: .copyTo, includeSubfolders: subfolders),
+      onGone: gone
+    ) { url in await seen.add(url) }
+    return (watcher, seen)
+  }
+
+  /// A folder dragged in arrives as one event, for the folder. The files in
+  /// it were never looked at.
+  func test_aFolderMovedInIsLookedInside() async throws {
+    let watched = try folder("watched")
+    let outside = try folder("album")
+    try Fixture.image(at: outside.appendingPathComponent("one.png"), width: 32, height: 32)
+    try Fixture.image(at: outside.appendingPathComponent("two.png"), width: 32, height: 32)
+    let (watcher, seen) = try watch(watched, subfolders: true)
+    defer { watcher.stop() }
+
+    try await Task.sleep(nanoseconds: 700_000_000)
+    try FileManager.default.moveItem(at: outside, to: watched.appendingPathComponent("album"))
+
+    let names = try await seen.wait(for: 2, timeout: 10)
+    XCTAssertEqual(Set(names.map(\.lastPathComponent)), ["one.png", "two.png"])
+  }
+
+  /// A browser writes `photo.png.part` and renames it when it is done. The
+  /// half-file was converted - it is a PNG inside, whatever it is called - and
+  /// then the whole one was. A name that does not yet say what the file is
+  /// means it is not ready.
+  func test_aFileStillCalledSomethingProvisionalIsLeftAlone() async throws {
+    let watched = try folder("watched")
+    let (watcher, seen) = try watch(watched)
+    defer { watcher.stop() }
+
+    try await Task.sleep(nanoseconds: 700_000_000)
+    let partial = watched.appendingPathComponent("photo.png.part")
+    try Fixture.image(at: watched.appendingPathComponent("photo.png"), width: 32, height: 32)
+    try FileManager.default.moveItem(at: watched.appendingPathComponent("photo.png"), to: partial)
+    try await Task.sleep(nanoseconds: 2_500_000_000)
+    let early = await seen.all()
+    XCTAssertEqual(early.map(\.lastPathComponent).filter { $0.hasSuffix(".part") }, [])
+
+    try FileManager.default.moveItem(at: partial, to: watched.appendingPathComponent("done.png"))
+    let names = try await seen.wait(for: 1, timeout: 10)
+    XCTAssertTrue(names.map(\.lastPathComponent).contains("done.png"), "\(names)")
+  }
+
+  /// A file written in bursts - closed in between - was handed over after the
+  /// first burst and never looked at again: only a new name counted as an
+  /// arrival, not more of the same file.
+  func test_aFileThatGrowsAgainIsHandedOverAgain() async throws {
+    let watched = try folder("watched")
+    let (watcher, seen) = try watch(watched)
+    defer { watcher.stop() }
+
+    try await Task.sleep(nanoseconds: 700_000_000)
+    let file = watched.appendingPathComponent("notes.txt")
+    try Data("first half".utf8).write(to: file)
+    _ = try await seen.wait(for: 1, timeout: 10)
+
+    let handle = try FileHandle(forWritingTo: file)
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data(", second half".utf8))
+    try handle.close()
+
+    let names = try await seen.wait(for: 2, timeout: 10)
+    XCTAssertEqual(names.map(\.lastPathComponent), ["notes.txt", "notes.txt"])
+  }
+
+  /// A watched folder that was moved or deleted went on being "watched", and
+  /// nothing said that nothing would ever arrive again.
+  func test_saysWhenTheFolderItWatchesIsGone() async throws {
+    let watched = try folder("watched")
+    let gone = Flag()
+    let (watcher, _) = try watch(watched) { gone.raise() }
+    defer { watcher.stop() }
+
+    try await Task.sleep(nanoseconds: 700_000_000)
+    try FileManager.default.moveItem(at: watched, to: path("moved-away"))
+
+    let deadline = Date().addingTimeInterval(10)
+    while !gone.isRaised, Date() < deadline { try await Task.sleep(nanoseconds: 200_000_000) }
+    XCTAssertTrue(gone.isRaised)
+  }
 }
 
 /// Collects what the watcher reports, from whichever thread it reports on.
@@ -111,6 +198,8 @@ private actor Collector {
   private var urls: [URL] = []
 
   func add(_ url: URL) { urls.append(url) }
+
+  func all() -> [URL] { urls }
 
   func wait(for count: Int, timeout: TimeInterval) async throws -> [URL] {
     let deadline = Date().addingTimeInterval(timeout)
@@ -120,4 +209,11 @@ private actor Collector {
     }
     return urls
   }
+}
+
+private final class Flag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var raised = false
+  func raise() { lock.lock(); raised = true; lock.unlock() }
+  var isRaised: Bool { lock.lock(); defer { lock.unlock() }; return raised }
 }

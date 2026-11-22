@@ -279,7 +279,8 @@ struct Watch: AsyncParsableCommand {
       }
 
       let (mode, outputURL) = try destination.resolve()
-      let saved = try await PersistenceManager.shared.loadAllPresets()
+      _ = ExternalBridge.pandocFormats
+      let saved = try await ForgeCommand.presets()
       let preset = try recipe.resolve(saved: saved)
       if let outputURL {
         try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
@@ -289,7 +290,8 @@ struct Watch: AsyncParsableCommand {
         preset: preset,
         mode: mode,
         destination: outputURL,
-        settings: destination.settings
+        settings: destination.settings,
+        others: saved
       )
       try await runner.run(
         folder: MonitoredFolder(

@@ -13,8 +13,17 @@ actor WatchRunner {
   /// Files this run has written, so a destination inside the watched folder
   /// does not feed itself.
   private var produced: Set<String> = []
+  /// The other saved presets: a file renamed to carry one's trigger word asks
+  /// for that preset, here as in the app.
+  private let others: [RulePreset]
+  private var running: [UUID: Task<Void, Never>] = [:]
+  private var folderIsGone = false
 
-  init(preset: RulePreset, mode: DestinationMode, destination: URL?, settings: AppSettings) {
+  init(
+    preset: RulePreset, mode: DestinationMode, destination: URL?, settings: AppSettings,
+    others: [RulePreset] = []
+  ) {
+    self.others = others
     self.preset = preset
     self.mode = mode
     self.destination = destination
@@ -23,7 +32,10 @@ actor WatchRunner {
 
   func run(folder: MonitoredFolder) async throws {
     let watcher = MonitoredFolderWatcher()
-    try watcher.startWatching(folder: folder) { [weak self] url in
+    try watcher.startWatching(
+      folder: folder,
+      onGone: { [weak self] in Task { await self?.folderWentAway() } }
+    ) { [weak self] url in
       await self?.handle(url)
     }
     defer { watcher.stop() }
@@ -31,16 +43,42 @@ actor WatchRunner {
     let target = folder.url.lastPathComponent
     FileHandle.standardError.write(Data("Watching \(target). Press Ctrl-C to stop.\n".utf8))
 
-    // Nothing else drives this process, so hold it open until interrupted.
-    while !Task.isCancelled {
-      try await Task.sleep(nanoseconds: 1_000_000_000)
+    // Nothing else drives this process, so hold it open until interrupted, or
+    // until there is nothing left to watch.
+    while !Task.isCancelled, !folderIsGone {
+      try? await Task.sleep(nanoseconds: 1_000_000_000)
+    }
+
+    // Whatever is still converting is stopped and waited for, so that it
+    // clears up after itself: leaving at once left the scratch files of a
+    // long PDF behind, seventy-six of them in one measurement.
+    let unfinished = Array(running.values)
+    unfinished.forEach { $0.cancel() }
+    for task in unfinished { await task.value }
+
+    if folderIsGone {
+      throw CLIError("\(target) was moved or deleted, so nothing more can arrive in it. Stopped.")
     }
   }
 
+  private func folderWentAway() { folderIsGone = true }
+
   private func handle(_ url: URL) async {
+    let id = UUID()
+    let task = Task { await convert(url) }
+    running[id] = task
+    await task.value
+    running[id] = nil
+  }
+
+  private func convert(_ url: URL) async {
     let path = url.standardizedFileURL.path
     guard !produced.contains(path) else { return }
 
+    // A file named for another preset's word goes to that preset; a preset
+    // that says which files it is for leaves the rest of the folder alone.
+    let preset = others.first { $0.isEnabled && $0.isTriggered(by: url) } ?? preset
+    guard preset.accepts(url) else { return }
     guard let file = try? ProcessableFile(url: url) else { return }
 
     do {
@@ -59,6 +97,8 @@ actor WatchRunner {
       }
     } catch ProcessingError.unreadableFormat, ProcessingError.unsupportedConversion, ProcessingError.unknownType {
       // A watched folder receives whatever is dropped in it.
+    } catch is CancellationError {
+      // Stopped on the way out; it has cleared up after itself.
     } catch {
       FileHandle.standardError.write(
         Data("failed     \(url.lastPathComponent): \(error.localizedDescription)\n".utf8)

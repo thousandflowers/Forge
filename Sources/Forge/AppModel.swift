@@ -413,7 +413,10 @@ final class AppModel: ObservableObject {
     guard watchers[folder.id] == nil else { return }
     let watcher = MonitoredFolderWatcher()
     do {
-      try watcher.startWatching(folder: folder) { [weak self] url in
+      try watcher.startWatching(
+        folder: folder,
+        onGone: { [weak self] in Task { @MainActor in self?.stoppedWatching(folder) } }
+      ) { [weak self] url in
         await self?.processIncoming(url, folder: folder)
       }
       watchers[folder.id] = watcher
@@ -425,6 +428,16 @@ final class AppModel: ObservableObject {
         folders[index].isActive = false
       }
     }
+  }
+
+  /// The folder was moved or deleted. It went on showing as watched, and
+  /// nothing said that nothing would arrive in it again.
+  private func stoppedWatching(_ folder: MonitoredFolder) {
+    stopWatcher(folder)
+    if let index = folders.firstIndex(where: { $0.id == folder.id }) {
+      folders[index].isActive = false
+    }
+    lastError = "“\(folder.displayName)” was moved or deleted, so Forge has stopped watching it."
   }
 
   private func stopWatcher(_ folder: MonitoredFolder) {

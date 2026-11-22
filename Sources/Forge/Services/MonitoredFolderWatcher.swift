@@ -29,6 +29,11 @@ final class MonitoredFolderWatcher {
   /// when, and when they first turned up.
   private var pending: [String: (size: Int64, since: Date, arrived: Date)] = [:]
   private var timer: DispatchSourceTimer?
+  private var onGone: (@Sendable () -> Void)?
+  /// When each file was last handed over. More of a file that arrived a
+  /// moment ago is the same arrival going on; a change to one that has been
+  /// here for an hour is somebody editing it.
+  private var handedOver: [String: Date] = [:]
 
   deinit {
     // `deinit` cannot wait on the queue without risking a deadlock, and by the
@@ -41,7 +46,13 @@ final class MonitoredFolderWatcher {
     timer?.cancel()
   }
 
-  func startWatching(folder: MonitoredFolder, handler: @escaping FileAddedHandler) throws {
+  /// - Parameter onGone: called once if the folder itself is moved or deleted,
+  ///   after which nothing more can arrive.
+  func startWatching(
+    folder: MonitoredFolder,
+    onGone: (@Sendable () -> Void)? = nil,
+    handler: @escaping FileAddedHandler
+  ) throws {
     try queue.sync {
       teardown()
 
@@ -69,7 +80,9 @@ final class MonitoredFolderWatcher {
         [folder.url.path] as CFArray,
         FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
         Self.pollInterval,
-        UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer)
+        // WatchRoot: without it a stream goes on "watching" a folder that has
+        // been moved or deleted, and says nothing.
+        UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagWatchRoot)
       ) else {
         throw ProcessingError.conversionFailed(
           reason: "Cannot watch \(folder.url.lastPathComponent)"
@@ -89,6 +102,7 @@ final class MonitoredFolderWatcher {
       self.root = folder.url
       self.includeSubfolders = folder.includeSubfolders
       self.handler = handler
+      self.onGone = onGone
     }
   }
 
@@ -109,24 +123,65 @@ final class MonitoredFolderWatcher {
     timer?.cancel()
     timer = nil
     pending.removeAll()
+    handedOver.removeAll()
     root = nil
     handler = nil
+    onGone = nil
   }
 
   private func handleEvent(path: String, flags: FSEventStreamEventFlags) {
     dispatchPrecondition(condition: .onQueue(queue))
-    guard Self.isFileArrival(flags) else { return }
-
+    if Int(flags) & kFSEventStreamEventFlagRootChanged != 0 {
+      // The folder itself: still where it was, or gone.
+      if let root, !FileManager.default.fileExists(atPath: root.path) {
+        let tell = onGone
+        onGone = nil
+        tell?()
+      }
+      return
+    }
     let url = URL(fileURLWithPath: path)
     guard let root, Self.isWithin(url, root: root, includeSubfolders: includeSubfolders) else { return }
 
+    // A folder dragged in is one event, for the folder: what is in it has to
+    // be looked for.
+    if Self.isFolderArrival(flags) {
+      guard includeSubfolders else { return }
+      let inside = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.isRegularFileKey])
+      while let file = inside?.nextObject() as? URL {
+        if (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true { consider(file) }
+      }
+      return
+    }
+
+    let grewAgain = Self.isMoreOfAFile(flags)
+      && handedOver[path].map { Date().timeIntervalSince($0) < Self.longestWaitForAWriter } ?? false
+    guard Self.isFileArrival(flags) || grewAgain else { return }
+    consider(url)
+  }
+
+  private func consider(_ url: URL) {
     // Forge's own scratch files start with a dot; so do the system's.
     guard !url.lastPathComponent.hasPrefix(".") else { return }
+    // A name that does not say what the file is - `photo.png.part`, while a
+    // browser is still writing it - means it is not ready, whatever is inside.
+    guard ProcessableFile.isNamedForWhatItIs(url) else { return }
     guard let size = Self.fileSize(url) else { return }
 
     let now = Date()
-    pending[path] = (size: size, since: now, arrived: pending[path]?.arrived ?? now)
+    pending[url.path] = (size: size, since: now, arrived: pending[url.path]?.arrived ?? now)
     startTimerIfNeeded()
+  }
+
+  private static func isFolderArrival(_ flags: FSEventStreamEventFlags) -> Bool {
+    let flags = Int(flags)
+    guard flags & kFSEventStreamEventFlagItemIsDir != 0, flags & kFSEventStreamEventFlagItemRemoved == 0 else { return false }
+    return flags & kFSEventStreamEventFlagItemCreated != 0 || flags & kFSEventStreamEventFlagItemRenamed != 0
+  }
+
+  private static func isMoreOfAFile(_ flags: FSEventStreamEventFlags) -> Bool {
+    let flags = Int(flags)
+    return flags & kFSEventStreamEventFlagItemIsFile != 0 && flags & kFSEventStreamEventFlagItemModified != 0
   }
 
   /// Only creations and renames bring a new file in. Modifications, removals
@@ -185,6 +240,7 @@ final class MonitoredFolderWatcher {
         pending[path] = (size: size, since: now, arrived: seen.arrived)
       } else if now.timeIntervalSince(seen.since) >= Self.settleInterval {
         pending.removeValue(forKey: path)
+        handedOver[path] = now
         ready.append(url)
       }
     }
