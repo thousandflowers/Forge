@@ -1159,12 +1159,14 @@ final class HistoryTests: BaseTestCase {
   /// A failure recorded a duration of zero, so a conversion that gave up after
   /// two minutes and one that failed at once read the same.
   func test_aFailureRecordsHowLongItTookAndWhy() async throws {
-    let source = try Fixture.image(at: path("photo.png"), width: 100, height: 100)
-    let icns = try XCTUnwrap(UTType("com.apple.icns"))
+    // A file that is not the picture its name says it is: nothing decodes it.
+    // (It used to be a PNG asked to become an ICNS, which now works.)
+    let source = path("broken.jpg")
+    try Data("not a picture at all".utf8).write(to: source)
 
     _ = try? await coordinator().processFile(
       try ProcessableFile(url: source),
-      with: .make(format: icns, category: .image),
+      with: .make(format: .png, category: .image),
       destinationMode: .copyTo,
       destinationURL: try folder("out")
     ) { _ in }

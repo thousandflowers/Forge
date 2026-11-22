@@ -182,4 +182,83 @@ final class ImageGeometryTests: BaseTestCase {
     XCTAssertTrue(text.contains("ALPHA"), text)
     XCTAssertTrue(text.contains("BRAVO"), "the second page was not read: \(text)")
   }
+
+  // MARK: - What a second pass found
+
+  /// One side alone, with Crop, Pad or Stretch, used the original for the side
+  /// nobody named: 800 x 600 asked for "1600 wide, cropped" came back
+  /// 1600 x 600. With one side there is nothing to crop or pad to; the shape
+  /// is kept.
+  func test_oneSideAloneKeepsTheShapeWhateverTheFit() async throws {
+    let source = try flatImage(at: path("flat.png"), width: 800, height: 600)
+    for mode in [ResizeFitMode.cropCenter, .pad, .stretch, .proportional] {
+      let output = try await convert(source, with: .make(
+        format: .png, resize: ResizeSpec(width: 1600, height: nil, fitMode: mode), category: .image
+      ))
+      let result = try pixels(of: output)
+      XCTAssertEqual([result.width, result.height], [1600, 1200], "\(mode)")
+    }
+  }
+
+  /// Invert was done on light as the pipeline holds it, not as the eye reads
+  /// it: mid grey came back nearly white (128 became 229). A photographic
+  /// negative sends 128 to 127.
+  func test_invertIsAPhotographicNegative() async throws {
+    let source = path("grey.png")
+    let space = CGColorSpace(name: CGColorSpace.sRGB)!
+    let context = try XCTUnwrap(CGContext(
+      data: nil, width: 40, height: 40, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+    ))
+    context.setFillColor(CGColor(srgbRed: 128 / 255, green: 64 / 255, blue: 200 / 255, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: 40, height: 40))
+    let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(source as CFURL, UTType.png.identifier as CFString, 1, nil))
+    CGImageDestinationAddImage(destination, try XCTUnwrap(context.makeImage()), nil)
+    XCTAssertTrue(CGImageDestinationFinalize(destination))
+
+    let output = try await convert(source, with: .make(format: .png, filters: [.invert], category: .image))
+    let pixel = try pixels(of: output).at(20, 20)
+    for (got, want) in zip(pixel.prefix(3), [127, 191, 55]) {
+      XCTAssertEqual(got, want, accuracy: 3, "\(pixel)")
+    }
+  }
+
+  /// ICNS takes squares of a few sizes and refused everything else. An icon
+  /// made from a wide picture shows the whole picture on a square, as an ICO does.
+  func test_aWidePictureBecomesAnICNSOnASquare() async throws {
+    let source = try flatImage(at: path("wide.png"), width: 640, height: 480)
+    let icns = try XCTUnwrap(UTType("com.apple.icns"))
+    try XCTSkipUnless(FormatCatalog.isWritableImage(icns), "this Mac writes no ICNS")
+
+    let output = try await convert(source, with: .make(format: icns, category: .image))
+    let result = try pixels(of: output)
+    XCTAssertEqual(result.width, result.height)
+    XCTAssertEqual(result.at(result.width / 2, 2)[3], 0, "the bars above and below are clear, not stretched picture")
+  }
+
+  /// An animation's loop count became "for ever" whatever it had been.
+  func test_anAnimationKeepsHowManyTimesItPlays() async throws {
+    let source = path("thrice.gif")
+    let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(source as CFURL, UTType.gif.identifier as CFString, 3, nil))
+    CGImageDestinationSetProperties(destination, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 3]] as CFDictionary)
+    for shade in [0.2, 0.5, 0.8] {
+      let context = try XCTUnwrap(CGContext(
+        data: nil, width: 32, height: 32, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+      ))
+      context.setFillColor(CGColor(red: shade, green: shade, blue: shade, alpha: 1))
+      context.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
+      CGImageDestinationAddImage(destination, try XCTUnwrap(context.makeImage()), [
+        kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.25]
+      ] as CFDictionary)
+    }
+    XCTAssertTrue(CGImageDestinationFinalize(destination))
+
+    let output = try await convert(source, with: .make(format: .gif, category: .image))
+    let read = try XCTUnwrap(CGImageSourceCreateWithURL(output as CFURL, nil))
+    let whole = try XCTUnwrap(CGImageSourceCopyProperties(read, nil) as? [CFString: Any])
+    let gif = try XCTUnwrap(whole[kCGImagePropertyGIFDictionary] as? [CFString: Any])
+    XCTAssertEqual(gif[kCGImagePropertyGIFLoopCount] as? Int, 3)
+    XCTAssertEqual(CGImageSourceGetCount(read), 3)
+  }
 }

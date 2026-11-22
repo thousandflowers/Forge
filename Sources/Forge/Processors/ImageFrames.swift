@@ -28,10 +28,12 @@ enum ImageFrames {
   /// anything else, so a wide photograph is placed on a square, transparent
   /// canvas rather than stretched or cropped: an icon should still show the
   /// whole picture.
-  static func iconLadder(from image: CGImage) -> [ImageFrame] {
+  static func iconLadder(from image: CGImage, sizes iconSizes: [Int] = iconSizes) -> [ImageFrame] {
     let longest = max(image.width, image.height)
     let sizes = iconSizes.filter { $0 <= longest }
-    let ladder = sizes.isEmpty ? [min(longest, iconSizes[0])] : sizes
+    // A picture smaller than the smallest icon goes on the smallest icon: an
+    // 8-pixel picture was offered as an 8-pixel icon, which no icon format takes.
+    let ladder = sizes.isEmpty ? [iconSizes[0]] : sizes
 
     return ladder.reversed().compactMap { side in
       square(image, side: side).map { ImageFrame(image: $0, duration: 0) }
@@ -66,6 +68,29 @@ enum ImageFrames {
     return context.makeImage()
   }
 
+  /// The squares an icon format holds, or nil for a format that is not one.
+  /// ICNS takes fewer than ICO and refuses any other size outright.
+  static func iconSizes(for type: UTType) -> [Int]? {
+    if type.conforms(to: .ico) { return iconSizes }
+    if type.conforms(to: .icns) { return [16, 32, 128, 256, 512] }
+    return nil
+  }
+
+  /// How many times the animation in this file plays; zero is for ever.
+  static func loopCount(of source: CGImageSource) -> Int {
+    let properties = CGImageSourceCopyProperties(source, nil) as? [CFString: Any] ?? [:]
+    let places: [(CFString, CFString)] = [
+      (kCGImagePropertyGIFDictionary, kCGImagePropertyGIFLoopCount),
+      (kCGImagePropertyHEICSDictionary, kCGImagePropertyHEICSLoopCount),
+      (kCGImagePropertyPNGDictionary, kCGImagePropertyAPNGLoopCount),
+      (kCGImagePropertyWebPDictionary, kCGImagePropertyWebPLoopCount),
+    ]
+    for (block, key) in places {
+      if let count = (properties[block] as? [CFString: Any])?[key] as? Int { return count }
+    }
+    return infiniteLoop
+  }
+
   /// Read every frame, with the delay each one carries.
   static func read(_ source: CGImageSource, options: CFDictionary?) -> [ImageFrame] {
     (0..<CGImageSourceGetCount(source)).compactMap { index in
@@ -75,6 +100,12 @@ enum ImageFrames {
   }
 
   /// Write frames into one animated or multi-page file.
+  ///
+  /// macOS sometimes refuses a write for what came with the picture rather
+  /// than for the picture: a HEIC's own properties in a HEICS, an AVIF asked
+  /// for a quality of exactly 100. So a refusal is tried again with less - the
+  /// quality alone, then a quality just short of the top - before it is
+  /// reported. The picture is the same; what may be lost is its metadata.
   static func write(
     _ frames: [ImageFrame],
     to output: URL,
@@ -82,6 +113,41 @@ enum ImageFrames {
     frameOptions: [CFString: Any],
     loopCount: Int = infiniteLoop
   ) throws {
+    let quality = kCGImageDestinationLossyCompressionQuality
+    var bare: [CFString: Any] = [:]
+    if let asked = frameOptions[quality] { bare[quality] = asked }
+    var gentler = bare
+    if let asked = (frameOptions[quality] as? NSNumber)?.doubleValue, asked >= 1 { gentler[quality] = 0.95 }
+
+    for options in [frameOptions, bare, gentler] {
+      if try attempt(frames, to: output, as: type, frameOptions: options, loopCount: loopCount) { return }
+      // What a refused write leaves behind: the file, and ImageIO's own
+      // temporary beside it, named after it with one more dot in front.
+      let folder = output.deletingLastPathComponent()
+      for leftover in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+      where leftover.lastPathComponent == output.lastPathComponent
+        || leftover.lastPathComponent.hasPrefix("." + output.lastPathComponent) {
+        try? FileManager.default.removeItem(at: leftover)
+      }
+    }
+
+    let format = (FormatCatalog.fileExtension(for: type) ?? type.identifier).uppercased()
+    let size = frames.first.map { " at \($0.image.width) × \($0.image.height)" } ?? ""
+    throw ProcessingError.conversionFailed(
+      reason: "Cannot write \(output.lastPathComponent) as \(format)\(size): macOS refused this image in that format. "
+        + "Some formats take only certain sizes."
+    )
+  }
+
+  /// One go at writing them. False is macOS declining; a thrown error is not
+  /// being able to start at all.
+  private static func attempt(
+    _ frames: [ImageFrame],
+    to output: URL,
+    as type: UTType,
+    frameOptions: [CFString: Any],
+    loopCount: Int
+  ) throws -> Bool {
     guard let destination = CGImageDestinationCreateWithURL(
       output as CFURL,
       type.identifier as CFString,
@@ -105,12 +171,7 @@ enum ImageFrames {
       CGImageDestinationAddImage(destination, frame.image, properties as CFDictionary)
     }
 
-    guard CGImageDestinationFinalize(destination) else {
-      let format = (FormatCatalog.fileExtension(for: type) ?? type.identifier).uppercased()
-      throw ProcessingError.conversionFailed(
-        reason: "Cannot write \(output.lastPathComponent) as \(format): macOS refused this image in that format."
-      )
-    }
+    return CGImageDestinationFinalize(destination)
   }
 
   // MARK: - Per-format frame timing
@@ -119,13 +180,17 @@ enum ImageFrames {
     guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any] else {
       return 0
     }
-    for key in [kCGImagePropertyGIFDictionary, kCGImagePropertyHEICSDictionary, kCGImagePropertyPNGDictionary] {
+    for key in [kCGImagePropertyGIFDictionary, kCGImagePropertyHEICSDictionary, kCGImagePropertyPNGDictionary,
+                kCGImagePropertyWebPDictionary] {
       guard let dictionary = properties[key] as? [CFString: Any] else { continue }
       // The unclamped delay is the one the file actually asked for; the other
       // has a browser-compatibility floor applied to it.
       for delayKey in [kCGImagePropertyGIFUnclampedDelayTime, kCGImagePropertyGIFDelayTime,
                        kCGImagePropertyHEICSUnclampedDelayTime, kCGImagePropertyHEICSDelayTime,
-                       kCGImagePropertyAPNGUnclampedDelayTime, kCGImagePropertyAPNGDelayTime] {
+                       kCGImagePropertyAPNGUnclampedDelayTime, kCGImagePropertyAPNGDelayTime,
+                       // An animated WebP's frames were read with no delay at
+                       // all, so the GIF made from one ran flat out.
+                       kCGImagePropertyWebPUnclampedDelayTime, kCGImagePropertyWebPDelayTime] {
         if let delay = dictionary[delayKey] as? Double, delay > 0 { return delay }
       }
     }

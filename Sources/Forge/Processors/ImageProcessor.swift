@@ -120,7 +120,11 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       try await MovieWriter.write(rendered, to: output, as: outputUTI) { progress(0.9 + $0 * 0.1) }
     } else {
       let options = destinationOptions(for: outputUTI, operations: operations, source: source)
-      extras = try writeFrames(rendered, to: output, as: outputUTI, options: options)
+      // How many times it plays is the animation's own; it used to come out
+      // as "for ever" whatever it had been.
+      extras = try writeFrames(
+        rendered, to: output, as: outputUTI, options: options, loopCount: ImageFrames.loopCount(of: source)
+      )
 
       // A size ceiling is a promise about the result rather than a setting for
       // the encoder, so it is kept the only way a promise about a result can
@@ -148,20 +152,22 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     _ frames: [ImageFrame],
     to output: URL,
     as type: UTType,
-    options: [CFString: Any]
+    options: [CFString: Any],
+    loopCount: Int = ImageFrames.infiniteLoop
   ) throws -> [URL] {
     // An icon file is expected to carry several resolutions; one picture in an
-    // .ico is a picture with an .ico extension.
-    if type.conforms(to: .ico), let first = frames.first {
+    // .ico is a picture with an .ico extension. And an icon is square: the
+    // picture is shown whole on one, which is also the only shape ICNS takes.
+    if let sizes = ImageFrames.iconSizes(for: type), let first = frames.first {
       try ImageFrames.write(
-        ImageFrames.iconLadder(from: first.image),
+        ImageFrames.iconLadder(from: first.image, sizes: sizes),
         to: output, as: type, frameOptions: options
       )
       return []
     }
 
     if frames.count == 1 || FormatCatalog.holdsMultipleFrames(type) {
-      try ImageFrames.write(frames, to: output, as: type, frameOptions: options)
+      try ImageFrames.write(frames, to: output, as: type, frameOptions: options, loopCount: loopCount)
       return []
     }
 
@@ -468,6 +474,10 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     let targetW = CGFloat(targetWidth ?? Int(original.width))
     let targetH = CGFloat(targetHeight ?? Int(original.height))
     guard targetW > 0, targetH > 0, original.width > 0, original.height > 0 else { return image }
+    // With one side there is no box to crop to, pad out or stretch into, so
+    // the shape is kept whatever the fit says. Using the original for the
+    // side nobody named turned 800 x 600, "1600 wide, cropped", into 1600 x 600.
+    let mode = targetWidth == nil || targetHeight == nil ? .proportional : mode
 
     // Only the sides that were actually asked for decide the scale.
     //
@@ -553,7 +563,13 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     case .sharpen:
       return image.applyingFilter("CISharpenLuminance", parameters: [:])
     case .invert:
-      return image.applyingFilter("CIColorInvert", parameters: [:])
+      // A negative is taken of the picture as it is seen, not of the light as
+      // the pipeline holds it: inverted in linear light, mid grey came back
+      // nearly white. So: to the eye's curve, invert, and back.
+      return image
+        .applyingFilter("CILinearToSRGBToneCurve", parameters: [:])
+        .applyingFilter("CIColorInvert", parameters: [:])
+        .applyingFilter("CISRGBToneCurveToLinear", parameters: [:])
     }
   }
 }
