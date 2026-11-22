@@ -41,7 +41,16 @@ struct PresetEditorView: View {
   @State private var removingFork: UUID?
   @FocusState private var focus: Field?
 
-  private enum Field { case name, description, search }
+  private enum Field { case name, description }
+  @State private var searchWantsFocus = false
+  @EnvironmentObject private var model: AppModel
+  /// The original and the step being compared big, from the Preview.
+  @State private var compared: Compared?
+
+  struct Compared: Equatable {
+    let original: PreviewRunner.Step
+    let step: PreviewRunner.Step
+  }
   /// Where a dragged block would land: a step's id, or `end`.
   @State private var dropTarget: DropSpot?
 
@@ -90,9 +99,23 @@ struct PresetEditorView: View {
       topBar
       Divider()
       HStack(spacing: 0) {
-        canvas
+        VStack(spacing: 0) {
+          canvas
+          // The sample file after each step, small; click for the big view.
+          PreviewStrip(preset: draft(), coordinator: model.coordinator) { original, step in
+            withAnimation(.easeOut(duration: 0.15)) { compared = Compared(original: original, step: step) }
+          }
+        }
         Divider()
         library
+      }
+    }
+    .overlay {
+      if let compared {
+        PreviewCompare(original: compared.original, step: compared.step) {
+          withAnimation(.easeOut(duration: 0.15)) { self.compared = nil }
+        }
+        .transition(.opacity)
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -114,7 +137,9 @@ struct PresetEditorView: View {
       Button("Cancel") {
         if isDirty { confirmingDiscard = true } else { onClose() }
       }
-      .keyboardShortcut(.cancelAction)
+      // While the Preview's big view is up, Esc is its: two cancel actions in
+      // one window meant Esc closed neither.
+      .keyboardShortcut(compared == nil ? .cancelAction : nil)
       .confirmationDialog("Remove this fork and everything in its arms?", isPresented: Binding(get: { removingFork != nil }, set: { if !$0 { removingFork = nil } })) {
         Button("Remove Fork and Arms", role: .destructive) {
           if let id = removingFork { _ = steps.removeStep(id: id) }
@@ -161,7 +186,7 @@ struct PresetEditorView: View {
           .lineLimit(1)
       }
       // ⌘F goes to the library's search; a button nobody sees carries it.
-      Button("Find a block") { focus = .search }
+      Button("Find a block") { searchWantsFocus = true }
         .keyboardShortcut("f", modifiers: .command)
         .hidden()
         .frame(width: 0, height: 0)
@@ -305,7 +330,12 @@ struct PresetEditorView: View {
           Text("Every copy carries on from here, each still its own file.").font(.caption).foregroundStyle(.secondary)
         }
         Spacer()
-        RemoveButton("Remove the join") { _ = steps.removeStep(id: step.wrappedValue.id) }
+        if case .before = steps.spotAfter(step.wrappedValue.id, root: Self.rootID) ?? .endOf(Self.rootID) {
+          RemoveButton("Remove the steps after the join first") {}
+            .disabled(true)
+        } else {
+          RemoveButton("Remove the join") { _ = steps.removeStep(id: step.wrappedValue.id) }
+        }
       }
       .padding(.horizontal, 14)
       .padding(.vertical, 8)
@@ -538,7 +568,7 @@ struct PresetEditorView: View {
   /// The files this preset takes, what starts it, and the test they have to
   /// pass. Always first, never removed.
   private var inputBlock: some View {
-    BlockCard(title: "Files that come in", symbol: category.icon, tint: .teal, remove: nil) {
+    BlockCard(title: "Files that come in", symbol: category.icon, tint: .teal, remove: nil, inline: false) {
       VStack(alignment: .leading, spacing: 10) {
         HStack(spacing: 10) {
           Picker("Kind", selection: $category) {
@@ -556,7 +586,7 @@ struct PresetEditorView: View {
             // The anchor keeps one width whatever is chosen: a label that grew
             // with the count moved the popover under the pointer at every click.
             .popover(isPresented: $choosingFormats, arrowEdge: .bottom) { formatsPopover }
-            Text(inputFormats.isEmpty ? "Any file Forge opens." : "\(inputFormats.count) formats chosen.")
+            Text(inputFormats.isEmpty ? "Any file Forge opens." : InputFormats.chosen(inputFormats.count))
               .font(.callout)
               .foregroundStyle(.secondary)
               .monospacedDigit()
@@ -627,7 +657,6 @@ struct PresetEditorView: View {
       _ = steps.removeStep(id: step.wrappedValue.id)
     }) {
       ActionRow(action: step)
-        .padding(.leading, 22)
     }
   }
 
@@ -636,12 +665,27 @@ struct PresetEditorView: View {
       formats.removeAll()
       showsFormats = false
     }) {
-      FlowLayout(spacing: 6) {
-        Chip("Same format", selected: formats.isEmpty) { formats.removeAll() }
-        ForEach(offeredFormats) { format in
-          Chip(format.label, selected: formats.contains(format)) { toggle(format) }
+      // A menu on the word, as Shortcuts does, rather than every format at
+      // once: the list comes from what this Mac writes, ticked where chosen.
+      Menu {
+        Button { formats.removeAll() } label: {
+          if formats.isEmpty { Label("Same format", systemImage: "checkmark") } else { Text("Same format") }
         }
+        Divider()
+        ForEach(offeredFormats) { format in
+          Button { toggle(format) } label: {
+            if formats.contains(format) { Label(format.label, systemImage: "checkmark") } else { Text(format.label) }
+          }
+        }
+      } label: {
+        Text(formats.isEmpty ? "the same format" : formats.map(\.label).joined(separator: ", "))
+          .foregroundStyle(Color.accentColor)
+          .padding(.horizontal, 5).padding(.vertical, 1)
+          .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
       }
+      .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+      .accessibilityValue(Text(formats.isEmpty ? "the same format" : formats.map(\.label).joined(separator: ", ")))
+      .accessibilityLabel(Text("Comes out as"))
       if formats.count > 1 {
         Text("\(formats.count) copies of every file, one per format.")
           .font(.caption)
@@ -654,7 +698,7 @@ struct PresetEditorView: View {
     BlockCard(title: "Names files", symbol: "textformat", tint: LibraryEntry.Group.output.color, remove: {
       nameTemplate = ""
       showsTemplate = false
-    }) {
+    }, inline: false) {
       TemplateField(title: "Names files", template: $nameTemplate, sampleExtension: outputExtension)
     }
   }
@@ -663,8 +707,7 @@ struct PresetEditorView: View {
   // MARK: - Library
 
   private var library: some View {
-    BlockLibraryView(search: $search, entries: offered, available: available, add: add)
-      .focused($focus, equals: .search)
+    BlockLibraryView(search: $search, wantsFocus: $searchWantsFocus, entries: offered, available: available, add: add)
   }
 
   private var offered: [LibraryEntry] {

@@ -83,6 +83,15 @@ enum ExternalBridge {
   /// Forget what the tools said about themselves.
   static func forgetToolFormats() { formats.clear() }
 
+  /// Whether pandoc has been asked yet. Reading this never runs it.
+  static var pandocHasAnswered: Bool { formats.peek() != nil }
+
+  /// Ask pandoc now, off the main thread, so the first question a window
+  /// asks already has its answer.
+  static func warmUp() {
+    Task.detached(priority: .utility) { _ = pandocFormats }
+  }
+
   private static let formats = FormatAnswers()
 
   private final class FormatAnswers: @unchecked Sendable {
@@ -100,6 +109,13 @@ enum ExternalBridge {
       known = asked
       lock.unlock()
       return asked
+    }
+
+    /// What is already known, without asking.
+    func peek() -> (read: Set<String>, write: Set<String>)? {
+      lock.lock()
+      defer { lock.unlock() }
+      return known
     }
 
     func clear() {
@@ -133,6 +149,25 @@ enum ExternalBridge {
     // offered anything that is neither a picture nor a recording, and only
     // after every processor that reads the format natively has declined.
     return libreOffice != nil && !isTimeBased && !type.conforms(to: .image)
+  }
+
+  /// Whether a tool on this Mac writes the format - what `plan` would find a
+  /// writer for, asked of the target alone. Pictures stay ImageIO's, which
+  /// hands WebP to cwebp itself.
+  static func canWrite(_ type: UTType) -> Bool {
+    guard let ext = FormatCatalog.fileExtension(for: type) ?? type.preferredFilenameExtension else {
+      return false
+    }
+    if type.conforms(to: .image) {
+      return ImageProcessor.isWebP(type) && ExternalTools.locate("cwebp") != nil
+    }
+    if Fonts.handles(ext) { return ExternalTools.locate("fonttools") != nil }
+    // Only what pandoc has already said: this is asked from view bodies, and
+    // running pandoc there waited on a subprocess in the middle of a SwiftUI
+    // update - the app aborted at launch. `warmUp` asks it in the background.
+    if let known = formats.peek(), known.write.contains(name(of: ext)) { return true }
+    let isTimeBased = type.conforms(to: .audiovisualContent) || type.conforms(to: .audio)
+    return isTimeBased && ExternalTools.locate("ffmpeg") != nil
   }
 
   static func plan(from input: URL, to output: URL, operations: [Operation]) -> Plan? {

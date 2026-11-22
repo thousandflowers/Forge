@@ -31,7 +31,9 @@ struct EditableSurface: ViewModifier {
       .focused($focused)
       .padding(.horizontal, 6)
       .padding(.vertical, 3)
-      .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(hovering || focused ? 0.14 : 0.07)))
+      // Nothing at rest, so a name reads as a title rather than a disabled
+      // box; a faint surface under the pointer, a ring while typing.
+      .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(focused ? 0.1 : (hovering ? 0.08 : 0))))
       .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor.opacity(focused ? 0.8 : 0), lineWidth: 1.5))
       .onHover { hovering = $0 }
       .animation(.easeOut(duration: 0.12), value: hovering)
@@ -84,12 +86,14 @@ struct ConditionEditor: View {
       case .name, .folder, .fileExtension:
         TextField(condition.subject == .fileExtension ? "png" : "text", text: $condition.text)
           .frame(width: 140)
+          .accessibilityLabel(Text("\(condition.subject.title) to test"))
       case .fileSize, .longestSide, .width, .height:
         TextField("Value", text: Binding(
           get: { String(format: "%g", condition.value) },
           set: { condition.value = Double($0.replacingOccurrences(of: ",", with: ".")) ?? condition.value }
         ))
         .frame(width: 80)
+        .accessibilityLabel(Text("\(condition.subject.title) in \(condition.subject.unit)"))
         Text(condition.subject.unit).foregroundStyle(.secondary)
       }
     }
@@ -127,37 +131,6 @@ struct FormatChips: View {
 
 /// A library tile as a button that lifts a little under the pointer and
 /// presses down under the click.
-struct LibraryTileButton<Label: View>: View {
-  let usable: Bool
-  let action: () -> Void
-  @ViewBuilder let label: () -> Label
-  @State private var hovering = false
-
-  init(usable: Bool, action: @escaping () -> Void, @ViewBuilder label: @escaping () -> Label) {
-    self.usable = usable
-    self.action = action
-    self.label = label
-  }
-
-  var body: some View {
-    Button(action: action) {
-      label()
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(hovering && usable ? 0.06 : 0)))
-    }
-    .buttonStyle(PressableTile())
-    .onHover { hovering = $0 }
-    .animation(.easeOut(duration: 0.12), value: hovering)
-  }
-}
-
-struct PressableTile: ButtonStyle {
-  func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .scaleEffect(configuration.isPressed ? 0.98 : 1)
-      .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
-  }
-}
-
 /// A chain of steps on the canvas, root or branch: every step rendered by the
 /// editor, and a drop zone at the end. A separate view so a fork's branches
 /// can hold the same thing without the type system chasing its own tail.
@@ -232,12 +205,13 @@ struct RemoveButton: View {
 
   var body: some View {
     Button(action: action) {
-      Image(systemName: "minus.circle")
+      Image(systemName: "xmark.circle.fill")
+        .font(.system(size: 15))
         .frame(width: 24, height: 24)
         .contentShape(Rectangle())
     }
     .buttonStyle(.borderless)
-    .foregroundStyle(.secondary)
+    .foregroundStyle(Color.secondary.opacity(0.6))
     .help(help)
     .accessibilityLabel(Text(help))
   }
@@ -250,32 +224,63 @@ struct BlockCard<Content: View>: View {
   let symbol: String
   let tint: Color
   let remove: (() -> Void)?
+  /// false for a block whose controls are several rows by nature (a
+  /// question, the files that come in): those always go under the title.
+  let inline: Bool
   @ViewBuilder let content: () -> Content
 
-  init(title: String, symbol: String, tint: Color, remove: (() -> Void)?, @ViewBuilder content: @escaping () -> Content) {
+  init(title: String, symbol: String, tint: Color, remove: (() -> Void)?, inline: Bool = true, @ViewBuilder content: @escaping () -> Content) {
     self.title = title
     self.symbol = symbol
     self.tint = tint
     self.remove = remove
+    self.inline = inline
     self.content = content
   }
 
+  /// One line when the controls fit beside the title, as a sentence the way
+  /// Shortcuts writes its actions; the controls go underneath when they do not.
+  @State private var narrow = false
+  /// Below this the controls go under the title (an arm of a fork, say).
+  private let inlineMinimum: CGFloat = 440
+
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      HStack(spacing: 8) {
-        BlockIcon(symbol: symbol, tint: tint)
-        Text(title).font(.callout.weight(.semibold))
-        Spacer()
-        if let remove {
-          RemoveButton("Remove \(title)", action: remove)
-        }
-      }
+    let oneLine = inline && !narrow
+    let layout = oneLine
+      ? AnyLayout(HStackLayout(alignment: .center, spacing: 8))
+      : AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+    layout {
+      header
       content()
     }
-    .padding(12)
-    .frame(maxWidth: 640, alignment: .leading)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.trailing, remove == nil ? 0 : 28)
+    .overlay(alignment: oneLine ? .trailing : .topTrailing) { removeButton }
+    .background(GeometryReader { geo in
+      Color.clear
+        .onAppear { narrow = geo.size.width < inlineMinimum }
+        .onChange(of: geo.size.width) { narrow = $0 < inlineMinimum }
+    })
+    .padding(.horizontal, 12).padding(.vertical, 8)
+    .frame(minHeight: Metrics.blockHeight)
+    .frame(maxWidth: Metrics.blockColumn, alignment: .leading)
+    // The card is the column's width, centred; the background goes on before
+    // the frame that centres it, or it spans the whole canvas.
+    .background(
+      RoundedRectangle(cornerRadius: Metrics.blockRadius, style: .continuous)
+        .fill(Color(nsColor: .controlBackgroundColor))
+    )
     .frame(maxWidth: .infinity)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(tint.opacity(0.25)))
+  }
+
+  private var header: some View {
+    HStack(spacing: 8) {
+      BlockIcon(symbol: symbol, tint: tint, size: Metrics.iconSize)
+      Text(title).font(.system(size: Metrics.bodyText, weight: .semibold)).fixedSize()
+    }
+  }
+
+  @ViewBuilder private var removeButton: some View {
+    if let remove { RemoveButton("Remove \(title)", action: remove) }
   }
 }

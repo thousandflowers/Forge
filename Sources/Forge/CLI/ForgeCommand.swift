@@ -12,7 +12,7 @@ struct ForgeCommand: AsyncParsableCommand {
     commandName: LaunchMode.toolName,
     abstract: "Batch file conversion on macOS, using only Apple frameworks.",
     version: Bundle.main.shortVersion,
-    subcommands: [Convert.self, Presets.self, Formats.self, Watch.self, Extensions.self],
+    subcommands: [Convert.self, Presets.self, Formats.self, Watch.self],
     defaultSubcommand: Convert.self
   )
 }
@@ -177,17 +177,39 @@ enum CLI {
     // never gets that far. A terminal line-buffers; a log should too.
     setvbuf(stdout, nil, _IOLBF, 0)
 
-    do {
-      var command = try ForgeCommand.parseAsRoot(arguments)
-      if var asynchronous = command as? AsyncParsableCommand {
-        try await asynchronous.run()
-      } else {
-        try command.run()
+    let work = Task {
+      do {
+        var command = try ForgeCommand.parseAsRoot(arguments)
+        if var asynchronous = command as? AsyncParsableCommand {
+          try await asynchronous.run()
+        } else {
+          try command.run()
+        }
+        // A batch that was stopped reports what it got through, then says it
+        // was stopped: 0 would tell a script the conversion succeeded.
+        if Task.isCancelled { exit(interruptedStatus) }
+      } catch {
+        if Task.isCancelled { exit(interruptedStatus) }
+        ForgeCommand.exit(withError: error)
       }
-    } catch {
-      ForgeCommand.exit(withError: error)
     }
+    // Ctrl-C or a kill used to end the process mid-file, leaving the empty
+    // file that holds the output's name and the half-written scratch beside
+    // it. Now it cancels the work, the conversion clears up after itself,
+    // and the process leaves as an interrupted one does.
+    let stops = [SIGINT, SIGTERM].map { number -> DispatchSourceSignal in
+      signal(number, SIG_IGN)
+      let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
+      source.setEventHandler { work.cancel() }
+      source.resume()
+      return source
+    }
+    await work.value
+    stops.forEach { $0.cancel() }
   }
+
+  /// What a shell reports for a command stopped with Ctrl-C: 128 + SIGINT.
+  static let interruptedStatus: Int32 = 128 + SIGINT
 }
 
 extension Codec: ExpressibleByArgument {}

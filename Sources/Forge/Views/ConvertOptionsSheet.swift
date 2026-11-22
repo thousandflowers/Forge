@@ -13,6 +13,8 @@ struct ConvertChoice: Equatable {
   var presetID: UUID?
   var format: OutputFormat = .keep
   var width: Int?
+  /// Set by the Custom size menu; nil keeps the picture's own proportions.
+  var height: Int?
   var quality: Int?
   var filter: FilterType?
   var codec: Codec?
@@ -41,20 +43,11 @@ struct ConvertChoice: Equatable {
   /// this one never made - which then gets applied for real the moment any
   /// other field is touched and the preset lets go.
   func adopting(_ preset: RulePreset) -> ConvertChoice {
-    var updated = self
-    updated.format = .keep
-    updated.width = nil
-    updated.quality = nil
-    updated.filter = nil
-    updated.codec = nil
-    updated.language = nil
-    updated.maxBytes = nil
-    updated.privacy = nil
-
+    var updated = cleared()
     for action in preset.actions {
       switch action {
       case .convertFormat(let to): updated.format = OutputFormat(type: to)
-      case .resize(let width, _, _): updated.width = width
+      case .resize(let width, let height, _): updated.width = width; updated.height = height
       case .quality(let level): updated.quality = level
       case .filter(let type): updated.filter = type
       case .encode(let codec): updated.codec = codec
@@ -64,9 +57,41 @@ struct ConvertChoice: Equatable {
       case .when, .split, .join, .merge: break
       }
     }
-
     updated.presetID = preset.id
     return updated
+  }
+
+  /// Nothing chosen: no preset and none of a preset's fields left behind.
+  /// "Nothing" used to drop only the preset's name, so the last preset's
+  /// format and quality stayed in fields a mixed batch does not show, and
+  /// Convert ran them anyway - over the originals, with Overwrite.
+  func cleared() -> ConvertChoice {
+    var updated = self
+    updated.presetID = nil
+    updated.format = .keep
+    updated.width = nil
+    updated.height = nil
+    updated.quality = nil
+    updated.filter = nil
+    updated.codec = nil
+    updated.language = nil
+    updated.maxBytes = nil
+    updated.privacy = nil
+    return updated
+  }
+
+  /// The last batch's choice, handed to a new one. Kept only where the sheet
+  /// will show it: a preset the new files are offered, or hand-set fields on
+  /// a batch of one kind that honours them. Anything else used to ride along
+  /// unseen - a JPEG preset from a batch of photos turned the next drop, a
+  /// film, into hundreds of 4K frames with no preset showing as chosen.
+  /// Where the files go is not about what they are, so it always carries.
+  func carried(offered: [RulePreset], kinds: Set<ConvertKind>) -> ConvertChoice {
+    if let presetID {
+      return offered.contains { $0.id == presetID } ? self : cleared()
+    }
+    guard let custom = resolved(against: []) else { return self }
+    return kinds.count == 1 && custom.suits(kinds) ? self : cleared()
   }
 
   var needsDestination: Bool { destinationMode != .overwrite }
@@ -75,7 +100,7 @@ struct ConvertChoice: Equatable {
   var customActions: [Operation] {
     var actions: [Operation] = []
     if let type = format.type { actions.append(.convertFormat(to: type)) }
-    if let width { actions.append(.resize(width: width, height: nil, fitMode: fitMode)) }
+    if width != nil || height != nil { actions.append(.resize(width: width, height: height, fitMode: fitMode)) }
     if let quality { actions.append(.quality(level: quality)) }
     if let filter { actions.append(.filter(type: filter)) }
     if let codec { actions.append(.encode(codec: codec)) }
@@ -120,6 +145,7 @@ struct ConvertChoice: Equatable {
 /// something it did not do.
 struct ConvertOptionsSheet: View {
   @Environment(\.dismiss) private var dismiss
+  @State private var showingCustomSize = false
 
   let kinds: Set<ConvertKind>
   let fileCount: Int
@@ -230,8 +256,8 @@ struct ConvertOptionsSheet: View {
   private var presetField: some View {
     field("Start from") {
       chips {
-        chip("Nothing", selected: choice.presetID == nil) {
-          choice.presetID = nil
+        chip("Nothing", selected: choice.presetID == nil && choice.customActions.isEmpty) {
+          choice = choice.cleared()
         }
         ForEach(offeredPresets) { preset in
           chip(preset.name, selected: choice.presetID == preset.id) { load(preset) }
@@ -269,23 +295,33 @@ struct ConvertOptionsSheet: View {
   private var widthField: some View {
     field("Width") {
       chips {
-        chip("As they are", selected: choice.width == nil) { edit { $0.width = nil } }
+        chip("As they are", selected: choice.width == nil && choice.height == nil) {
+          edit { $0.width = nil; $0.height = nil }
+        }
+        // A width chip means that width at the picture's own proportions, so
+        // it drops a height the Custom menu set.
         ForEach(Self.widths, id: \.self) { width in
-          chip("\(width) px", selected: choice.width == width) { edit { $0.width = width } }
+          chip("\(width) px", selected: choice.width == width && choice.height == nil) {
+            edit { $0.width = width; $0.height = nil }
+          }
         }
-        HStack(spacing: 6) {
-          TextField("Custom", text: Binding(
-            get: { choice.width.map(String.init) ?? "" },
-            set: { text in
-              let value = Int(text.trimmingCharacters(in: .whitespaces))
-              edit { $0.width = (value ?? 0) > 0 ? value : nil }
-            }
-          ))
-          .frame(width: 72)
-          Text("px").foregroundStyle(.secondary).font(.callout)
-        }
+        customSizeChip
       }
     }
+  }
+
+  /// Custom… opens the micro menu; once a size is set the chip says it.
+  private var customSizeChip: some View {
+    let isCustom = choice.height != nil || (choice.width.map { !Self.widths.contains($0) } ?? false)
+    let title = isCustom ? "\(choice.width.map(String.init) ?? "auto") × \(choice.height.map(String.init) ?? "auto")" : "Custom…"
+    return chip(title, selected: isCustom) { showingCustomSize = true }
+      .popover(isPresented: $showingCustomSize, arrowEdge: .bottom) {
+        CustomSizeMenu(
+          width: Binding(get: { choice.width }, set: { value in edit { $0.width = value } }),
+          height: Binding(get: { choice.height }, set: { value in edit { $0.height = value } }),
+          fit: Binding(get: { choice.fitMode }, set: { value in edit { $0.fitMode = value } })
+        )
+      }
   }
 
   private var chosenPreset: RulePreset? {

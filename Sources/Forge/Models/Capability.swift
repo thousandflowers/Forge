@@ -250,7 +250,10 @@ enum Capabilities {
           name: "Font tools",
           requires: "a font writer - CoreText reads font tables but cannot write one",
           approximateSize: "a few megabytes",
-          tool: ExternalTool(binary: "ttx", formula: "fonttools", adds: "writing TrueType, OpenType, WOFF")
+          tool: ExternalTool(binary: "ttx", formula: "fonttools", adds: "writing TrueType, OpenType, WOFF"),
+          // ExternalBridge.Fonts calls it (ttf/otf to woff2 and back); the card
+          // said "Forge does not call it yet" over a conversion that works.
+          isWired: true
         )),
         evidence: ["ttf", "otf", "woff", "woff2"]
       ),

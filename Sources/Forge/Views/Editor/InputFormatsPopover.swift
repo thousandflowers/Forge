@@ -42,7 +42,7 @@ struct InputFormatsPopover: View {
         }
         .padding(.trailing, 8)
       }
-      Text(chosen.isEmpty ? "None chosen: any file Forge can open goes through." : "\(chosen.count) formats chosen.")
+      Text(chosen.isEmpty ? "None chosen: any file Forge can open goes through." : InputFormats.chosen(chosen.count))
         .font(.caption)
         .foregroundStyle(.secondary)
         .monospacedDigit()

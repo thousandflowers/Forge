@@ -12,13 +12,22 @@ enum InputFormats {
     var id: String { kind.rawValue }
   }
 
+  /// "1 format chosen." / "3 formats chosen.", said the same in every place.
+  static func chosen(_ count: Int) -> String {
+    count == 1 ? "1 format chosen." : "\(count) formats chosen."
+  }
+
   static let groups: [Group] = {
     func extensions(_ types: some Sequence<UTType>) -> [String] {
       Array(Set(types.compactMap { $0.preferredFilenameExtension?.lowercased() })).sorted()
     }
     let media = FormatCatalog.readableMediaTypes
     let audio = media.filter { $0.conforms(to: .audio) }
-    let video = media.filter { !$0.conforms(to: .audio) }
+    // Films only. "Everything that is not audio" put playlists (M3U, PLS),
+    // captions (VTT, SCC, TTML) and audio macOS has no class for (AWB, XHE)
+    // under Videos.
+    // ponytail: unclassified dyn types get no chip; "Any" still takes them.
+    let video = media.filter { $0.conforms(to: .movie) }
     let documents = Set(DocumentText.readable.keys).union(SimpleDocProcessor.readableTypes)
     let fonts = ["ttf", "otf", "woff", "woff2"].filter(ExternalBridge.Fonts.handles)
     return [

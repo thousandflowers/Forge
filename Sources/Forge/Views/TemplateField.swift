@@ -19,6 +19,7 @@ struct TemplateField: View {
     VStack(alignment: .leading, spacing: 6) {
       HStack(spacing: 8) {
         TextField(title, text: $template, prompt: Text(placeholder))
+          .accessibilityLabel(Text(title.isEmpty ? "Name template" : title))
         Menu {
           ForEach(NameTemplate.Token.allCases) { token in
             Button {

@@ -70,7 +70,6 @@ final class DocumentConversionTests: BaseTestCase {
 
   func test_markdownIsNotOfferedAsAnOutput() throws {
     let markdown = try XCTUnwrap(DocumentText.markdown)
-    XCTAssertTrue(DocumentText.canRead(markdown))
     XCTAssertFalse(DocumentText.canWrite(markdown), "nothing on the system writes Markdown")
   }
 
@@ -84,6 +83,40 @@ final class DocumentConversionTests: BaseTestCase {
     let pdf = try XCTUnwrap(PDFDocument(url: output))
     XCTAssertGreaterThan(pdf.pageCount, 1, "everything landed on one page")
     XCTAssertTrue((pdf.string ?? "").contains("Paragraph number 120"), "the end was lost")
+  }
+
+  /// A PDF with a text layer, written the way any other document becomes one.
+  @MainActor private func textPDF(_ text: String) throws -> URL {
+    let url = path("letter.pdf")
+    try DocumentText.write(NSAttributedString(string: text), to: url, as: .pdf)
+    return url
+  }
+
+  /// The sheet offers a PDF every document format. It used to hand them all
+  /// to the page rasteriser, which refused anything that was not an image.
+  func test_pdfBecomesRTF() async throws {
+    let output = try await convert(try await textPDF("Forge reads the letter"), to: .rtf)
+    let rtf = try NSAttributedString(url: output, options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil)
+    XCTAssertTrue(rtf.string.contains("Forge reads the letter"), "got: \(rtf.string)")
+  }
+
+  func test_pdfBecomesDOCX() async throws {
+    let docx = try XCTUnwrap(UTType("org.openxmlformats.wordprocessingml.document"))
+    let output = try await convert(try await textPDF("Forge writes Word"), to: docx)
+    let read = try NSAttributedString(url: output, options: [.documentType: NSAttributedString.DocumentType.officeOpenXML], documentAttributes: nil)
+    XCTAssertTrue(read.string.contains("Forge writes Word"), "got: \(read.string)")
+  }
+
+  func test_pdfBecomesHTML() async throws {
+    let output = try await convert(try await textPDF("Forge on the web"), to: .html)
+    XCTAssertTrue(try String(contentsOf: output, encoding: .utf8).contains("Forge on the web"))
+  }
+
+  /// PDF to PDF stays a page-for-page render, not the text poured into new pages.
+  func test_pdfToPDFStillRendersPages() async throws {
+    let source = try Fixture.pdf(at: path("three.pdf"), pages: 3)
+    let output = try await convert(source, to: .pdf)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: output.path))
   }
 
   func test_plainTextRoundTrip() async throws {

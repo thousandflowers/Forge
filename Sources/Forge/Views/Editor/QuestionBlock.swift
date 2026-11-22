@@ -9,7 +9,7 @@ struct QuestionBlock: View {
   let remove: () -> Void
 
   var body: some View {
-    BlockCard(title: "Asks for", symbol: "questionmark.circle", tint: LibraryEntry.Group.ask.color, remove: remove) {
+    BlockCard(title: "Asks for", symbol: "questionmark.circle", tint: LibraryEntry.Group.ask.color, remove: remove, inline: false) {
       VStack(alignment: .leading, spacing: 8) {
         HStack(spacing: 8) {
           TextField("Question", text: $parameter.label)
@@ -46,6 +46,7 @@ struct QuestionBlock: View {
             }
           ))
           .frame(width: 80)
+          .accessibilityLabel(Text("Default answer"))
           Text(parameter.kind.unit).foregroundStyle(.secondary)
         }
 

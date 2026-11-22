@@ -24,6 +24,8 @@ final class NameTokensMoreTests: XCTestCase {
   func testAWordThatOnlyLooksLikeATokenIsLeftAlone() {
     XCTAssertNil(NameTokens.read("quiz_q.jpg").quality)
     XCTAssertNil(NameTokens.read("px_notes.jpg").width)
+    XCTAssertNil(NameTokens.read("report_q3.pdf").quality, "a quarter is not a quality")
+    XCTAssertEqual(NameTokens.read("report_q30.pdf").quality, 30)
   }
 
   func testParameterSavedWithoutSourceIsAskedEachTime() throws {

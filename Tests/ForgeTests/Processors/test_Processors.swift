@@ -110,6 +110,47 @@ final class ConversionTests: BaseTestCase {
     XCTAssertTrue(values.contains("Eugenio"), "the artist did not survive: \(values)")
   }
 
+  /// A film asked for an audio-only container gives up its soundtrack. M4A is
+  /// a container AVFoundation will also put a picture in, and it did: the
+  /// .m4a came out carrying the whole film.
+  func test_video_toM4AKeepsOnlyTheSound() async throws {
+    let source = try await Fixture.video(at: path("clip.mp4"), seconds: 2, withAudio: true)
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: try XCTUnwrap(UTType("com.apple.m4a-audio")), category: .audio),
+      destinationMode: .copyTo,
+      destinationURL: try folder("out")
+    ) { _ in }
+
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+    let after = try await AVURLAsset(url: try XCTUnwrap(entry.outputURL)).trackCounts()
+    XCTAssertEqual(after.video, 0, "an .m4a is sound only")
+    XCTAssertEqual(after.audio, 1)
+  }
+
+  /// A damaged or half-copied film failed with AVFoundation's two words,
+  /// "Cannot Open", which say neither what could not be opened nor why.
+  func test_aDamagedVideoSaysWhatIsWrongWithIt() async throws {
+    let whole = try await Fixture.video(at: path("whole.mp4"), seconds: 2, withAudio: true)
+    let data = try Data(contentsOf: whole)
+    let broken = path("broken.mp4")
+    try data.prefix(data.count / 3).write(to: broken)
+
+    do {
+      _ = try await coordinator().processFile(
+        try ProcessableFile(url: broken),
+        with: .make(format: .mov, category: .video),
+        destinationMode: .copyTo,
+        destinationURL: try folder("out")
+      ) { _ in }
+      XCTFail("a third of a film is not a film")
+    } catch {
+      let message = error.localizedDescription
+      XCTAssertTrue(message.contains("broken.mp4"), message)
+      XCTAssertTrue(message.contains("damaged") || message.contains("incomplete"), message)
+    }
+  }
+
   /// The old pipeline read only the video track, so every converted file came
   /// out silent.
   func test_video_keepsTheAudioTrack() async throws {
@@ -220,29 +261,8 @@ final class ConversionTests: BaseTestCase {
     let tracks = try await output.loadTracks(withMediaType: .video)
     let track = try XCTUnwrap(tracks.first)
     let size = try await track.load(.naturalSize)
-    XCTAssertLessThan(size.width, 1280, "the output kept the source width")
-  }
-
-  /// The preset is chosen from the names the system offers, not a fixed table.
-  func test_videoPreset_picksTheSmallestPresetThatCoversTheRequest() {
-    let available = [
-      AVAssetExportPreset640x480,
-      AVAssetExportPreset1280x720,
-      AVAssetExportPreset1920x1080,
-      AVAssetExportPresetHighestQuality,
-    ]
-    let chosen = MediaProcessor.videoPreset(
-      for: [.resize(width: 800, height: 600, fitMode: .proportional)],
-      available: available
-    )
-    XCTAssertEqual(chosen, AVAssetExportPreset1280x720)
-  }
-
-  func test_videoPreset_readsDimensionsOutOfThePresetName() {
-    let parsed = MediaProcessor.dimensions(inPresetNamed: AVAssetExportPreset1920x1080)
-    XCTAssertEqual(parsed?.width, 1920)
-    XCTAssertEqual(parsed?.height, 1080)
-    XCTAssertNil(MediaProcessor.dimensions(inPresetNamed: AVAssetExportPresetHighestQuality))
+    XCTAssertEqual(abs(size.width), 640, "a 640 × 480 box takes a 1280 × 720 film to 640 × 360")
+    XCTAssertEqual(abs(size.height), 360)
   }
 
   // MARK: - Audio

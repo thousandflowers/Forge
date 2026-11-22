@@ -89,6 +89,36 @@ final class LogicTests: BaseTestCase {
     XCTAssertEqual(PDFDocument(url: out.appendingPathComponent("photo.pdf"))?.pageCount, 2)
   }
 
+  func testAMergeNeverOverwritesAFileAlreadyInTheFolder() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 300, height: 200)
+    let out = try folder("out")
+    try Data("mine".utf8).write(to: out.appendingPathComponent("photo.pdf"))
+    let preset = RulePreset(name: "Sheet", description: "", category: .image, actions: [
+      .split([Branch(name: "a", actions: []), Branch(name: "b", actions: [])]), .merge(.pdf),
+    ])
+
+    let entry = try await coordinator().processFile(try ProcessableFile(url: source), with: preset, destinationMode: .copyTo, destinationURL: out) { _ in }
+
+    XCTAssertEqual(entry.status, .completed)
+    XCTAssertEqual(try String(contentsOf: out.appendingPathComponent("photo.pdf")), "mine", "what was there stays")
+    XCTAssertEqual(contents(of: out).filter { $0.hasSuffix(".pdf") }.count, 2)
+    XCTAssertNotEqual(entry.outputURL?.lastPathComponent, "photo.pdf")
+  }
+
+  func testAMergeWithMoveRemovesTheOriginalOnlyOnceTheFileIsWritten() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 300, height: 200)
+    let out = try folder("out")
+    let preset = RulePreset(name: "Sheet", description: "", category: .image, actions: [
+      .split([Branch(name: "a", actions: []), Branch(name: "b", actions: [])]), .merge(.pdf),
+    ])
+
+    let entry = try await coordinator().processFile(try ProcessableFile(url: source), with: preset, destinationMode: .moveTo, destinationURL: out) { _ in }
+
+    XCTAssertEqual(entry.status, .completed)
+    XCTAssertFalse(exists(source), "a move is a move")
+    XCTAssertEqual(contents(of: out), ["photo.pdf"])
+  }
+
   func testAJoinIsPassedOverAndTheTailRunsOnEveryCopy() throws {
     let file = try ProcessableFile(url: try Fixture.image(at: path("plain.png")))
     let chain: [Forge.Operation] = [

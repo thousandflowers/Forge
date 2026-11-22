@@ -16,12 +16,16 @@ CONTENTS="$APP/Contents"
 
 echo "==> Building Forge $VERSION (arm64 + x86_64)"
 swift build -c release --arch arm64 --arch x86_64
+# Asked, not assumed: the universal build moved from .build/apple to .build/out
+# between toolchains, and copying from the old path shipped a stale binary
+# left there by an earlier build without a word.
+BIN_DIR="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
 
 echo "==> Assembling $APP"
 rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 
-cp .build/apple/Products/Release/Forge "$CONTENTS/MacOS/Forge"
+cp "$BIN_DIR/Forge" "$CONTENTS/MacOS/Forge"
 
 # No `forge` symlink beside the executable: the default macOS filesystem is
 # case-insensitive, so `forge` and `Forge` are the same name and the link would
@@ -49,6 +53,19 @@ cat > "$CONTENTS/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <!-- Any file or folder, because what Forge can read is asked of the
+           frameworks at run time rather than listed here. Alternate, so Forge
+           is offered in Open With and takes drops on its Dock icon, and is
+           never made the default app for anything. -->
+      <key>CFBundleTypeName</key><string>Anything to convert</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>public.item</string></array>
+    </dict>
+  </array>
   <key>NSSpeechRecognitionUsageDescription</key>
   <string>Forge uses speech recognition on this Mac to turn recordings into text. Nothing is uploaded.</string>
   $ICON_ENTRY

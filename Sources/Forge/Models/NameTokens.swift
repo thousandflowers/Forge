@@ -46,7 +46,9 @@ enum NameTokens {
         read.ceiling = bytes
       } else if token.hasSuffix("px"), let width = Int(token.dropLast(2)), width > 0 {
         read.width = width
-      } else if token.hasPrefix("q"), let quality = Int(token.dropFirst()), (1...100).contains(quality) {
+      } else if token.hasPrefix("q"), token.count >= 3, let quality = Int(token.dropFirst()), (10...100).contains(quality) {
+        // Two digits at least: `report_q3.pdf` is a quarter, not a request
+        // to write it at quality three.
         read.quality = quality
       } else {
         // Anything else ends the run. Without this, a date or a word in the

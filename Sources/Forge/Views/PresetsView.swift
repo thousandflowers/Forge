@@ -4,6 +4,10 @@ import UniformTypeIdentifiers
 
 struct PresetsView: View {
   @EnvironmentObject private var model: AppModel
+  /// The card files are being dragged over, outlined so the drop has a target.
+  @State private var dropTarget: UUID?
+  /// The preset waiting on a yes before it is deleted.
+  @State private var deleting: RulePreset?
 
   var body: some View {
     Group {
@@ -23,9 +27,29 @@ struct PresetsView: View {
                   set: { model.setPreset(preset, enabled: $0) }
                 ),
                 onShare: { share(preset) },
-                onDelete: { model.deletePreset(preset) }
+                onDelete: { deleting = preset }
               )
                 .onTapGesture { model.presetEditor = PresetEditorRequest(preset: preset) }
+                // Files dropped on a preset run through it: they go to the
+                // Convert screen with this preset chosen, through the same
+                // questions and confirmations as any other run.
+                .dropDestination(for: URL.self) { urls, _ in
+                  guard !urls.isEmpty else { return false }
+                  model.pending = AppModel.PendingConversion(
+                    files: urls,
+                    preset: preset,
+                    destination: urls.first?.deletingLastPathComponent(),
+                    mode: .copyTo,
+                    replacesList: false
+                  )
+                  return true
+                } isTargeted: { targeted in
+                  dropTarget = targeted ? preset.id : (dropTarget == preset.id ? nil : dropTarget)
+                }
+                .overlay(
+                  RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous)
+                    .strokeBorder(Color.accentColor, lineWidth: dropTarget == preset.id ? 2.5 : 0)
+                )
                 .contextMenu {
                   Button("Edit") { model.presetEditor = PresetEditorRequest(preset: preset) }
                   Button("Duplicate") { model.duplicatePreset(preset) }
@@ -36,13 +60,26 @@ struct PresetsView: View {
                   Button("Move Down") { model.movePreset(preset, by: 1) }
                     .disabled(model.presets.last?.id == preset.id)
                   Divider()
-                  Button("Delete", role: .destructive) { model.deletePreset(preset) }
+                  Button("Delete…", role: .destructive) { deleting = preset }
                 }
             }
           }
           .padding(20)
         }
       }
+    }
+    // A preset can be an afternoon's work, and there is no Undo: one click on
+    // a small × used to delete it for good.
+    .confirmationDialog(
+      deleting.map { "Delete “\($0.name)”?" } ?? "",
+      isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
+    ) {
+      if let preset = deleting {
+        Button("Delete", role: .destructive) { model.deletePreset(preset); deleting = nil }
+        Button("Cancel", role: .cancel) { deleting = nil }
+      }
+    } message: {
+      Text("It cannot be brought back. Share it first to keep a copy.")
     }
     .navigationTitle(model.presetEditor == nil ? "Presets" : (model.presetEditor?.preset?.name ?? "New Preset"))
     // The editor covers the screen, so the screen's own buttons step aside
@@ -102,6 +139,7 @@ struct PresetCard: View {
           .controlSize(.mini)
           .labelsHidden()
           .help(isEnabled ? "Turn this preset off" : "Turn this preset on")
+          .accessibilityLabel(Text("Use \(preset.name)"))
         if let onShare {
           Button(action: onShare) {
             Image(systemName: "square.and.arrow.up")
@@ -146,8 +184,7 @@ struct PresetCard: View {
     }
     .padding(14)
     .frame(height: 150, alignment: .top)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
+    .forgeCard()
     .contentShape(Rectangle())
     .opacity(isEnabled ? 1 : 0.5)
   }
@@ -170,7 +207,11 @@ struct PresetCard: View {
       case (nil, nil): return "resize"
       }
     case .stripMetadata(let policy):
-      return policy == .stripLocation ? "no location" : "no metadata"
+      switch policy {
+      case .keepAll: return "all metadata"
+      case .stripLocation: return "no location"
+      case .stripAll: return "no metadata"
+      }
     case .when(let condition, _, _):
       return "if \(condition.subject.title.lowercased())"
     case .split(let branches):

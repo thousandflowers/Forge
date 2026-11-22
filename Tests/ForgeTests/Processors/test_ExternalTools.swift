@@ -187,6 +187,35 @@ final class ExternalToolTests: BaseTestCase {
   /// Pictures are ImageIO's, whatever is installed. A tool that offered to
   /// take them would take them off the path that resizes, filters and
   /// measures.
+  /// The Presets screen warned "This Mac cannot write MP3" on the default
+  /// Audio to MP3 preset, on a Mac where ffmpeg writes it every time.
+  func test_aFormatOnlyAToolWritesIsStillDeliverable() throws {
+    try requireFFmpeg()
+    let mp3 = try XCTUnwrap(UTType(filenameExtension: "mp3"))
+    XCTAssertTrue(ExternalBridge.canWrite(mp3))
+  }
+
+  func test_aDocumentFormatPandocWritesIsDeliverable() throws {
+    try requirePandoc()
+    let epub = try XCTUnwrap(UTType(filenameExtension: "epub"))
+    _ = ExternalBridge.pandocFormats
+    XCTAssertTrue(ExternalBridge.canWrite(epub))
+  }
+
+  /// canWrite is asked from view bodies. Running pandoc there waited on a
+  /// subprocess in the middle of a SwiftUI update, and the app aborted at
+  /// launch inside AttributeGraph. It only ever reads what pandoc already said.
+  func test_canWriteNeverRunsATool() throws {
+    let epub = try XCTUnwrap(UTType(filenameExtension: "epub"))
+    ExternalBridge.forgetToolFormats()
+    _ = ExternalBridge.canWrite(epub)
+    XCTAssertFalse(ExternalBridge.pandocHasAnswered, "canWrite asked pandoc")
+  }
+
+  func test_noToolClaimsToWriteAPicture() {
+    XCTAssertFalse(ExternalBridge.canWrite(.jpeg), "pictures are ImageIO's")
+  }
+
   func test_picturesAreNotOfferedToAnyTool() {
     XCTAssertFalse(ExternalBridge.canHandle(.png))
     XCTAssertFalse(ExternalBridge.canHandle(.jpeg))

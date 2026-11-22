@@ -4,6 +4,7 @@ import SwiftUI
 struct HistoryView: View {
   @EnvironmentObject private var model: AppModel
 
+  @State private var confirmingClear = false
   var body: some View {
     Group {
       if model.history.isEmpty {
@@ -18,9 +19,16 @@ struct HistoryView: View {
     .navigationTitle("History")
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
-        Button(role: .destructive) { model.clearHistory() } label: { Label("Clear", systemImage: "trash") }
+        Button(role: .destructive) { confirmingClear = true } label: { Label("Clear", systemImage: "trash") }
           .disabled(model.history.isEmpty)
       }
+    }
+    // Every past run, with what failed and why, went in one click.
+    .confirmationDialog("Clear the history?", isPresented: $confirmingClear) {
+      Button("Clear History", role: .destructive) { model.clearHistory() }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("Every past conversion goes, with what failed and why. The converted files stay where they are.")
     }
     .task { await model.refreshHistory() }
   }

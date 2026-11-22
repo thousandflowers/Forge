@@ -8,6 +8,9 @@ struct BatchProcessingView: View {
   @StateObject private var vm = BatchViewModel()
 
   @State private var choice = ConvertChoice()
+  /// Empty until a column header is clicked: the list keeps the order the
+  /// files were added in, which is also the order they convert in.
+  @State private var sortOrder: [KeyPathComparator<ProcessableFile>] = []
   @State private var showingOptions = false
   @State private var isTargeted = false
   @State private var confirming = false
@@ -81,8 +84,12 @@ struct BatchProcessingView: View {
     // A run started from History arrives here. Both hooks are needed: the
     // screen may already be showing, or may be about to appear because
     // something set this.
-    .onAppear { if let pending = model.pending { take(pending) } }
+    .onAppear {
+      if let pending = model.pending { take(pending) }
+      takeOpened()
+    }
     .onChange(of: model.pending) { pending in if let pending { take(pending) } }
+    .onChange(of: model.opened) { _ in takeOpened() }
     .navigationTitle("Convert")
     .toolbar {
       ToolbarItemGroup {
@@ -102,7 +109,7 @@ struct BatchProcessingView: View {
         kinds: kinds,
         fileCount: vm.files.count,
         totalSize: totalSize,
-        presets: model.usablePresets.filter { preset in vm.files.contains { preset.accepts($0.url) } },
+        presets: offeredPresets,
         defaultPrivacy: model.settings.privacy,
         choice: $choice,
         onConvert: {
@@ -159,8 +166,8 @@ struct BatchProcessingView: View {
   }
 
   private var fileTable: some View {
-    Table(vm.files) {
-      TableColumn("File") { f in
+    Table(vm.files.sorted(using: sortOrder), sortOrder: $sortOrder) {
+      TableColumn("File", value: \.fileName) { f in
         Text(f.fileName)
           .lineLimit(1)
           .truncationMode(.middle)
@@ -172,11 +179,11 @@ struct BatchProcessingView: View {
             }
           }
       }
-      TableColumn("Type") { f in
-        Text(f.fileType.localizedDescription ?? f.fileType.preferredFilenameExtension ?? "—")
+      TableColumn("Type", value: \.kindName) { f in
+        Text(f.kindName)
           .foregroundStyle(.secondary)
       }
-      TableColumn("Size") { f in
+      TableColumn("Size", value: \.fileSize) { f in
         Text(f.fileSize.formatted(.byteCount(style: .file)))
           .foregroundStyle(.secondary).monospacedDigit()
       }
@@ -188,6 +195,12 @@ struct BatchProcessingView: View {
         HStack(spacing: 6) {
           if status == .processing, let fraction = vm.fileProgress[f.id] {
             ProgressView(value: fraction).progressViewStyle(.linear).frame(maxWidth: 120)
+          } else if status == .failed, let reason = vm.failures[f.id] {
+            HStack(spacing: 6) {
+              status.label
+              Text(reason).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+            }
+            .help(reason)
           } else {
             status.label
           }
@@ -199,6 +212,8 @@ struct BatchProcessingView: View {
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
             .help("Stop converting this one")
+            // Without it VoiceOver reads the symbol's own name: "Close".
+            .accessibilityLabel(Text("Stop converting \(f.fileName)"))
           }
         }
       }
@@ -254,6 +269,7 @@ struct BatchProcessingView: View {
       // A batch starts from the general preference and can then disagree with
       // it, which is what makes the preference a default rather than a law.
       choice.fitMode = model.settings.defaultFitMode
+      choice = choice.carried(offered: offeredPresets, kinds: kinds)
     }
     route()
   }
@@ -329,6 +345,11 @@ struct BatchProcessingView: View {
       .sorted { $0.kind.rawValue < $1.kind.rawValue }
   }
 
+  /// The presets the sheet shows: the ones that take at least one of these files.
+  private var offeredPresets: [RulePreset] {
+    model.usablePresets.filter { preset in vm.files.contains { preset.accepts($0.url) } }
+  }
+
   private func clear() {
     vm.clear()
     adhoc = nil
@@ -344,8 +365,18 @@ struct BatchProcessingView: View {
   /// Take a conversion handed over from somewhere else in the app - the same
   /// files or new ones, with the chain a past run used - and put it through the
   /// ordinary route, gate and confirmations included.
+  /// Files opened from the Dock or Open With: a drop, made elsewhere.
+  private func takeOpened() {
+    let urls = model.opened
+    guard !urls.isEmpty else { return }
+    model.opened = []
+    add(urls)
+  }
+
   private func take(_ pending: AppModel.PendingConversion) {
-    vm.clear()
+    // Never cleared while a batch runs: that emptied the rows mid-run. Files
+    // dropped on a preset join what is already here.
+    if pending.replacesList, !vm.isProcessing { vm.clear() }
     vm.add(pending.files)
     adhoc = pending.preset
     choice.destinationMode = pending.mode
@@ -414,6 +445,9 @@ struct BatchProcessingView: View {
 final class BatchViewModel: ObservableObject {
   @Published var files: [ProcessableFile] = []
   @Published var statusMap: [UUID: ProcessingStatus] = [:]
+  /// Why a file failed, as the engine said it. The row used to say "Failed"
+  /// and nothing else, with the reason thrown away.
+  @Published var failures: [UUID: String] = [:]
   @Published var fileProgress: [UUID: Double] = [:]
   @Published var isProcessing = false
   @Published var progress: Double = 0
@@ -490,6 +524,7 @@ final class BatchViewModel: ObservableObject {
   func clear() {
     files.removeAll()
     statusMap.removeAll()
+    failures.removeAll()
     fileProgress.removeAll()
     progress = 0
     lastSaving = nil
@@ -541,6 +576,7 @@ final class BatchViewModel: ObservableObject {
     progress = 0
     fileProgress.removeAll()
     statusMap.removeAll()
+    failures.removeAll()
     lastSaving = nil
     defer { isProcessing = false }
 
@@ -634,8 +670,9 @@ final class BatchViewModel: ObservableObject {
     case .progress(let id, let fraction):
       fileProgress[id] = fraction
 
-    case .finished(let id, let status, let output, _, _):
+    case .finished(let id, let status, let output, _, let error):
       statusMap[id] = status
+      failures[id] = status == .failed ? error : nil
       fileProgress[id] = status == .completed ? 1 : 0
       if let output { model.remember(output) }
       let done = statusMap.values.filter { $0 != .pending && $0 != .processing }.count
@@ -645,3 +682,7 @@ final class BatchViewModel: ObservableObject {
 
 }
 
+private extension ProcessableFile {
+  /// What the Type column shows and sorts by.
+  var kindName: String { fileType.localizedDescription ?? fileType.preferredFilenameExtension ?? "—" }
+}

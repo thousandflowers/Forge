@@ -21,7 +21,7 @@ Drop in a folder of photos, a video, a stack of PDFs. Forge asks what they shoul
 
 ## Drop the files, and answer a question only when there is one
 
-The Convert screen is a drop zone. The first time, Forge asks what the files should become. After that it mostly does not ask at all: **drop a folder onto the preset you chose a minute ago and it just runs.**
+The Convert screen is a drop zone, and so is the Dock icon: files dropped on it, or opened with **Open With › Forge** in Finder, land on the same screen. The first time, Forge asks what the files should become. After that it mostly does not ask at all: **drop a folder onto the preset you chose a minute ago and it just runs.**
 
 Every conversion is read as five facts — is something being thrown away, did you ask for that yourself, is anything still undefined, does this make a different kind of thing or more files than it was given, does it touch the originals — and those five decide between running it, asking once, and the confirmation that has always guarded your originals. A size you typed into a filename counts as your own answer, so `holiday_10MB.jpg` runs without a word. The same ceiling arriving from a preset does not: that gets one sober popup which converts a single representative file into a scratch folder and shows you the before and the after, measured rather than guessed.
 
@@ -75,11 +75,9 @@ The size ceiling is a promise about the result, not a setting handed to an encod
 
 The Capabilities screen is computed at run time, so it describes your Mac rather than a claim written months ago. Search it, filter it by status, and ask it to **look at the files you actually have**: it counts the kinds of file in your own folders and puts the capabilities that would help you at the top. Only filenames are read, never contents, and only when you press the button.
 
-Every conversion above is Apple's frameworks and nothing else: no ImageMagick, no FFmpeg, no LibreOffice, and nothing to install before Forge is useful. For the handful of jobs macOS cannot do alone, Forge names the tool that can and offers to add it — as an **extension**, which is a separate download and never part of the app.
+Every conversion above is Apple's frameworks and nothing else: no ImageMagick, no FFmpeg, no LibreOffice, and nothing to install before Forge is useful. For the handful of jobs macOS cannot do alone, Forge names the tool that can and offers to install it with **Homebrew**: the exact command is shown once before it runs, its output is live on the card, and the tool is your Mac's rather than Forge's.
 
-Two ways one can arrive. **Homebrew**, which works today: the exact command is shown once before it runs, with its output live on the card, and the tool is your Mac's rather than Forge's. Or an **extension** Forge hosts and pins — the machinery for that is built and tested, and it turns on for a tool the day a build for it is published on the Releases page. When one is, the card tells you the version, the licence, the project it comes from and how large it is before anything happens; what arrives is checked against a SHA-256 checksum from the manifest and thrown away if it does not match, then unpacked into `~/Library/Application Support/Forge/Extensions/` — not into the app, not onto your `PATH` — and removable from the same card. `forge extensions list | add | remove` does the same from a script, and `FORGE_EXTENSIONS_MANIFEST` points it at a manifest of your own.
-
-What stays true either way: **the core converts with Apple's frameworks and nothing else**, no extension is needed for any of it, and no third-party binary is bundled inside the `.app`. What is no longer true is the older claim that Forge downloads nobody's binaries — it will download the ones you ask it for, from its own releases, with the checksum checked.
+What stays true: **the core converts with Apple's frameworks and nothing else**, no extra tool is needed for any of it, and no third-party binary is bundled inside the `.app` or downloaded by Forge.
 
 Install `cwebp`, `pandoc`, `ffmpeg` or `tesseract` and the formats they add appear where a processor will really do the writing: WebP out of the image path, EPUB and the office formats out of pandoc, the containers macOS cannot write out of ffmpeg. The cards say which of the two facts is true for each — whether the tool is here, and whether Forge calls it — because those are different things.
 
@@ -90,7 +88,7 @@ Forge is not trying to out-encode a specialist. HandBrake has spent twenty years
 | | Forge | Permute | HandBrake | ImageOptim |
 | --- | --- | --- | --- | --- |
 | What it converts | images, video, audio, PDF, data, 3D, subtitles | images, video, audio | video, and the audio inside it | images |
-| Where the converters come from | macOS itself, plus optional extensions you ask for | bundled with the app | bundled with the app | bundled with the app |
+| Where the converters come from | macOS itself, plus optional Homebrew tools you ask for | bundled with the app | bundled with the app | bundled with the app |
 | What it offers is read from your Mac at run time | yes | no | no | no |
 | Presets you can export, import and browse in a gallery | yes | presets, kept local | presets, importable files | no |
 | Strips location and device metadata on conversion | yes, three levels | no | no | keeps or strips, all or nothing |
@@ -156,13 +154,7 @@ It backs off while a batch is running. A warm Mac, Low Power Mode or memory pres
 
 Grab the latest `.dmg` from the [Releases page](https://github.com/thousandflowers/Forge/releases), open it, drag Forge to Applications. Universal build, Apple silicon and Intel, macOS 13 Ventura or later.
 
-The build is unsigned, so on first launch right click the app and choose Open.
-
-### Homebrew
-
-```bash
-brew install --cask thousandflowers/tap/forge
-```
+The build is not notarized, so macOS stops the first launch. On macOS 15 or later, open Forge once, dismiss the warning, then go to System Settings, Privacy & Security, and click **Open Anyway**. On macOS 13 and 14, right click the app and choose Open.
 
 ### From source
 
@@ -233,7 +225,6 @@ Tests build their fixtures at run time and keep everything in a scratch director
 ## What is not here yet
 
 - Translating subtitles into another language. macOS 13 has no offline translation API, and sending your files to somebody's server is not something this app is going to start doing quietly.
-- No extension builds are published yet. The whole path — manifest, checksum, install, removal — is built and tested, and the Capabilities cards offer Homebrew until there is something to download.
 - Redaction suggests; it never decides. There is no mode that covers faces without you looking at each one, and there will not be.
 - Signing and notarization.
 

@@ -17,6 +17,17 @@ enum AppSection: String, CaseIterable, Identifiable {
     }
   }
 
+  /// What the sidebar shows beside the row, as Shortcuts does; 0 shows
+  /// nothing. History is not counted: a number in the hundreds says nothing
+  /// and only grows.
+  func count(presets: Int, folders: Int) -> Int {
+    switch self {
+    case .presets: return presets
+    case .folders: return folders
+    default: return 0
+    }
+  }
+
   var icon: String {
     switch self {
     case .process: return "arrow.triangle.2.circlepath"
@@ -85,5 +96,26 @@ struct EmptyStateView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .padding()
+  }
+}
+
+/// Sizes measured from Shortcuts on macOS 26, used wherever Forge draws a
+/// block, a row or a card. Colours stay Forge's.
+enum Metrics {
+  static let blockHeight: CGFloat = 43
+  static let blockColumn: CGFloat = 600
+  static let iconSize: CGFloat = 22
+  static let bodyText: CGFloat = 13
+  static let blockRadius: CGFloat = 20
+  static let cardRadius: CGFloat = 16
+}
+
+extension View {
+  /// Forge's cards in Shortcuts' shape: flat, generously rounded.
+  func forgeCard(radius: CGFloat = Metrics.cardRadius) -> some View {
+    background(
+      RoundedRectangle(cornerRadius: radius, style: .continuous)
+        .fill(Color(nsColor: .controlBackgroundColor))
+    )
   }
 }

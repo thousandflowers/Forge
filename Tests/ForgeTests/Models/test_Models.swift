@@ -473,6 +473,26 @@ final class OutputNamingTests: BaseTestCase {
 
     XCTAssertEqual(try XCTUnwrap(entry.outputURL).lastPathComponent, "photo.png")
   }
+
+  /// `forge convert photo.png --overwrite` hands over a URL relative to the
+  /// working directory. It never compared equal to the absolute name worked
+  /// out for the output, so the file came back as `photo 2.png`.
+  func test_convertingInPlaceKeepsTheNameFromARelativePath() async throws {
+    let source = try Fixture.image(at: path("photo.png"), width: 400, height: 400)
+    let relative = URL(
+      fileURLWithPath: source.lastPathComponent,
+      relativeTo: source.deletingLastPathComponent()
+    )
+
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: relative),
+      with: .make(format: .png, resize: ResizeSpec(width: 200, height: 200, fitMode: .proportional), category: .image),
+      destinationMode: .overwrite
+    ) { _ in }
+
+    XCTAssertEqual(try XCTUnwrap(entry.outputURL).lastPathComponent, "photo.png")
+    XCTAssertFalse(contents(of: source.deletingLastPathComponent()).contains("photo 2.png"))
+  }
 }
 
 /// Icon files carry several resolutions.
@@ -1290,6 +1310,14 @@ final class ConvertKindOfferingTests: XCTestCase {
     XCTAssertTrue(ConvertKind.image.offers(.jpeg))
     XCTAssertFalse(ConvertKind.image.offers(.quickTimeMovie))
     XCTAssertTrue(ConvertKind.video.offers(.jpeg), "a film can give up a frame")
+    XCTAssertTrue(
+      ConvertKind.video.offers(UTType("com.apple.m4a-audio")!),
+      "a film can give up its soundtrack"
+    )
+    XCTAssertFalse(
+      ConvertKind.video.outputGroups.first { $0.title == "Sound" }?.formats.contains { $0.type == .mpeg4Movie } ?? true,
+      "the sound row is sound only"
+    )
     XCTAssertTrue(ConvertKind.data.offers(.json))
     XCTAssertFalse(ConvertKind.data.offers(.jpeg), "a JSON file is not a picture")
   }
@@ -1300,5 +1328,243 @@ final class ConvertKindOfferingTests: XCTestCase {
     guard let toml = UTType("public.toml") else { throw XCTSkip("no TOML type on this macOS") }
     XCTAssertEqual(OutputFormat(type: toml).label, "TOML")
     XCTAssertEqual(OutputFormat(type: .jpeg).label, "JPEG")
+  }
+}
+
+/// The sidebar counts what is there, as Shortcuts does: presets and folders.
+final class SidebarCountTests: XCTestCase {
+  func test_sidebarCountsPresetsAndFolders() {
+    XCTAssertEqual(AppSection.presets.count(presets: 6, folders: 2), 6)
+    XCTAssertEqual(AppSection.folders.count(presets: 6, folders: 2), 2)
+    XCTAssertEqual(AppSection.process.count(presets: 6, folders: 2), 0, "Convert has nothing to count")
+    XCTAssertEqual(AppSection.history.count(presets: 6, folders: 2), 0, "a number in the hundreds says nothing")
+  }
+}
+
+/// A watched folder reads as a sentence, the way Shortcuts lists automations.
+final class FolderSentenceTests: XCTestCase {
+  private let home = FileManager.default.homeDirectoryForCurrentUser
+
+  func test_theSentenceNamesTheFolderFromHome() {
+    let folder = MonitoredFolder(url: home.appendingPathComponent("Downloads"), ruleId: UUID(), destinationMode: .copyTo)
+    XCTAssertEqual(folder.arrivalSentence, "When files arrive in ~/Downloads")
+  }
+
+  func test_aFolderOutsideHomeKeepsItsFullPath() {
+    let folder = MonitoredFolder(url: URL(fileURLWithPath: "/Volumes/Card/DCIM"), ruleId: UUID(), destinationMode: .copyTo)
+    XCTAssertEqual(folder.arrivalSentence, "When files arrive in /Volumes/Card/DCIM")
+  }
+
+  func test_theDetailSaysWhereTheyGoAndAboutSubfolders() {
+    var folder = MonitoredFolder(
+      url: home.appendingPathComponent("Downloads"), ruleId: UUID(), destinationMode: .copyTo,
+      destinationURL: home.appendingPathComponent("Desktop")
+    )
+    XCTAssertEqual(folder.detail(presetName: "Web JPEG"), "Web JPEG · copies into ~/Desktop · subfolders ignored")
+    folder.destinationMode = .overwrite
+    folder.includeSubfolders = true
+    XCTAssertEqual(folder.detail(presetName: "Web JPEG"), "Web JPEG · replaces the originals · subfolders too")
+  }
+}
+
+/// The numbers written into a block: steps stay in range, typing keeps digits.
+final class NumberTokenTests: XCTestCase {
+  func test_aStepStaysInsideTheRange() {
+    XCTAssertEqual(NumberToken.stepped(99, by: 10, range: 1...100, startingFrom: 80), 100)
+    XCTAssertEqual(NumberToken.stepped(5, by: -10, range: 1...100, startingFrom: 80), 1)
+    XCTAssertEqual(NumberToken.stepped(1920, by: 1, range: 1...20_000, startingFrom: 1000), 1921)
+  }
+
+  func test_anEmptyValueStepsFromWhereItWouldStart() {
+    XCTAssertEqual(NumberToken.stepped(nil, by: 1, range: 1...20_000, startingFrom: 1080), 1081)
+  }
+
+  func test_typingKeepsOnlyDigits() {
+    XCTAssertEqual(NumberToken.digits(of: "19a20px"), "1920")
+    XCTAssertEqual(NumberToken.digits(of: "1234567"), "12345")
+    XCTAssertEqual(NumberToken.digits(of: "auto"), "")
+  }
+}
+
+/// The Convert sheet's Custom size has a height as well as a width.
+final class CustomSizeChoiceTests: XCTestCase {
+  func test_aCustomSizeResizesToBothSides() {
+    var choice = ConvertChoice()
+    choice.width = 1600
+    choice.height = 900
+    choice.fitMode = .cropCenter
+    XCTAssertEqual(choice.customActions, [.resize(width: 1600, height: 900, fitMode: .cropCenter)])
+  }
+
+  func test_aPresetWithBothSidesFillsBoth() {
+    let preset = RulePreset(
+      name: "Square", description: "", category: .image,
+      actions: [.resize(width: 1080, height: 1080, fitMode: .cropCenter)]
+    )
+    let choice = ConvertChoice().adopting(preset)
+    XCTAssertEqual(choice.width, 1080)
+    XCTAssertEqual(choice.height, 1080)
+  }
+
+  func test_aWidthAloneStillMeansThatWidth() {
+    var choice = ConvertChoice()
+    choice.width = 1280
+    XCTAssertEqual(choice.customActions, [.resize(width: 1280, height: nil, fitMode: .proportional)])
+  }
+}
+
+/// The Custom size menu's ready-made shapes.
+final class CustomSizeMenuTests: XCTestCase {
+  func test_aShapeGivesTheMatchingHeight() {
+    XCTAssertEqual(CustomSizeMenu.height(for: 1080, ratio: 1), 1080)
+    XCTAssertEqual(CustomSizeMenu.height(for: 1080, ratio: 4.0 / 5.0), 1350)
+    XCTAssertEqual(CustomSizeMenu.height(for: 1920, ratio: 16.0 / 9.0), 1080)
+    XCTAssertEqual(CustomSizeMenu.height(for: 3000, ratio: 3.0 / 2.0), 2000)
+  }
+}
+
+/// What the review turned up, kept from coming back.
+final class RedesignReviewTests: XCTestCase {
+  func test_aTypedNumberEndsInsideTheRange() {
+    XCTAssertEqual(NumberToken.clamped(500, to: 1...100), 100)
+    XCTAssertEqual(NumberToken.clamped(0, to: 1...20_000), 1)
+    XCTAssertEqual(NumberToken.clamped(80, to: 1...100), 80)
+    XCTAssertNil(NumberToken.clamped(nil, to: 1...100), "empty stays automatic")
+  }
+
+  func test_theMenuStartsOnTheShapeTheSizeAlreadyHas() {
+    XCTAssertEqual(CustomSizeMenu.proportion(width: 1080, height: 1080), .square)
+    XCTAssertEqual(CustomSizeMenu.proportion(width: 1920, height: 1080), .wide)
+    XCTAssertEqual(CustomSizeMenu.proportion(width: 1000, height: 333), .free)
+    XCTAssertEqual(CustomSizeMenu.proportion(width: 1080, height: nil), .free)
+  }
+
+  func test_aFolderWithoutADestinationSaysSo() {
+    let folder = MonitoredFolder(url: URL(fileURLWithPath: "/tmp/in"), ruleId: UUID(), destinationMode: .moveTo)
+    XCTAssertEqual(folder.detail(presetName: "Web JPEG"), "Web JPEG · moves, but no folder is chosen · subfolders ignored")
+  }
+}
+
+/// What the button-by-button pass over the Convert sheet turned up.
+final class ConvertSheetNothingTests: XCTestCase {
+  private let webJPEG = RulePreset(name: "Web JPEG", description: "", category: .image,
+                                   actions: [.convertFormat(to: .jpeg), .quality(level: 80)])
+
+  func test_nothingLeavesNoneOfTheLastPresetBehind() {
+    let afterPreset = ConvertChoice().adopting(webJPEG)
+    XCTAssertFalse(afterPreset.customActions.isEmpty)
+    let nothing = afterPreset.cleared()
+    XCTAssertNil(nothing.presetID)
+    XCTAssertEqual(nothing.customActions, [], "the old JPEG Q80 used to run anyway")
+    XCTAssertNil(nothing.resolved(against: [webJPEG]))
+  }
+
+  func test_keepingEveryTagIsNotCalledNoMetadata() {
+    XCTAssertEqual(PresetCard.chip(.stripMetadata(policy: .keepAll)), "all metadata")
+    XCTAssertEqual(PresetCard.chip(.stripMetadata(policy: .stripLocation)), "no location")
+    XCTAssertEqual(PresetCard.chip(.stripMetadata(policy: .stripAll)), "no metadata")
+  }
+}
+
+/// A new batch does not inherit what it cannot show.
+final class CarriedChoiceTests: XCTestCase {
+  private let webJPEG = RulePreset(name: "Web JPEG", description: "", targetFormat: .jpeg, quality: 80, category: .image)
+  private let video720 = RulePreset(name: "Video 720p", description: "", targetFormat: .mpeg4Movie,
+                                    resize: ResizeSpec(width: 1280, height: 720, fitMode: .proportional), category: .video)
+
+  func test_aPresetTheNewFilesAreNotOfferedIsDropped() {
+    var last = ConvertChoice().adopting(webJPEG)
+    last.destinationURL = URL(fileURLWithPath: "/tmp/out")
+    let next = last.carried(offered: [video720], kinds: [.video])
+    XCTAssertNil(next.presetID)
+    XCTAssertEqual(next.customActions, [], "no JPEG left to run on the film")
+    XCTAssertEqual(next.destinationURL, last.destinationURL, "where files go still carries")
+  }
+
+  func test_anOfferedPresetCarriesSoTheSecondBatchJustRuns() {
+    let last = ConvertChoice().adopting(webJPEG)
+    XCTAssertEqual(last.carried(offered: [webJPEG], kinds: [.image]), last)
+  }
+
+  func test_handSetFieldsCarryOnlyWhereTheyAreShown() {
+    var custom = ConvertChoice()
+    custom.format = OutputFormat(type: .png)
+    XCTAssertEqual(custom.carried(offered: [], kinds: [.image]).format, custom.format)
+    XCTAssertEqual(custom.carried(offered: [], kinds: [.image, .audio]).customActions, [], "a mixed batch hides the fields")
+  }
+}
+
+final class ImportDuplicateTests: XCTestCase {
+  func test_theSamePresetImportedTwiceIsKeptOnce() {
+    let web = RulePreset(name: "Web JPEG copy", description: "", targetFormat: .jpeg, quality: 80, category: .image)
+    var renamed = web
+    renamed.name = "Web JPEG for blog"
+    var stronger = web
+    stronger.actions = [.convertFormat(to: .jpeg), .quality(level: 60)]
+    XCTAssertTrue(AppModel.isAlreadyHere(web, in: [web]))
+    XCTAssertFalse(AppModel.isAlreadyHere(renamed, in: [web]), "another name is another preset")
+    XCTAssertFalse(AppModel.isAlreadyHere(stronger, in: [web]), "same name, different steps: kept")
+  }
+}
+
+final class InputFormatGroupTests: XCTestCase {
+  func test_videosHoldFilmsOnly() {
+    let videos = Set(InputFormats.groups.first { $0.kind == .video }?.extensions ?? [])
+    XCTAssertTrue(videos.isSuperset(of: ["mov", "mp4", "m4v"]))
+    XCTAssertTrue(videos.isDisjoint(with: ["m3u", "pls", "vtt", "scc", "ttml", "awb", "xhe", "mp3", "m4a"]), "got \(videos.sorted())")
+  }
+}
+
+final class CapabilityWiringTests: XCTestCase {
+  /// A pack Forge has a bridge for says so, or the card claims a working
+  /// conversion is not called.
+  func test_fontToolsAreMarkedAsCalled() throws {
+    let fonts = try XCTUnwrap(Capabilities.all.first { $0.id == "fonts" })
+    guard case .needsPack(let pack) = fonts.status else { return XCTFail("fonts is not a pack") }
+    XCTAssertTrue(pack.isWired)
+  }
+}
+
+final class EmptyConditionTests: XCTestCase {
+  func test_aTextTestWithNoTextYetLetsEveryFileThrough() throws {
+    let file = ProcessableFile(url: URL(fileURLWithPath: "/tmp/holiday.png"), fileType: .png,
+                               fileName: "holiday.png", fileSize: 10, dimensions: nil)
+    for subject in [Condition.Subject.name, .folder, .fileExtension] {
+      var empty = Condition()
+      empty.subject = subject
+      empty.comparison = .equals
+      XCTAssertTrue(empty.holds(for: file), "\(subject) with no text")
+    }
+    var named = Condition()
+    named.subject = .name
+    named.comparison = .equals
+    named.text = "other"
+    XCTAssertFalse(named.holds(for: file), "a filled-in test still decides")
+  }
+}
+
+/// The app and the `forge` command keep one history between them.
+final class SharedHistoryTests: XCTestCase {
+  func test_whatAnotherProcessWroteIsNeitherHiddenNorLost() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("history-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let app = PersistenceManager(root: root)
+    let cli = PersistenceManager(root: root)
+    func entry(_ name: String) -> ProcessingHistory {
+      ProcessingHistory(fileURL: URL(fileURLWithPath: "/tmp/\(name)"), status: .completed, duration: 0.1)
+    }
+
+    try await app.appendHistory(entry("first.png"))
+    _ = try await app.loadHistory()                 // the app now holds it in memory
+    try await Task.sleep(nanoseconds: 1_100_000_000) // a later modification time
+    try await cli.appendHistory(entry("from-cli.png"))
+    let seen = try await app.loadHistory().map(\.fileURL.lastPathComponent)
+    XCTAssertEqual(seen, ["first.png", "from-cli.png"], "the app did not see the command's run")
+
+    try await app.appendHistory(entry("second.png"))
+    let kept = try await cli.loadHistory()
+    let reopened = try await PersistenceManager(root: root).loadHistory().map(\.fileURL.lastPathComponent)
+    XCTAssertEqual(reopened, ["first.png", "from-cli.png", "second.png"], "the app's write dropped the command's run")
+    XCTAssertEqual(kept.count, 3)
   }
 }

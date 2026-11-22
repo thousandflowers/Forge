@@ -32,8 +32,22 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     let start = Date()
     let asset = AVURLAsset(url: input)
 
-    let videoTracks = try await asset.loadTracks(withMediaType: .video)
-    let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+    let videoTracks: [AVAssetTrack]
+    let audioTracks: [AVAssetTrack]
+    do {
+      videoTracks = try await asset.loadTracks(withMediaType: .video)
+      audioTracks = try await asset.loadTracks(withMediaType: .audio)
+    } catch is CancellationError {
+      // A stopped batch is a cancelled row, not a damaged file.
+      throw CancellationError()
+    } catch {
+      // AVFoundation's own words are "Cannot Open", in the system language,
+      // which say neither what nor why.
+      throw ProcessingError.conversionFailed(
+        reason: "\(input.lastPathComponent) cannot be opened: it looks damaged or incomplete. "
+          + "If it is still being copied or downloaded, try again once it has arrived."
+      )
+    }
 
     guard !videoTracks.isEmpty || !audioTracks.isEmpty else {
       throw ProcessingError.conversionFailed(
@@ -84,7 +98,22 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       )
     }
 
+    // A film asked for a sound format gives up its soundtrack. An export
+    // session would happily put the picture in an .m4a as well, because M4A is
+    // MPEG-4 underneath; nothing that opens an .m4a expects one.
+    if Self.isSoundOnly(requested) {
+      guard !audioTracks.isEmpty else {
+        throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no sound to keep")
+      }
+      return try await convertAudio(input, to: output, operations: operations, start: start, progress: progress)
+    }
+
     return try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress)
+  }
+
+  /// Audio that is not also a movie: `.m4a`, `.wav`, `.flac`, not `.mp4`.
+  static func isSoundOnly(_ type: UTType) -> Bool {
+    type.conforms(to: .audio) && !type.conforms(to: .movie)
   }
 
   // MARK: - Words out of a recording
@@ -195,13 +224,15 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   /// The size to sample at: what the preset asked for, or a readable default
   /// that never enlarges the source.
   private static func frameSize(for operations: [Operation], asset: AVURLAsset) async throws -> CGSize {
-    if let target = operations.compactMap(resizeTarget).first {
-      return CGSize(width: target.width, height: target.height)
-    }
     guard let track = try await asset.loadTracks(withMediaType: .video).first else {
       return CGSize(width: defaultFrameSide, height: defaultFrameSide)
     }
     let natural = try await track.load(.naturalSize)
+    if let asked = operations.compactMap(resizeRequest).first,
+       let size = renderSize(natural: CGSize(width: abs(natural.width), height: abs(natural.height)),
+                             width: asked.width, height: asked.height, mode: .proportional) {
+      return size
+    }
     let longest = max(abs(natural.width), abs(natural.height))
     guard longest > defaultFrameSide else { return natural }
     let scale = defaultFrameSide / longest
@@ -254,6 +285,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // because the preset list is sorted by pixels would be the wrong answer.
     let preferred = Self.chosenCodec(in: operations)?.exportPreset
       ?? Self.videoPreset(for: operations, available: available)
+    let resizing = try await Self.composition(for: asset, operations: operations)
 
     // Not every preset works with every asset, and the ones that do cannot
     // always write every container. Try the best match, then fall back rather
@@ -271,6 +303,12 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     session.outputURL = output
     session.outputFileType = fileType
     session.shouldOptimizeForNetworkUse = true
+    if let resizing {
+      guard session.presetName != AVAssetExportPresetPassthrough else {
+        throw ProcessingError.conversionFailed(reason: "This video cannot be resized into that container")
+      }
+      session.videoComposition = resizing
+    }
 
     // Where the film was shot travels inside it. An export with no metadata of
     // its own carries the source's across, so leaving it out is done here: the
@@ -344,25 +382,10 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     )
   }
 
-  /// Pick the export preset that best matches the requested operations.
-  ///
-  /// Preset names carry their own dimensions (`AVAssetExportPreset1280x720`),
-  /// so the choice is read out of the names the system offers rather than from
-  /// a hardcoded mapping that would rot with every OS release.
+  /// The export preset for the requested quality. The size is not chosen here:
+  /// the named sizes stop at 640 × 480 and only ever came close to what was
+  /// asked, so an exact size is drawn by `composition(for:operations:)`.
   static func videoPreset(for operations: [Operation], available: [String]) -> String {
-    let sized = available.compactMap { name -> (name: String, pixels: Int, width: Int, height: Int)? in
-      guard let size = Self.dimensions(inPresetNamed: name) else { return nil }
-      return (name, size.width * size.height, size.width, size.height)
-    }
-
-    if let target = operations.compactMap(Self.resizeTarget).first, !sized.isEmpty {
-      let covering = sized
-        .filter { $0.width >= target.width && $0.height >= target.height }
-        .min { $0.pixels < $1.pixels }
-      let largest = sized.max { $0.pixels < $1.pixels }
-      if let chosen = covering ?? largest { return chosen.name }
-    }
-
     if let quality = operations.compactMap(Self.qualityLevel).first {
       let tiers = [
         (limit: 33, preset: AVAssetExportPresetLowQuality),
@@ -377,6 +400,75 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     return available.contains(AVAssetExportPresetHighestQuality)
       ? AVAssetExportPresetHighestQuality
       : AVAssetExportPresetPassthrough
+  }
+
+  /// The frame a resize asks for, worked out as images do it: only the sides
+  /// that were named decide the scale, and a crop or a pad box takes the
+  /// source's side for one nobody named. Sides are even, as encoders want.
+  static func renderSize(natural: CGSize, width: Int?, height: Int?, mode: ResizeFitMode) -> CGSize? {
+    guard natural.width > 0, natural.height > 0 else { return nil }
+    let asked = [
+      width.map { CGFloat($0) / natural.width },
+      height.map { CGFloat($0) / natural.height },
+    ].compactMap { $0 }.filter { $0 > 0 }
+    guard let smallest = asked.min() else { return nil }
+    func even(_ value: CGFloat) -> CGFloat {
+      let whole = max(2, Int(value.rounded()))
+      return CGFloat(whole % 2 == 0 ? whole : whole + 1)
+    }
+    if mode == .proportional {
+      return CGSize(width: even(natural.width * smallest), height: even(natural.height * smallest))
+    }
+    return CGSize(
+      width: even(width.map(CGFloat.init) ?? natural.width),
+      height: even(height.map(CGFloat.init) ?? natural.height)
+    )
+  }
+
+  /// Where the picture goes inside the frame: filled exactly for a fit or a
+  /// stretch, cut at the edges for a crop, framed in black for a pad.
+  static func placement(of natural: CGSize, in render: CGSize, mode: ResizeFitMode) -> CGAffineTransform {
+    let scaleX = render.width / natural.width, scaleY = render.height / natural.height
+    let scale: CGFloat
+    switch mode {
+    case .proportional, .stretch: return CGAffineTransform(scaleX: scaleX, y: scaleY)
+    case .cropCenter: scale = max(scaleX, scaleY)
+    case .pad: scale = min(scaleX, scaleY)
+    }
+    return CGAffineTransform(scaleX: scale, y: scale).concatenating(CGAffineTransform(
+      translationX: (render.width - natural.width * scale) / 2,
+      y: (render.height - natural.height * scale) / 2
+    ))
+  }
+
+  /// The video drawn at the size asked for, upright, or nil when no size was.
+  private static func composition(for asset: AVAsset, operations: [Operation]) async throws -> AVVideoComposition? {
+    guard let asked = operations.compactMap(resizeRequest).first,
+          let track = try await asset.loadTracks(withMediaType: .video).first else { return nil }
+    let natural = try await track.load(.naturalSize)
+    let turned = try await track.load(.preferredTransform)
+    // A phone video is stored sideways with a turn on top; the size asked for
+    // is the size it is watched at.
+    let shown = CGRect(origin: .zero, size: natural).applying(turned)
+    let upright = CGSize(width: abs(shown.width), height: abs(shown.height))
+    guard let render = renderSize(natural: upright, width: asked.width, height: asked.height, mode: asked.mode) else {
+      return nil
+    }
+
+    let composition = try await AVMutableVideoComposition.videoComposition(withPropertiesOf: asset)
+    composition.renderSize = render
+    let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+    layer.setTransform(
+      turned
+        .concatenating(CGAffineTransform(translationX: -shown.minX, y: -shown.minY))
+        .concatenating(placement(of: upright, in: render, mode: asked.mode)),
+      at: .zero
+    )
+    let instruction = AVMutableVideoCompositionInstruction()
+    instruction.timeRange = CMTimeRange(start: .zero, duration: try await asset.load(.duration))
+    instruction.layerInstructions = [layer]
+    composition.instructions = [instruction]
+    return composition
   }
 
   /// The first preset that both opens for this asset and writes this container.
@@ -398,19 +490,9 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     operations.compactMap { if case .encode(let codec) = $0 { return codec } else { return nil } }.first
   }
 
-  /// Read `1280x720` out of `AVAssetExportPreset1280x720`.
-  static func dimensions(inPresetNamed name: String) -> (width: Int, height: Int)? {
-    let allowed: Set<Character> = Set("0123456789x")
-    let trailing = String(name.reversed().prefix { allowed.contains($0) }.reversed())
-    let parts = trailing.split(separator: "x")
-    guard parts.count == 2, let width = Int(parts[0]), let height = Int(parts[1]) else { return nil }
-    return (width, height)
-  }
-
-  private static func resizeTarget(_ operation: Operation) -> (width: Int, height: Int)? {
-    guard case .resize(let width, let height, _) = operation,
-          let width, let height else { return nil }
-    return (width, height)
+  private static func resizeRequest(_ operation: Operation) -> (width: Int?, height: Int?, mode: ResizeFitMode)? {
+    guard case .resize(let width, let height, let mode) = operation, width != nil || height != nil else { return nil }
+    return (width, height, mode)
   }
 
   private static func qualityLevel(_ operation: Operation) -> Int? {

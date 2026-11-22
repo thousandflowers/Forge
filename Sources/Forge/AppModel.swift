@@ -18,6 +18,12 @@ final class AppModel: ObservableObject {
   /// Files put on the Convert screen by something other than a drop - a row in
   /// history asking to be run again. Cleared as soon as that screen takes them.
   @Published var pending: PendingConversion?
+  /// Files opened from outside the window - the Dock icon, Open With. They are
+  /// a drop that happened somewhere else, and the Convert screen takes them as
+  /// one, adding to what is already there.
+  @Published var opened: [URL] = []
+  /// The sidebar section on screen; the View menu's ⌘1…⌘7 set it.
+  @Published var section: AppSection? = .process
   /// The preset being written, when the editor is up. It covers the whole
   /// window, so the window owns it rather than the Presets screen.
   @Published var presetEditor: PresetEditorRequest?
@@ -174,7 +180,8 @@ final class AppModel: ObservableObject {
       do {
         let imported = try await self?.persistence.importPresets(from: url) ?? []
         guard let self else { return }
-        for preset in imported {
+        // The same file imported twice used to leave two identical presets.
+        for preset in imported where !Self.isAlreadyHere(preset, in: self.presets) {
           var copy = preset
           copy.id = UUID()
           self.savePreset(copy)
@@ -183,6 +190,11 @@ final class AppModel: ObservableObject {
         self?.report(error, doing: "importing presets")
       }
     }
+  }
+
+  /// A preset with this name that already does exactly the same.
+  nonisolated static func isAlreadyHere(_ preset: RulePreset, in presets: [RulePreset]) -> Bool {
+    presets.contains { $0.name == preset.name && $0.actions == preset.actions }
   }
 
   // MARK: - Folders
@@ -239,6 +251,9 @@ final class AppModel: ObservableObject {
       || FormatCatalog.isWritableVideo(format)
       || FormatCatalog.isWritableModel(format)
       || DocumentText.canWrite(format)
+      // A tool the user installed writes it - the default Audio to MP3 preset
+      // goes to ffmpeg, and warning that this Mac cannot write MP3 was false.
+      || ExternalBridge.canWrite(format)
   }
 
   func presetName(for id: UUID) -> String {
@@ -260,7 +275,10 @@ final class AppModel: ObservableObject {
     }
     // Some of them, rather than none, used to disappear without a word.
     if files.count < urls.count {
-      let missed = urls.filter { url in !files.contains { $0.url == url } }
+      // Compared the way ProcessableFile stores its URL: absolute and
+      // standardised, or a relative path that opened fine is listed as missed.
+      let opened = Set(files.map(\.url))
+      let missed = urls.filter { !opened.contains($0.absoluteURL.standardizedFileURL) }
       lastError = BatchViewModel.describe(missed)
     }
 
@@ -299,6 +317,11 @@ final class AppModel: ObservableObject {
     }
     preset.position = (presets.map(\.position).max() ?? 0) + 1
     savePreset(preset)
+  }
+
+  func open(_ urls: [URL]) {
+    guard !urls.isEmpty else { return }
+    opened += urls
   }
 
   /// Run the same chain on the same files.
@@ -508,6 +531,8 @@ final class AppModel: ObservableObject {
     let preset: RulePreset
     let destination: URL?
     let mode: DestinationMode
+    /// History's run-again replaces the list; files dropped on a preset join it.
+    var replacesList = true
   }
 
   // MARK: - Default presets (first run)
