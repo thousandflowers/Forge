@@ -114,8 +114,9 @@ enum Toml {
 
   private static func literal(_ value: Any) throws -> String {
     switch value {
+    // Only a real boolean. `as Bool` also succeeds for any number holding 0 or
+    // 1, which is how `count = 1` used to be written as `count = true`.
     case let number as NSNumber where isBoolean(number): return number.boolValue ? "true" : "false"
-    case let bool as Bool: return bool ? "true" : "false"
     case let number as NSNumber: return number.stringValue
     case let string as String: return quoted(string)
     case let date as Date: return ISO8601DateFormatter().string(from: date)
