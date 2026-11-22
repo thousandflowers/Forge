@@ -117,17 +117,7 @@ struct ConvertChoice: Equatable {
   /// assembled from the fields for this batch alone.
   func resolved(against presets: [RulePreset]) -> RulePreset? {
     if let presetID, let preset = presets.first(where: { $0.id == presetID }) {
-      guard !preset.parameters.isEmpty else { return preset }
-      // A preset that asks questions is finished by the answers: each one
-      // becomes the action it stands for, and the answers travel along so the
-      // filename can say what was asked for.
-      var answered = preset
-      for parameter in preset.parameters {
-        let value = answers[parameter.key] ?? parameter.defaultValue
-        answered = answered.replacing(parameter.operation(for: value))
-        answered.parameterValues[parameter.key] = value
-      }
-      return answered
+      return preset.parameters.isEmpty ? preset : preset.answered(with: answers)
     }
     let actions = customActions
     guard !actions.isEmpty else { return nil }

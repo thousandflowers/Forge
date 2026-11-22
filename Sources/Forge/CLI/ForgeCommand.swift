@@ -34,6 +34,18 @@ struct DestinationOptions: ParsableArguments {
   var noBackup = false
 
   func resolve() throws -> (mode: DestinationMode, url: URL?) {
+    // Each of these was accepted, and one half of it quietly dropped:
+    // `--overwrite --out folder` replaced the original and never looked at
+    // the folder.
+    if overwrite, out != nil {
+      throw ValidationError("--overwrite replaces the originals where they are, so it takes no --out. Choose one.")
+    }
+    if overwrite, move {
+      throw ValidationError("--move and --overwrite are two different things to do with the originals. Choose one.")
+    }
+    if noBackup, !overwrite {
+      throw ValidationError("--no-backup is about --overwrite, which was not given.")
+    }
     switch (overwrite, out) {
     case (true, _):
       return (.overwrite, nil)
@@ -71,15 +83,24 @@ struct RecipeOptions: ParsableArguments {
   /// fixed default here made that setting mean nothing outside the window.
   var fit: ResizeFitMode?
 
-  @Option(help: "Filter to apply: grayscale, sepia, blur, sharpen, invert.")
-  var filter: FilterType?
+  @Option(help: "Filter to apply: grayscale, sepia, blur, sharpen, invert. Repeat it for more than one.")
+  var filter: [FilterType] = []
 
+  // One value at a time: taking everything up to the next option took the
+  // file that followed for a second language.
   @Option(
     name: .customLong("ocr-language"),
-    parsing: .upToNextOption,
-    help: "Languages to look for when reading text, e.g. it-IT. Omit to detect automatically."
+    help: "Language to look for when reading text or speech, e.g. it-IT. Several: it-IT,en-US. Omit to detect automatically."
   )
   var ocrLanguages: [String] = []
+
+  @Option(help: "Answer a question the preset asks, as key=value, e.g. width=640. Unanswered questions take their default.")
+  var answer: [String] = []
+
+  /// The languages asked for, whether given one option each or in one list.
+  var languages: [String] {
+    ocrLanguages.flatMap { $0.split(separator: ",") }.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+  }
 
   @Option(help: "Encoder to use where the container allows more than one: h264, hevc, proRes422, aac, appleLossless, flac, opus.")
   var codec: Codec?
@@ -87,14 +108,38 @@ struct RecipeOptions: ParsableArguments {
   /// Build the preset this run should use, from a saved one or from the flags.
   func resolve(saved: [RulePreset]) throws -> RulePreset {
     if let preset {
-      guard let match = saved.first(where: { $0.name.caseInsensitiveCompare(preset) == .orderedSame }) else {
+      // A preset is the whole recipe. The options beside it were dropped
+      // without a word, which read as if they had been applied.
+      let beside = [
+        format.map { _ in "--to" }, resize.map { _ in "--resize" }, quality.map { _ in "--quality" },
+        fit.map { _ in "--fit" }, filter.isEmpty ? nil : "--filter", codec.map { _ in "--codec" },
+      ].compactMap { $0 }
+      guard beside.isEmpty else {
+        throw ValidationError(
+          "--preset is the whole recipe, so \(beside.joined(separator: ", ")) would be ignored. Give the preset alone, or the options alone."
+        )
+      }
+      let matches = saved.filter { $0.name.caseInsensitiveCompare(preset) == .orderedSame }
+      guard let match = matches.first else {
         let names = saved.map(\.name).sorted().joined(separator: ", ")
         throw ValidationError("No preset called “\(preset)”. Available: \(names.isEmpty ? "none" : names)")
       }
-      return match
+      guard matches.count == 1 else {
+        throw ValidationError("\(matches.count) presets are called “\(preset)”. Rename one in Forge so the name says which.")
+      }
+      guard match.doesSomething || !match.parameters.isEmpty else {
+        throw ValidationError("“\(match.name)” has no steps, so there is nothing for it to do.")
+      }
+      return match.answered(with: try answers(for: match))
+    }
+    guard answer.isEmpty else {
+      throw ValidationError("--answer answers a preset's question, and no --preset was given.")
+    }
+    if fit != nil, resize == nil {
+      throw ValidationError("--fit says how to fit a new size, and no --resize was given.")
     }
 
-    guard format != nil || resize != nil || quality != nil || filter != nil || !ocrLanguages.isEmpty || codec != nil else {
+    guard format != nil || resize != nil || quality != nil || !filter.isEmpty || !ocrLanguages.isEmpty || codec != nil else {
       throw ValidationError("Nothing to do: pass --preset, or one of --to, --resize, --quality, --filter.")
     }
 
@@ -104,9 +149,9 @@ struct RecipeOptions: ParsableArguments {
       targetFormat: try targetType(),
       resize: try resizeSpec(),
       quality: try validatedQuality(),
-      filters: filter.map { [$0] } ?? [],
+      filters: filter,
       category: .custom,
-      ocrLanguages: ocrLanguages
+      ocrLanguages: languages
     )
     if let codec {
       guard Codec.available.contains(codec) else {
@@ -132,17 +177,74 @@ struct RecipeOptions: ParsableArguments {
        let font = UTType(filenameExtension: format, conformingTo: .font) {
       return font
     }
+    // What pandoc writes and macOS has no name for: rst, org, tex, ipynb.
+    if ExternalBridge.pandocWritesFormat(format),
+       let text = UTType(filenameExtension: format, conformingTo: .text) {
+      return text
+    }
     throw ValidationError("“\(format)” is not a format this Mac knows. Try `forge formats`.")
   }
 
+  /// What was asked for and will make no difference, said rather than done
+  /// in silence: a quality for a format that has none, an encoder for
+  /// something that is not sound or film.
+  func notes(for files: [ProcessableFile]) -> [String] {
+    var notes: [String] = []
+    let target = format.flatMap { UTType(filenameExtension: $0) }
+    let kinds = Set(files.compactMap { ConvertKind(fileType: $0.fileType) })
+    if quality != nil, let target, target.conforms(to: .image),
+       [UTType.png, .tiff, .gif, .bmp, .pdf].contains(where: { target.conforms(to: $0) }) {
+      notes.append("--quality does nothing for \(format?.uppercased() ?? "this format"): it keeps every pixel as it is.")
+    }
+    if let codec, !kinds.isEmpty, kinds.isDisjoint(with: [.audio, .video]) {
+      notes.append("--codec \(codec.rawValue) is for sound and film, and none of these files is either.")
+    }
+    return notes
+  }
+
+  /// The answers given with --answer, checked against what the preset asks.
+  private func answers(for preset: RulePreset) throws -> [String: Double] {
+    var answers: [String: Double] = [:]
+    for pair in answer {
+      let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+      guard parts.count == 2, let value = Double(parts[1]) else {
+        throw ValidationError("--answer wants key=value with a number, e.g. width=640. Got “\(pair)”.")
+      }
+      guard let asked = preset.parameters.first(where: { $0.key == parts[0] }) else {
+        let keys = preset.parameters.map(\.key).joined(separator: ", ")
+        throw ValidationError("“\(preset.name)” does not ask for “\(parts[0])”. It asks for: \(keys.isEmpty ? "nothing" : keys).")
+      }
+      guard asked.kind.range.contains(value) else {
+        throw ValidationError("\(asked.key) is \(Int(asked.kind.range.lowerBound)) to \(Int(asked.kind.range.upperBound)). Got \(parts[1]).")
+      }
+      answers[asked.key] = value
+    }
+    return answers
+  }
+
+  /// The largest side a picture is asked to have: what the Width question
+  /// allows. Without a ceiling, 999999x999999 ran until it was stopped.
+  private static let sides = PresetParameter.Kind.width.range
+
   private func resizeSpec() throws -> ResizeSpec? {
     guard let resize else { return nil }
-    let parts = resize.lowercased().split(separator: "x", omittingEmptySubsequences: false)
+    let parts = resize.lowercased().split(separator: "x", omittingEmptySubsequences: false).map(String.init)
     guard parts.count == 2 else {
       throw ValidationError("--resize wants WIDTHxHEIGHT, e.g. 1280x720. Got “\(resize)”.")
     }
-    let width = Int(parts[0])
-    let height = Int(parts[1])
+    // A side is left out or it is a whole number: `1.5x2` used to be read as
+    // `x2`, and `0x0` as a size.
+    func side(_ text: String) throws -> Int? {
+      if text.isEmpty { return nil }
+      guard let value = Int(text), Self.sides.contains(Double(value)) else {
+        throw ValidationError(
+          "--resize takes whole numbers from \(Int(Self.sides.lowerBound)) to \(Int(Self.sides.upperBound)), e.g. 1280x720. Got “\(resize)”."
+        )
+      }
+      return value
+    }
+    let width = try side(parts[0])
+    let height = try side(parts[1])
     guard width != nil || height != nil else {
       throw ValidationError("--resize needs at least one side, e.g. 1280x or x720.")
     }

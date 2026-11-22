@@ -19,7 +19,8 @@ enum InputFormats {
 
   static let groups: [Group] = {
     func extensions(_ types: some Sequence<UTType>) -> [String] {
-      Array(Set(types.compactMap { $0.preferredFilenameExtension?.lowercased() })).sorted()
+      // The name people type, not always the system's first choice: TOML's is `cfg`.
+      Array(Set(types.compactMap { (FormatCatalog.fileExtension(for: $0) ?? $0.preferredFilenameExtension)?.lowercased() })).sorted()
     }
     let media = FormatCatalog.readableMediaTypes
     let audio = media.filter { $0.conforms(to: .audio) }

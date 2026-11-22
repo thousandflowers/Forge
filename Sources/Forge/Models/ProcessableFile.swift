@@ -102,6 +102,11 @@ struct ProcessableFile: Identifiable, Hashable, Sendable {
     if ExternalBridge.Fonts.handles(url.pathExtension) {
       return UTType(filenameExtension: url.pathExtension, conformingTo: .font)
     }
+    // What pandoc reads and macOS has no name for - reStructuredText, Org,
+    // LaTeX, notebooks - is text to a tool that is installed.
+    if ExternalBridge.pandocIsKnownToRead(url.pathExtension) {
+      return UTType(filenameExtension: url.pathExtension, conformingTo: .text)
+    }
     return nil
   }
 

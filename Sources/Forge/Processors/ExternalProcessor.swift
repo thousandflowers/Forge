@@ -136,6 +136,16 @@ enum ExternalBridge {
     "txt": "plain",
   ]
 
+  /// Whether pandoc reads a file of this extension, as far as it has said.
+  /// Asked when a file is first looked at, which can be while a window is
+  /// being drawn, so pandoc is not run for the answer.
+  static func pandocIsKnownToRead(_ ext: String) -> Bool {
+    formats.peek()?.read.contains(name(of: ext)) ?? false
+  }
+
+  /// Whether pandoc writes this format. Runs pandoc if it has not been asked.
+  static func pandocWritesFormat(_ ext: String) -> Bool { pandocWrites(ext) }
+
   static func canHandle(_ type: UTType) -> Bool {
     guard let ext = type.preferredFilenameExtension else { return false }
     if Fonts.handles(ext) { return ExternalTools.locate("fonttools") != nil }

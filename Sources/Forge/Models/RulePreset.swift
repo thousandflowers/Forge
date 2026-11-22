@@ -148,6 +148,19 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   /// file and reported "1 converted" - work that looks like work and is not.
   var doesSomething: Bool { !actions.isEmpty }
 
+  /// A preset that asks questions, finished by the answers: each one becomes
+  /// the step it stands for, and the answers travel along so the file name can
+  /// say what was asked for. A question nobody answered takes its default.
+  func answered(with answers: [String: Double]) -> RulePreset {
+    var answered = self
+    for parameter in parameters {
+      let value = answers[parameter.key] ?? parameter.defaultValue
+      answered = answered.replacing(parameter.operation(for: value))
+      answered.parameterValues[parameter.key] = value
+    }
+    return answered
+  }
+
   /// A copy with `action` put in place of the one of its kind already there,
   /// or added if there is none.
   ///

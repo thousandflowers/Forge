@@ -64,6 +64,16 @@ actor PersistenceManager {
     }
   }
 
+  /// The files in the presets folder that are not presets: skipped when the
+  /// rest are loaded, and named here so that skipping them is not silent.
+  func presetFilesThatDoNotRead() -> [String] {
+    let files = (try? fileManager.contentsOfDirectory(at: presetsDir, includingPropertiesForKeys: nil)) ?? []
+    return files.filter { file in
+      guard file.pathExtension == "json", let data = try? Data(contentsOf: file) else { return false }
+      return (try? JSONDecoder().decode(RulePreset.self, from: data)) == nil
+    }.map(\.lastPathComponent).sorted()
+  }
+
   func deletePreset(id: UUID) async throws {
     let fileURL = presetsDir.appendingPathComponent("\(id.uuidString).json")
     try fileManager.removeItem(at: fileURL)

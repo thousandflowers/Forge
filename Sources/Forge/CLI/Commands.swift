@@ -32,6 +32,10 @@ struct Convert: AsyncParsableCommand {
     @Flag(name: [.customShort("q"), .long], help: "Only report failures.")
     var quiet = false
 
+    private static func complain(_ line: String) {
+      FileHandle.standardError.write(Data((line + "\n").utf8))
+    }
+
     func run() async throws {
       guard !files.isEmpty else { throw ValidationError("No files given.") }
 
@@ -39,23 +43,54 @@ struct Convert: AsyncParsableCommand {
       var settings = destination.settings
       if let jobs { settings.maxConcurrentNative = max(1, min(8, jobs)) }
 
-      let saved = try await PersistenceManager.shared.loadAllPresets()
-      let preset = try recipe.resolve(saved: saved)
+      // Asked before the files are looked at: what pandoc reads decides
+      // whether an .rst or an .org is a file Forge knows. The tool can wait
+      // for the answer; a window cannot, and uses whatever is known by then.
+      _ = ExternalBridge.pandocFormats
+      let preset = try recipe.resolve(saved: try await ForgeCommand.presets())
 
-      let sources = try files.map { path -> ProcessableFile in
+      // Each path is taken on its own. One that could not be opened used to
+      // stop the whole batch before anything was converted; it is now a
+      // failure like any other, said, counted, and gone past.
+      var sources: [ProcessableFile] = []
+      var turnedAway = 0
+      for path in files {
+        var isFolder: ObjCBool = false
+        if FileManager.default.fileExists(atPath: path, isDirectory: &isFolder), isFolder.boolValue {
+          Self.complain("failed     \(path): this is a folder. Give the files in it, for example \(path)/*")
+          turnedAway += 1
+          continue
+        }
         do {
-          return try ProcessableFile(url: URL(fileURLWithPath: path))
+          let file = try ProcessableFile(url: URL(fileURLWithPath: path))
+          // The preset says which files it is for; the window only offers it
+          // for those, and from here it was run on anything.
+          guard preset.accepts(file.url) else {
+            Self.complain("failed     \(file.fileName): “\(preset.name)” is not for this kind of file")
+            turnedAway += 1
+            continue
+          }
+          sources.append(file)
         } catch {
-          throw CLIError("\(path): \(error.localizedDescription)")
+          Self.complain("failed     \(path): \(error.localizedDescription)")
+          turnedAway += 1
+        }
+      }
+      for note in recipe.notes(for: sources) { Self.complain("note       \(note)") }
+
+      if let outputURL {
+        do {
+          try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
+        } catch {
+          throw ValidationError("Cannot use \(outputURL.path) as the destination: \(error.localizedDescription)")
+        }
+        guard FileManager.default.isWritableFile(atPath: outputURL.path) else {
+          throw ValidationError("Cannot write into \(outputURL.path): it is read-only.")
         }
       }
 
-      if let outputURL {
-        try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
-      }
-
       let reporter = Reporter(names: sources, quiet: quiet)
-      let report = await Batch.run(
+      var report = await Batch.run(
         sources,
         preset: preset,
         mode: mode,
@@ -65,12 +100,28 @@ struct Convert: AsyncParsableCommand {
       ) { event in
         reporter.report(event)
       }
+      report.failed += turnedAway
 
+      // To stderr, with the problems: stdout is the converted paths and
+      // nothing else, so that `> converted.txt` is a list of files.
       if !quiet {
-        print(Reporter.summary(report))
+        Self.complain(Reporter.summary(report))
       }
       if report.failed > 0 { throw ExitCode.failure }
     }
+  }
+}
+
+// MARK: - the presets the tool knows
+
+extension ForgeCommand {
+  /// The saved presets, or the ones Forge starts with where none has been
+  /// saved. The app writes its defaults the first time it opens, so on a Mac
+  /// where only the tool had been used the README's own example -
+  /// `--preset "Web JPEG"` - answered "Available: none".
+  static func presets() async throws -> [RulePreset] {
+    let saved = (try? await PersistenceManager.shared.loadAllPresets()) ?? []
+    return saved.isEmpty ? await AppModel.defaultPresets : saved
   }
 }
 
@@ -88,10 +139,9 @@ struct Presets: AsyncParsableCommand {
     var namesOnly = false
 
     func run() async throws {
-      let presets = try await PersistenceManager.shared.loadAllPresets().sorted { $0.name < $1.name }
-      guard !presets.isEmpty else {
-        print("No presets yet. Open Forge once to have the defaults created.")
-        return
+      let presets = try await ForgeCommand.presets().sorted { $0.name < $1.name }
+      for file in await PersistenceManager.shared.presetFilesThatDoNotRead() {
+        FileHandle.standardError.write(Data("note       \(file) is in the presets folder and cannot be read as a preset\n".utf8))
       }
 
       if namesOnly {
@@ -102,11 +152,13 @@ struct Presets: AsyncParsableCommand {
       let width = presets.map(\.name.count).max() ?? 0
       for preset in presets {
         let recipe = preset.actions.map(Self.describe).joined(separator: " · ")
-        print("\(preset.name.padding(toLength: width, withPad: " ", startingAt: 0))  \(recipe)")
+        // Turned off in the app: it still runs by name, and says so here.
+        let state = preset.isEnabled ? "" : "  (turned off in Forge)"
+        print("\(preset.name.padding(toLength: width, withPad: " ", startingAt: 0))  \(recipe)\(state)")
       }
     }
 
-    private static func describe(_ operation: Operation) -> String {
+    static func describe(_ operation: Operation) -> String {
       switch operation {
       case .convertFormat(let to):
         return (FormatCatalog.fileExtension(for: to) ?? to.identifier).uppercased()
@@ -132,7 +184,11 @@ struct Presets: AsyncParsableCommand {
       case .merge(let kind):
         return "merge into \(kind.title)"
       case .stripMetadata(let policy):
-        return policy == .stripLocation ? "no location" : "no metadata"
+        switch policy {
+        case .keepAll: return "keeps all metadata"
+        case .stripLocation: return "no location"
+        case .stripAll: return "no identifying metadata"
+        }
       }
     }
   }
@@ -151,28 +207,42 @@ extension ForgeCommand {
     var writableOnly = false
 
     func run() throws {
+      // Everything Forge converts, kind by kind: it used to list pictures,
+      // sound and film and leave out documents, data, subtitles, models and
+      // fonts, and whatever an installed tool adds.
+      func row(_ title: String, _ extensions: [String]) {
+        guard !extensions.isEmpty else { return }
+        print("  \((title + ":").padding(toLength: 13, withPad: " ", startingAt: 0)) " + extensions.joined(separator: " "))
+      }
+      func names(_ formats: [OutputFormat]) -> [String] {
+        Set(formats.compactMap { $0.type.flatMap(FormatCatalog.fileExtension(for:))?.lowercased() }).sorted()
+      }
+      let pandoc = ExternalBridge.pandocFormats
+
       if !writableOnly {
         print("Read")
-        print("  images: " + Self.list(FormatCatalog.readableImageTypes))
-        print("  media:  " + Self.list(FormatCatalog.readableMediaTypes))
+        for group in InputFormats.groups { row(group.kind.plural, group.extensions) }
+        if !pandoc.read.isEmpty { row("pandoc", pandoc.read.sorted()) }
         print("")
-      }
-      if !writableOnly {
         print("Text recognition (\(TextRecognizer.supportedLanguages.count) languages)")
         print("  " + TextRecognizer.supportedLanguages.joined(separator: " "))
         print("")
       }
       print("Write")
-      print("  images: " + Self.list(FormatCatalog.writableImageTypes))
-      print("  audio:  " + Self.list(Set(FormatCatalog.writableAudioTypes.keys)))
-      print("  video:  " + Self.list(FormatCatalog.writableVideoTypes))
+      row("images", names(OutputFormat.imagesWithTools))
+      row("audio", names(OutputFormat.audio))
+      row("video", names(OutputFormat.video))
+      row("documents", names(OutputFormat.documents))
+      row("data", names(OutputFormat.data))
+      row("subtitles", names(OutputFormat.subtitles))
+      row("3D models", names(OutputFormat.models))
+      row("fonts", names(OutputFormat.fonts))
+      if !pandoc.write.isEmpty { row("pandoc", pandoc.write.sorted()) }
+      if ExternalTools.locate("ffmpeg") != nil {
+        row("ffmpeg", ["sound and film into any container it writes, by extension (see `ffmpeg -muxers`)"])
+      }
     }
 
-    private static func list(_ types: Set<UTType>) -> String {
-      Set(types.compactMap { FormatCatalog.fileExtension(for: $0)?.lowercased() })
-        .sorted()
-        .joined(separator: " ")
-    }
   }
 }
 

@@ -35,7 +35,13 @@ enum FormatCatalog {
   /// `yml`. When the type is named after one of the extensions it declares -
   /// `public.toml` after `toml` - that one is used instead, which leaves every
   /// other type exactly as it was.
+  /// Where the name in the identifier is not the one anybody types. The rule
+  /// below prefers the identifier's own word, which is right for TOML (the
+  /// system prefers `cfg`) and wrong for Markdown, written as `.markdown`.
+  private static let whatPeopleCallIt: [String: String] = ["net.daringfireball.markdown": "md"]
+
   static func fileExtension(for type: UTType) -> String? {
+    if let spoken = whatPeopleCallIt[type.identifier] { return spoken }
     let declared = type.tags[.filenameExtension] ?? []
     if let named = type.identifier.split(separator: ".").last.map(String.init),
        declared.contains(named) {

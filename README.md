@@ -188,7 +188,7 @@ forge formats              # what this Mac can read and write
 It reads the presets you save in the app, writes to the same history, and exits non zero if any file failed, so it drops straight into a script. Converted paths go to stdout, problems to stderr:
 
 ```bash
-forge convert *.heic --to jpeg --out ./web --quiet > converted.txt
+forge convert *.heic --to jpeg --out ./web > converted.txt
 ```
 
 Completions come from the tool itself: `forge --generate-completion-script zsh` (or `bash`, or `fish`).

@@ -601,9 +601,14 @@ actor ProcessingCoordinator {
     destinationMode: DestinationMode,
     destinationFolder: URL?
   ) throws -> OutputPlan {
-    let outputExtension = preset.targetFormat.flatMap(FormatCatalog.fileExtension(for:))
-      ?? FormatCatalog.fileExtension(for: file.fileType)
-      ?? file.url.pathExtension
+    // A file that stays the format it is keeps the extension it has: `keep.jpg`
+    // resized or replaced in place came back as `keep.jpeg`. One that changes
+    // format takes the format's own name.
+    let format = preset.targetFormat ?? file.fileType
+    let own = file.url.pathExtension
+    let outputExtension = (format.tags[.filenameExtension] ?? []).contains(own.lowercased())
+      ? own
+      : FormatCatalog.fileExtension(for: format) ?? own
     let suffix = Self.sizeSuffix(for: preset)
     let context = Self.nameContext(
       for: file, preset: preset, operations: operations, extension: outputExtension, counter: counter

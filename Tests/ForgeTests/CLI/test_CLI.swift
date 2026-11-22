@@ -124,6 +124,132 @@ final class CommandParsingTests: BaseTestCase {
       XCTAssertTrue("\(error)".contains("Web JPEG"), "\(error)")
     }
   }
+
+  // MARK: - What the options used to let through
+
+  private func resolving(_ arguments: [String], saved: [RulePreset] = []) throws -> RulePreset {
+    try convert(arguments).recipe.resolve(saved: saved)
+  }
+
+  /// `--overwrite --out folder` replaced the original and ignored the folder;
+  /// `--move --overwrite` and `--no-backup` on its own were taken in silence.
+  func test_destinationsThatContradictEachOtherAreRefused() throws {
+    for arguments in [
+      ["a.png", "--to", "jpeg", "--overwrite", "--out", "x"],
+      ["a.png", "--to", "jpeg", "--move", "--overwrite"],
+      ["a.png", "--to", "jpeg", "--out", "x", "--no-backup"],
+    ] {
+      XCTAssertThrowsError(try convert(arguments).destination.resolve(), "\(arguments)")
+    }
+  }
+
+  /// `1.5x2` was read as `x2`, `0x0` did nothing and named the file `-0`, and
+  /// 999999x999999 ran until it was stopped.
+  func test_aSizeIsWholeNumbersWithinReason() throws {
+    for size in ["1.5x2", "0x0", "0x100", "-5x10", "999999x999999", "x", "12", "axb"] {
+      XCTAssertThrowsError(try resolving(["a.png", "--resize", size]), size)
+    }
+    XCTAssertNoThrow(try resolving(["a.png", "--resize", "1280x"]))
+    XCTAssertNoThrow(try resolving(["a.png", "--resize", "x720"]))
+  }
+
+  func test_aFitWithNoSizeToFitIsRefused() throws {
+    XCTAssertThrowsError(try resolving(["a.png", "--to", "jpeg", "--fit", "pad"])) { error in
+      XCTAssertTrue("\(error)".contains("--resize"), "\(error)")
+    }
+  }
+
+  /// The second `--filter` replaced the first.
+  func test_everyFilterAskedForIsApplied() throws {
+    let preset = try resolving(["a.png", "--filter", "grayscale", "--filter", "blur"])
+    XCTAssertEqual(preset.filters, [.grayscale, .blur])
+  }
+
+  /// `--ocr-language it-IT scan.png` took the file for a second language.
+  func test_aLanguageDoesNotSwallowTheFileAfterIt() throws {
+    let command = try convert(["--to", "txt", "--ocr-language", "it-IT", "scan.png", "--out", "x"])
+    XCTAssertEqual(command.files, ["scan.png"])
+    XCTAssertEqual(command.recipe.languages, ["it-IT"])
+
+    let two = try convert(["scan.png", "--to", "txt", "--ocr-language", "it-IT,en-US", "--out", "x"])
+    XCTAssertEqual(two.recipe.languages, ["it-IT", "en-US"])
+  }
+
+  /// Options given beside `--preset` were dropped without a word.
+  func test_aPresetIsNotMixedWithOptionsItWouldIgnore() throws {
+    let saved = [RulePreset(name: "Web JPEG", description: "", targetFormat: .jpeg, category: .image)]
+    XCTAssertThrowsError(try resolving(["a.png", "--preset", "Web JPEG", "--quality", "20"], saved: saved)) { error in
+      XCTAssertTrue("\(error)".contains("--quality"), "\(error)")
+    }
+  }
+
+  /// With two presets of one name, one was picked and nobody was told which.
+  func test_twoPresetsOfOneNameAreNotChosenBetween() throws {
+    let saved = [
+      RulePreset(name: "Web", description: "", targetFormat: .jpeg, category: .image),
+      RulePreset(name: "web", description: "", targetFormat: .png, category: .image),
+    ]
+    XCTAssertThrowsError(try resolving(["a.png", "--preset", "Web"], saved: saved)) { error in
+      XCTAssertTrue("\(error)".contains("2"), "\(error)")
+    }
+  }
+
+  /// A preset that asks a question was run as if it asked nothing, while the
+  /// file name said the answer had been applied: `photo_320px.jpeg`, 1600 wide.
+  func test_aPresetThatAsksIsAnsweredWithItsDefaultOrWithAnAnswer() throws {
+    var asks = RulePreset(name: "Ask", description: "", targetFormat: .jpeg, category: .image)
+    asks.parameters = [PresetParameter(key: "width", label: "Width", kind: .width, defaultValue: 320)]
+
+    let byDefault = try resolving(["a.png", "--preset", "Ask"], saved: [asks])
+    XCTAssertEqual(byDefault.resize?.width, 320)
+
+    let answered = try resolving(["a.png", "--preset", "Ask", "--answer", "width=640"], saved: [asks])
+    XCTAssertEqual(answered.resize?.width, 640)
+    XCTAssertEqual(answered.parameterValues["width"], 640)
+
+    XCTAssertThrowsError(try resolving(["a.png", "--preset", "Ask", "--answer", "height=640"], saved: [asks]))
+  }
+
+  /// A preset that does nothing copied the file and called it converted.
+  func test_aPresetThatDoesNothingIsRefused() throws {
+    let empty = RulePreset(name: "Empty", description: "", category: .custom)
+    XCTAssertThrowsError(try resolving(["a.png", "--preset", "Empty"], saved: [empty]))
+  }
+
+  /// A file converted into its own format changed its extension: `keep.jpg`
+  /// replaced in place came back as `keep.jpeg`.
+  func test_aFileThatKeepsItsFormatKeepsItsExtension() async throws {
+    let source = try Fixture.image(at: path("keep.jpg"), width: 40, height: 30)
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source),
+      with: .make(format: .jpeg, quality: 60, category: .image),
+      destinationMode: .copyTo, destinationURL: try folder("out")
+    ) { _ in }
+    XCTAssertEqual(entry.outputURL?.lastPathComponent, "keep.jpg")
+
+    let other = try Fixture.image(at: path("photo.png"), width: 40, height: 30)
+    let changed = try await coordinator().processFile(
+      try ProcessableFile(url: other),
+      with: .make(format: .jpeg, category: .image),
+      destinationMode: .copyTo, destinationURL: try folder("out2")
+    ) { _ in }
+    XCTAssertEqual(changed.outputURL?.lastPathComponent, "photo.jpeg", "a new format takes the format's own name")
+  }
+
+  /// Markdown was written as `.markdown`, which nothing else calls it.
+  func test_markdownIsCalledMd() throws {
+    let markdown = try XCTUnwrap(UTType(filenameExtension: "md"))
+    XCTAssertEqual(FormatCatalog.fileExtension(for: markdown), "md")
+    XCTAssertEqual(FormatCatalog.fileExtension(for: .jpeg), "jpeg")
+    if let toml = UTType("public.toml") { XCTAssertEqual(FormatCatalog.fileExtension(for: toml), "toml") }
+  }
+
+  /// "Keep all metadata" was listed as "no metadata".
+  func test_thePresetListSaysWhatEachLevelKeeps() {
+    XCTAssertEqual(ForgeCommand.Presets.describe(.stripMetadata(policy: .keepAll)), "keeps all metadata")
+    XCTAssertEqual(ForgeCommand.Presets.describe(.stripMetadata(policy: .stripLocation)), "no location")
+    XCTAssertEqual(ForgeCommand.Presets.describe(.stripMetadata(policy: .stripAll)), "no identifying metadata")
+  }
 }
 
 /// The tool and the window share one engine, so a batch behaves the same on

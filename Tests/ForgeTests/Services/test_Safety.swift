@@ -54,7 +54,7 @@ final class SafetyTests: BaseTestCase {
     ) { _ in }
 
     XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
-    XCTAssertEqual(contents(of: destination), ["photo_arch.png", "photo_web.jpeg"])
+    XCTAssertEqual(contents(of: destination), ["photo_arch.png", "photo_web.jpg"])
     XCTAssertFalse(exists(source))
   }
 
