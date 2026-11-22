@@ -114,7 +114,8 @@ final class DataEdgeTests: BaseTestCase {
   /// because any NSNumber holding 0 or 1 will pass itself off as a Bool.
   func test_tomlKeepsZeroAndOneAsNumbers() async throws {
     let source = try write(#"{"zero":0,"one":1,"on":true,"list":[0,1,2]}"#, to: "ints.json")
-    let toml = try XCTUnwrap(DataProcessor.toml)
+    // The TOML type is declared by the system, and only by recent ones.
+    guard let toml = DataProcessor.toml else { throw XCTSkip("this macOS has no TOML type") }
 
     let output = try await convert(source, to: toml)
     let text = try String(contentsOf: output, encoding: .utf8)
