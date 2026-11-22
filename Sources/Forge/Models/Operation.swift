@@ -214,7 +214,11 @@ struct Condition: Codable, Hashable, Sendable {
     case .folder:
       return matches(file.url.deletingLastPathComponent().lastPathComponent)
     case .fileExtension:
-      return matches(file.url.pathExtension)
+      // One format, two spellings: a test for "jpeg" passed over photo.jpg, and
+      // one for "tif" over scan.tiff.
+      guard !needle.isEmpty else { return true }
+      let same = Self.spelling(of: file.url.pathExtension) == Self.spelling(of: needle)
+      return comparison == .differs ? !same : same
     case .kind:
       let same = ConvertKind(fileType: file.fileType) == kind
       return comparison == .differs ? !same : same
@@ -230,6 +234,14 @@ struct Condition: Codable, Hashable, Sendable {
       guard let size = file.dimensions else { return false }
       return compare(Double(max(size.width, size.height)))
     }
+  }
+
+  /// The extension macOS itself prefers for whatever this one names, so that
+  /// every spelling of a format compares equal. One it does not know stays as
+  /// it is.
+  private static func spelling(of fileExtension: String) -> String {
+    let lowered = fileExtension.lowercased()
+    return UTType(filenameExtension: lowered)?.preferredFilenameExtension ?? lowered
   }
 
   private var needle: String {

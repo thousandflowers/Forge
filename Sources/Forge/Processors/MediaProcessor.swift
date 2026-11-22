@@ -529,6 +529,16 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     let inputFile = try AVAudioFile(forReading: input)
     let sourceFormat = inputFile.processingFormat
 
+    // macOS opens some files it cannot measure - FLAC inside Ogg, which is what
+    // `--to ogg` writes - and reports no frames. The copy below then ran zero
+    // times and an empty file was reported as a conversion. Reading on
+    // regardless yields the first second and stops, which is worse.
+    guard inputFile.length > 0 else {
+      throw ProcessingError.conversionFailed(
+        reason: "\(input.lastPathComponent) holds no sound that macOS can read."
+      )
+    }
+
     // Sample rate and channel count follow the source: Forge offers no way to
     // ask for anything else, and silently resampling a 48 kHz mono recording
     // to 44.1 kHz stereo is not a conversion the user requested.

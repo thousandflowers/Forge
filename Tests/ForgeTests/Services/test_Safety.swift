@@ -1,4 +1,5 @@
 import XCTest
+import AVFoundation
 import PDFKit
 import UniformTypeIdentifiers
 @testable import Forge
@@ -147,6 +148,39 @@ final class SafetyTests: BaseTestCase {
     )
   }
 
+  // MARK: - Sound that is not there
+
+  /// macOS opens FLAC inside Ogg - which is what `--to ogg` writes - but cannot
+  /// say how long it is, so the copy loop ran zero times: an empty M4A,
+  /// reported as converted. A recording with no frames at all takes the same
+  /// path, and needs no ffmpeg to make.
+  func test_aRecordingWithNothingToReadIsAFailureNotAnEmptyFile() async throws {
+    let source = path("silence.wav")
+    _ = try AVAudioFile(forWriting: source, settings: [
+      AVFormatIDKey: kAudioFormatLinearPCM,
+      AVSampleRateKey: 44_100,
+      AVNumberOfChannelsKey: 1,
+      AVLinearPCMBitDepthKey: 16,
+      AVLinearPCMIsFloatKey: false,
+    ])
+    let destination = try folder("out")
+    let m4a = try XCTUnwrap(UTType("com.apple.m4a-audio"))
+
+    do {
+      let entry = try await coordinator().processFile(
+        try ProcessableFile(url: source),
+        with: .make(format: m4a, category: .audio),
+        destinationMode: .copyTo,
+        destinationURL: destination
+      ) { _ in }
+      XCTAssertNotEqual(entry.status, .completed, "an empty file was reported as a conversion")
+      XCTAssertTrue(entry.errorMessage?.contains("silence.wav") == true, entry.errorMessage ?? "no reason given")
+    } catch {
+      XCTAssertTrue(error.localizedDescription.contains("silence.wav"), error.localizedDescription)
+    }
+    XCTAssertEqual(everything(in: destination), [])
+  }
+
   // MARK: - Duplicate
 
   /// Duplicate rebuilt the preset from the four fields the first version of
@@ -278,5 +312,26 @@ final class SafetyTests: BaseTestCase {
     let byWidth = longest.testing(.width)
     XCTAssertEqual(byWidth.subject, .width)
     XCTAssertEqual(byWidth.comparison, .greaterThan, "a comparison that still makes sense is kept")
+  }
+
+  /// "jpeg" and "jpg" are one format spelled two ways, as are tif and tiff. A
+  /// test for one spelling passed over every file named with the other.
+  func test_anExtensionTestKnowsTwoSpellingsOfOneFormat() throws {
+    let photo = try ProcessableFile(url: try Fixture.image(at: path("photo.jpg"), width: 10, height: 10))
+    func holds(_ comparison: Condition.Comparison, _ text: String) -> Bool {
+      var condition = Condition()
+      condition.subject = .fileExtension
+      condition.comparison = comparison
+      condition.text = text
+      return condition.holds(for: photo)
+    }
+
+    XCTAssertTrue(holds(.equals, "jpg"))
+    XCTAssertTrue(holds(.equals, "jpeg"))
+    XCTAssertTrue(holds(.equals, ".JPEG"))
+    XCTAssertFalse(holds(.equals, "png"))
+    XCTAssertFalse(holds(.differs, "jpeg"))
+    XCTAssertTrue(holds(.differs, "png"))
+    XCTAssertTrue(holds(.equals, ""), "no text yet is no test yet")
   }
 }
