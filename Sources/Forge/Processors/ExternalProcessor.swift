@@ -224,6 +224,14 @@ enum ExternalBridge {
         // odd number of pixels, and this rounds to an even one.
         arguments += ["-vf", "scale=\(size.width ?? -2):\(size.height ?? -2)"]
       }
+      // ffmpeg carries every tag across unless told otherwise, so a privacy
+      // level was a promise this path did not keep. It removes a named tag or
+      // all of them; the thorough level takes all, which errs the safe way.
+      switch PrivacyFilter.policy(in: operations) {
+      case .keepAll: break
+      case .stripLocation: arguments += ["-metadata", "location=", "-metadata", "location-eng="]
+      case .stripAll: arguments += ["-map_metadata", "-1"]
+      }
       arguments.append(output.path)
       return Plan(tool: ffmpeg, toolName: "ffmpeg", arguments: arguments)
     }

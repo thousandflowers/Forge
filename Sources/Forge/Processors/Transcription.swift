@@ -55,6 +55,24 @@ enum Transcription {
       throw ProcessingError.validationFailed(message: "Speech recognition was not granted.")
     }
 
+    // One recording at a time. Handed several at once - which is what a batch
+    // does - the recogniser answered most of them "No speech detected".
+    await Turn.shared.take()
+    do {
+      let text = try await recognise(url, locale: locale, progress: progress)
+      await Turn.shared.give()
+      return text
+    } catch {
+      await Turn.shared.give()
+      throw error
+    }
+  }
+
+  private static func recognise(
+    _ url: URL,
+    locale: String?,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> String {
     let chosen = locale.map(Locale.init(identifier:)) ?? Locale.current
     guard let recognizer = SFSpeechRecognizer(locale: chosen) else {
       throw ProcessingError.validationFailed(message: "No recogniser for \(chosen.identifier).")
@@ -78,6 +96,10 @@ enum Transcription {
     let seconds = (try? await AVURLAsset(url: url).load(.duration).seconds) ?? 0
     let budget = min(max(seconds * 2, 30), 600)
 
+    // A long recording is recognised a stretch at a time, and each answer
+    // holds only its own stretch. Keeping just the final one returned the last
+    // minute of a three-minute recording and called it the transcript.
+    let stretches = Stretches()
     let task = recognizer.recognitionTask(with: request) { result, error in
       if let error {
         gate.finish(.failure(error))
@@ -85,8 +107,9 @@ enum Transcription {
       }
       guard let result else { return }
       progress(0.5)
+      stretches.add(result.bestTranscription.formattedString)
       if result.isFinal {
-        gate.finish(.success(result.bestTranscription.formattedString))
+        gate.finish(.success(stretches.text))
       }
     }
     let deadline = Task {
@@ -101,6 +124,60 @@ enum Transcription {
     }
 
     return try await gate.value()
+  }
+}
+
+/// Whose turn it is with the recogniser: one caller holds it, the rest wait
+/// in the order they came.
+private actor Turn {
+  static let shared = Turn()
+
+  private var taken = false
+  private var waiting: [CheckedContinuation<Void, Never>] = []
+
+  func take() async {
+    guard taken else {
+      taken = true
+      return
+    }
+    await withCheckedContinuation { waiting.append($0) }
+  }
+
+  func give() {
+    if waiting.isEmpty {
+      taken = false
+    } else {
+      waiting.removeFirst().resume()
+    }
+  }
+}
+
+/// The transcript so far, a stretch at a time.
+///
+/// An answer either carries on from the one before - the same words and more -
+/// in which case it replaces it, or starts afresh, in which case it follows it.
+private final class Stretches: @unchecked Sendable {
+  private let lock = NSLock()
+  private var parts: [String] = []
+
+  func add(_ text: String) {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    lock.lock()
+    defer { lock.unlock() }
+    // Words said twice are kept twice: a repeat that looks like the start of
+    // the stretch before it is still something that was said.
+    if let last = parts.last, trimmed.hasPrefix(last), trimmed != last {
+      parts[parts.count - 1] = trimmed
+    } else {
+      parts.append(trimmed)
+    }
+  }
+
+  var text: String {
+    lock.lock()
+    defer { lock.unlock() }
+    return parts.joined(separator: " ")
   }
 }
 

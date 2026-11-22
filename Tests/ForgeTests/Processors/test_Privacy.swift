@@ -1,4 +1,6 @@
 import XCTest
+import AppKit
+import AVFoundation
 import ImageIO
 import PDFKit
 import UniformTypeIdentifiers
@@ -41,17 +43,108 @@ final class PrivacyTests: BaseTestCase {
     XCTAssertNil(exif[kCGImagePropertyExifBodySerialNumber])
   }
 
+  /// "Remove the location" took the coordinates and left the name of the place:
+  /// city, province, country and neighbourhood, which any photo app that knows
+  /// them writes beside the coordinates. Measured in JPEG, PNG, HEIC and TIFF.
+  func test_stripLocation_takesTheNameOfThePlaceToo() async throws {
+    let source = try Fixture.image(at: path("venice.jpg"), metadata: [
+      kCGImagePropertyGPSDictionary: [
+        kCGImagePropertyGPSLatitude: 45.4408,
+        kCGImagePropertyGPSLongitude: 12.3155,
+      ] as [CFString: Any],
+      kCGImagePropertyIPTCDictionary: [
+        kCGImagePropertyIPTCCity: "Venezia",
+        kCGImagePropertyIPTCSubLocation: "Dorsoduro",
+        kCGImagePropertyIPTCProvinceState: "Veneto",
+        kCGImagePropertyIPTCCountryPrimaryLocationName: "Italia",
+        kCGImagePropertyIPTCCountryPrimaryLocationCode: "ITA",
+        kCGImagePropertyIPTCByline: ["Mario Rossi"],
+      ] as [CFString: Any],
+    ])
+    try Self.expect(["Venezia", "Dorsoduro", "Veneto", "Italia", "Mario Rossi"], in: source)
+
+    let output = try await convert(source, policy: .stripLocation)
+
+    try Self.expectNone(of: ["Venezia", "Dorsoduro", "Veneto", "Italia"], in: output)
+    try Self.expect(["Mario Rossi"], in: output)  // who took it was not asked about
+  }
+
+  /// "Remove identifying metadata" left the caption - the line most likely to
+  /// say whose house it is.
+  func test_stripAll_takesTheCaption() async throws {
+    let source = try Fixture.image(at: path("house.jpg"), metadata: [
+      kCGImagePropertyTIFFDictionary: [
+        kCGImagePropertyTIFFImageDescription: "Casa di Mario",
+        kCGImagePropertyTIFFDocumentName: "mario-privato",
+      ] as [CFString: Any],
+    ])
+    try Self.expect(["Casa di Mario", "mario-privato"], in: source)
+
+    let output = try await convert(source, policy: .stripAll)
+
+    try Self.expectNone(of: ["Casa di Mario", "mario-privato"], in: output)
+  }
+
+  /// A PNG says who made it in its own words - Author, Software, Comment -
+  /// which are not EXIF and were carried across whole, then written out again
+  /// as XMP in whatever format was asked for.
+  func test_stripAll_takesWhatAPNGSaysAboutItsAuthor() async throws {
+    let source = try Fixture.image(at: path("drawing.png"), metadata: [
+      kCGImagePropertyPNGDictionary: [
+        kCGImagePropertyPNGAuthor: "Mario Rossi",
+        kCGImagePropertyPNGSoftware: "SecretApp",
+        kCGImagePropertyPNGDescription: "Casa di Mario",
+        kCGImagePropertyPNGTitle: "titolo-privato",
+        kCGImagePropertyPNGCopyright: "diritti-di-mario",
+      ] as [CFString: Any],
+    ])
+    try Self.expect(["Mario Rossi", "SecretApp"], in: source)
+    let words = ["Mario Rossi", "SecretApp", "Casa di Mario", "titolo-privato", "diritti-di-mario"]
+
+    for format in [UTType.png, .jpeg] {
+      var preset = RulePreset.make(format: format, category: .image)
+      preset.actions.append(.stripMetadata(policy: .stripAll))
+      let entry = try await coordinator().processFile(
+        try ProcessableFile(url: source), with: preset,
+        destinationMode: .copyTo, destinationURL: try folder("out-\(format.preferredFilenameExtension ?? "x")")
+      ) { _ in }
+      try Self.expectNone(of: words, in: try XCTUnwrap(entry.outputURL))
+    }
+  }
+
+  /// The words, looked for in the bytes: a tag removed under one name and
+  /// written again under another (IPTC as XMP) is still in the file.
+  private static func expectNone(of words: [String], in url: URL, file: StaticString = #filePath, line: UInt = #line) throws {
+    let bytes = try Data(contentsOf: url)
+    for word in words {
+      XCTAssertNil(bytes.range(of: Data(word.utf8)), "\(url.lastPathComponent) still says “\(word)”", file: file, line: line)
+    }
+  }
+
+  private static func expect(_ words: [String], in url: URL, file: StaticString = #filePath, line: UInt = #line) throws {
+    let bytes = try Data(contentsOf: url)
+    for word in words {
+      XCTAssertNotNil(bytes.range(of: Data(word.utf8)), "\(url.lastPathComponent) should say “\(word)”", file: file, line: line)
+    }
+  }
+
   /// The critical one. A file that has been made anonymous and unreadable is
   /// not a success.
   func test_stripAll_keepsTheOrientationAndTheColourProfile() async throws {
     let source = try photograph(at: path("holiday.jpg"))
     let output = try await convert(source, policy: .stripAll)
 
-    let properties = try Self.properties(of: output)
-    XCTAssertEqual(
-      properties[kCGImagePropertyOrientation] as? Int, 6,
-      "without this the photograph arrives on its side"
-    )
+    // The picture is turned upright in its pixels now, so what has to survive
+    // is not the note that said "turn me" but the turn itself: the source is
+    // stored one way and seen the other, and the output is seen the same way.
+    func seen(_ url: URL) throws -> [Int] {
+      let properties = try Self.properties(of: url)
+      let stored = [kCGImagePropertyPixelWidth, kCGImagePropertyPixelHeight].map { properties[$0] as? Int ?? 0 }
+      let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
+      return orientation >= 5 ? stored.reversed() : stored
+    }
+    XCTAssertEqual(try seen(output), try seen(source), "without this the photograph arrives on its side")
+    XCTAssertEqual(try Self.properties(of: source)[kCGImagePropertyOrientation] as? Int, 6, "the fixture is a turned one")
 
     let image = try XCTUnwrap(Self.image(at: output))
     XCTAssertNotNil(image.colorSpace, "without a profile the colours are a guess")
@@ -91,6 +184,120 @@ final class PrivacyTests: BaseTestCase {
     XCTAssertNotNil(stripped[kCGImagePropertyProfileName])
   }
 
+  // MARK: - Films and recordings
+
+  private func film(at name: String) async throws -> URL {
+    let url = path(name)
+    try await Fixture.writePictureTrack(to: url, seconds: 1, size: CGSize(width: 320, height: 240), metadata: [
+      Fixture.tag(.commonIdentifierTitle, "Titolo Film"),
+      Fixture.tag(.commonIdentifierLocation, "+45.4408+012.3155/"),
+      Fixture.tag(.commonIdentifierCopyrights, "diritti-di-mario"),
+      Fixture.tag(.commonIdentifierMake, "TestCam"),
+      Fixture.tag(.commonIdentifierDescription, "nota privata"),
+    ])
+    return url
+  }
+
+  private func run(_ source: URL, to format: UTType, _ policy: PrivacyPolicy, category: PresetCategory) async throws -> URL {
+    var preset = RulePreset.make(format: format, category: category)
+    preset.actions.append(.stripMetadata(policy: policy))
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source), with: preset,
+      destinationMode: .copyTo, destinationURL: try folder("out-\(UUID().uuidString.prefix(6))")
+    ) { _ in }
+    XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
+    return try XCTUnwrap(entry.outputURL)
+  }
+
+  /// "Remove the location" left where a film was shot in the film: the test
+  /// for a location key looked for the word in the key's name, and QuickTime
+  /// calls it `©xyz`.
+  func test_film_stripLocation_takesWhereItWasShot() async throws {
+    let source = try await film(at: "holiday.mov")
+    try Self.expect(["+45.4408", "Titolo Film"], in: source)
+
+    for format in [UTType.quickTimeMovie, .mpeg4Movie] {
+      let output = try await run(source, to: format, .stripLocation, category: .video)
+      try Self.expectNone(of: ["+45.4408", "45.44"], in: output)
+      try Self.expect(["Titolo Film"], in: output)  // only the place was asked about
+    }
+  }
+
+  /// "Remove identifying metadata" left the copyright line and the camera.
+  func test_film_stripAll_takesTheCopyrightTheCameraAndTheNote() async throws {
+    let source = try await film(at: "holiday.mov")
+    try Self.expect(["diritti-di-mario", "TestCam", "nota privata"], in: source)
+
+    for format in [UTType.quickTimeMovie, .mpeg4Movie] {
+      let output = try await run(source, to: format, .stripAll, category: .video)
+      try Self.expectNone(of: ["diritti-di-mario", "TestCam", "nota privata", "+45.4408"], in: output)
+    }
+  }
+
+  /// On a recording it removed nothing at all: the comment and the copyright
+  /// line stayed. What the recording is called and who performs it stay on
+  /// purpose - that is what a music file is.
+  func test_recording_stripAll_takesTheNoteAndTheCopyrightAndKeepsTheTitle() async throws {
+    let source = try await Fixture.taggedAudio(at: path("song.m4a"), title: "Titolo Brano", artist: "Banda", more: [
+      Fixture.tag(.commonIdentifierCopyrights, "diritti-di-mario"),
+      Fixture.tag(.commonIdentifierDescription, "nota privata"),
+      Fixture.tag(.commonIdentifierSoftware, "SecretApp"),
+    ])
+    try Self.expect(["diritti-di-mario", "Titolo Brano"], in: source)
+    let m4a = try XCTUnwrap(UTType("com.apple.m4a-audio"))
+
+    let output = try await run(source, to: m4a, .stripAll, category: .audio)
+
+    try Self.expectNone(of: ["diritti-di-mario", "nota privata", "SecretApp"], in: output)
+    try Self.expect(["Titolo Brano", "Banda"], in: output)
+  }
+
+  /// Keeping everything lost everything whenever the recording changed family:
+  /// the tags were handed over under the names the old format calls them, and
+  /// the new one did not know those names.
+  func test_recording_keepsItsTagsWhenItChangesFamily() async throws {
+    let source = try await Fixture.taggedAudio(
+      at: path("memo.mov"), title: "Titolo Brano", artist: "Banda",
+      preset: AVAssetExportPresetPassthrough, fileType: .mov
+    )
+    try Self.expect(["Titolo Brano", "Banda"], in: source)
+    let m4a = try XCTUnwrap(UTType("com.apple.m4a-audio"))
+
+    let output = try await run(source, to: m4a, .keepAll, category: .audio)
+
+    try Self.expect(["Titolo Brano", "Banda"], in: output)
+  }
+
+  // MARK: - Documents
+
+  /// Keeping everything lost who wrote a document and what it is called.
+  @MainActor
+  func test_document_keepsItsAuthorAndTitle_andLosesTheAuthorWhenAsked() async throws {
+    let source = path("letter.docx")
+    let words = NSAttributedString(string: "HeadingAlpha and the rest of the letter.")
+    try words.data(from: NSRange(location: 0, length: words.length), documentAttributes: [
+      .documentType: NSAttributedString.DocumentType.officeOpenXML,
+      .author: "Mario Rossi", .title: "Titolo Documento", .company: "Azienda Privata",
+    ]).write(to: source)
+    let docx = try XCTUnwrap(UTType("org.openxmlformats.wordprocessingml.document"))
+    func attributes(of url: URL) throws -> [NSAttributedString.DocumentAttributeKey: Any] {
+      var read: NSDictionary?
+      _ = try NSAttributedString(url: url, options: [:], documentAttributes: &read)
+      return (read as? [NSAttributedString.DocumentAttributeKey: Any]) ?? [:]
+    }
+    XCTAssertEqual(try attributes(of: source)[.author] as? String, "Mario Rossi", "the fixture carries it")
+
+    let kept = try attributes(of: try await run(source, to: docx, .keepAll, category: .document))
+    XCTAssertEqual(kept[.author] as? String, "Mario Rossi")
+    XCTAssertEqual(kept[.title] as? String, "Titolo Documento")
+
+    let stripped = try await run(source, to: docx, .stripAll, category: .document)
+    let left = try attributes(of: stripped)
+    XCTAssertNil(left[.author])
+    XCTAssertNil(left[.company])
+    XCTAssertEqual(left[.title] as? String, "Titolo Documento", "what it is called is not who wrote it")
+  }
+
   // MARK: - PDF
 
   func test_pdf_losesItsAuthorButKeepsItsPages() throws {
@@ -113,6 +320,47 @@ final class PrivacyTests: BaseTestCase {
   }
 
   /// A PDF has no location, so asking for the location to go changes nothing.
+  /// A PDF says who wrote it twice: in its Info dictionary, and in an XMP
+  /// packet. Taking the first and copying the second across left the name in a
+  /// file that had been through "remove identifying metadata" - which is what
+  /// `contract_privacy.pdf` in the README is for.
+  func test_pdf_losesItsAuthorFromTheXMPPacketToo() throws {
+    let url = path("contract.pdf")
+    var box = CGRect(x: 0, y: 0, width: 300, height: 200)
+    let context = try XCTUnwrap(CGContext(url as CFURL, mediaBox: &box, [
+      kCGPDFContextAuthor: "Mario Rossi",
+      kCGPDFContextTitle: "Contratto",
+    ] as CFDictionary))
+    let packet = """
+    <?xpacket begin="\u{FEFF}" id="W5M0MpCehiHzreSzNTczkc9d"?>
+    <x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about="" xmlns:pdf="http://ns.adobe.com/pdf/1.3/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <pdf:Author>Mario Rossi</pdf:Author><dc:creator><rdf:Seq><rdf:li>Mario Rossi</rdf:li></rdf:Seq></dc:creator>
+    </rdf:Description></rdf:RDF></x:xmpmeta>
+    <?xpacket end="w"?>
+    """
+    context.addDocumentMetadata(Data(packet.utf8) as CFData)
+    for _ in 0..<2 {
+      context.beginPDFPage(nil)
+      context.setFillColor(CGColor(gray: 0.5, alpha: 1))
+      context.fill(box)
+      context.endPDFPage()
+    }
+    context.closePDF()
+    try Self.expect(["Mario Rossi"], in: url)
+    XCTAssertTrue(Self.packet(of: url).contains("Mario Rossi"), "the fixture carries the packet")
+
+    try PrivacyFilter.strip(pdfAt: url, to: .stripAll)
+
+    // Both ways: in the bytes, and in the packet as a reader decodes it, since
+    // a packet can be stored compressed and say nothing to a search.
+    try Self.expectNone(of: ["Mario Rossi"], in: url)
+    XCTAssertFalse(Self.packet(of: url).contains("Mario Rossi"), Self.packet(of: url))
+    let document = try XCTUnwrap(PDFDocument(url: url), "and it is still a PDF")
+    XCTAssertEqual(document.pageCount, 2)
+    XCTAssertEqual(document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String, "Contratto")
+  }
+
   func test_pdf_isLeftAloneWhenOnlyTheLocationWasAskedAbout() throws {
     let source = try Self.pdf(at: path("contract.pdf"), author: "Somebody Real", title: "Contract")
     try PrivacyFilter.strip(pdfAt: source, to: .stripLocation)
@@ -265,6 +513,16 @@ final class PrivacyTests: BaseTestCase {
 
     XCTAssertEqual(entry.status, .completed)
     return try XCTUnwrap(entry.outputURL)
+  }
+
+  /// The document's XMP packet, decoded the way a reader would.
+  private static func packet(of url: URL) -> String {
+    guard let document = CGPDFDocument(url as CFURL), let catalog = document.catalog else { return "" }
+    var stream: CGPDFStreamRef?
+    guard CGPDFDictionaryGetStream(catalog, "Metadata", &stream), let stream else { return "" }
+    var format = CGPDFDataFormat.raw
+    guard let data = CGPDFStreamCopyData(stream, &format) else { return "" }
+    return String(decoding: data as Data, as: UTF8.self)
   }
 
   private static func properties(of url: URL) throws -> [CFString: Any] {

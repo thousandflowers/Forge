@@ -48,6 +48,37 @@ enum PrivacyFilter {
   ]
 
   /// Whole blocks that exist to say who, what and when.
+  /// The place by name. A photo app that knows the coordinates usually writes
+  /// the city beside them, and taking one without the other left "Venezia,
+  /// Dorsoduro" in a file whose location had been removed.
+  private static let locationIPTC: Set<String> = [
+    kCGImagePropertyIPTCCity as String,
+    kCGImagePropertyIPTCSubLocation as String,
+    kCGImagePropertyIPTCProvinceState as String,
+    kCGImagePropertyIPTCCountryPrimaryLocationCode as String,
+    kCGImagePropertyIPTCCountryPrimaryLocationName as String,
+    kCGImagePropertyIPTCContentLocationCode as String,
+    kCGImagePropertyIPTCContentLocationName as String,
+  ]
+
+  /// What a PNG says about its maker in its own words. Not EXIF, so none of
+  /// the lists above saw it, and ImageIO writes it out again as XMP in
+  /// whatever format is asked for. The rest of the block is how the picture is
+  /// drawn - gamma, chromaticities, interlacing - and stays.
+  private static let identifyingPNG: Set<String> = [
+    kCGImagePropertyPNGAuthor as String,
+    kCGImagePropertyPNGCopyright as String,
+    kCGImagePropertyPNGSoftware as String,
+    kCGImagePropertyPNGDescription as String,
+    kCGImagePropertyPNGTitle as String,
+    kCGImagePropertyPNGComment as String,
+    kCGImagePropertyPNGCreationTime as String,
+    kCGImagePropertyPNGModificationTime as String,
+    kCGImagePropertyPNGDisclaimer as String,
+    kCGImagePropertyPNGSource as String,
+    kCGImagePropertyPNGWarning as String,
+  ]
+
   private static let identifyingBlocks: Set<String> = [
     kCGImagePropertyIPTCDictionary as String,
     kCGImagePropertyExifAuxDictionary as String,
@@ -79,6 +110,10 @@ enum PrivacyFilter {
     kCGImagePropertyTIFFCopyright as String,
     kCGImagePropertyTIFFDateTime as String,
     kCGImagePropertyTIFFHostComputer as String,
+    // The caption and the document's name: free text, and the likeliest place
+    // for "Mario's house".
+    kCGImagePropertyTIFFImageDescription as String,
+    kCGImagePropertyTIFFDocumentName as String,
   ]
 
   /// The properties to write, given the ones that were read.
@@ -97,7 +132,7 @@ enum PrivacyFilter {
       }
       if locationBlocks.contains(name) { continue }
       if policy == .stripLocation {
-        kept[key] = value
+        kept[key] = name == kCGImagePropertyIPTCDictionary as String ? strip(locationIPTC, from: value) : value
         continue
       }
       if identifyingBlocks.contains(name) { continue }
@@ -110,6 +145,8 @@ enum PrivacyFilter {
         kept[key] = strip(identifyingExif, from: value)
       } else if name == kCGImagePropertyTIFFDictionary as String {
         kept[key] = strip(identifyingTIFF, from: value)
+      } else if name == kCGImagePropertyPNGDictionary as String {
+        kept[key] = strip(identifyingPNG, from: value)
       } else {
         kept[key] = value
       }
@@ -143,9 +180,20 @@ enum PrivacyFilter {
     if let title = pdf.documentAttributes?[PDFDocumentAttribute.titleAttribute] {
       attributes[PDFDocumentAttribute.titleAttribute] = title
     }
-    pdf.documentAttributes = attributes
 
-    guard pdf.write(to: url) else {
+    // A PDF says who wrote it twice: in its Info dictionary and in an XMP
+    // packet. Rewriting the same document changed the first and carried the
+    // second across untouched - compressed, where no search finds it. The
+    // pages are moved into a new document, which has neither.
+    let clean = PDFDocument()
+    while let page = pdf.page(at: 0) {
+      pdf.removePage(at: 0)
+      clean.insert(page, at: clean.pageCount)
+    }
+    clean.outlineRoot = pdf.outlineRoot
+    clean.documentAttributes = attributes
+
+    guard clean.write(to: url) else {
       throw ProcessingError.conversionFailed(
         reason: "Cannot rewrite \(url.lastPathComponent) without its author details"
       )
@@ -171,10 +219,36 @@ enum PrivacyFilter {
     case .stripLocation:
       return items.filter { !isLocation($0) }
     case .stripAll:
-      // Deliberately narrow rather than empty: a title and an artist are what a
-      // music file is, and removing those is not privacy, it is loss.
-      return items.filter { !isLocation($0) && !isIdentifying($0) }
+      // Kept by name, not removed by name. A list of what gives somebody away
+      // is never finished - it missed the copyright line, the comment and the
+      // encoder - and a list of what a recording *is* can be: what it is
+      // called, who performs it, which album, which track. Those stay, because
+      // removing them is not privacy, it is loss.
+      return items.filter(saysWhatItIs)
     }
+  }
+
+  /// The same tags under the names every container shares.
+  ///
+  /// A tag is filed under the name its own format gives it - `TIT2` in an MP3,
+  /// `©nam` in an M4A - and handed across as it was, a recording that changed
+  /// family arrived with none: the new format did not know the old names.
+  /// What has no shared name cannot be carried and is left behind.
+  static func portable(_ items: [AVMetadataItem]) async -> [AVMetadataItem] {
+    var seen: Set<AVMetadataKey> = []
+    var carried: [AVMetadataItem] = []
+    for item in items {
+      guard let key = item.commonKey, !seen.contains(key),
+            let value = try? await item.load(.value) else { continue }
+      seen.insert(key)
+      let copy = AVMutableMetadataItem()
+      copy.keySpace = .common
+      copy.key = key.rawValue as NSString
+      copy.value = value
+      copy.extendedLanguageTag = item.extendedLanguageTag
+      carried.append(copy)
+    }
+    return carried
   }
 
   /// What an export session should be told, where the session filters for
@@ -185,14 +259,22 @@ enum PrivacyFilter {
   }
 
   private static func isLocation(_ item: AVMetadataItem) -> Bool {
+    if item.commonKey == .commonKeyLocation { return true }
     guard let identifier = item.identifier?.rawValue.lowercased() else { return false }
-    return identifier.contains("location")
+    // Not only the word: QuickTime user data files the place under `©xyz`,
+    // and 3GPP under `loci`.
+    return ["location", "xyz", "loci", "gps"].contains { identifier.contains($0) }
   }
 
-  private static func isIdentifying(_ item: AVMetadataItem) -> Bool {
+  private static let whatARecordingIs: Set<AVMetadataKey> = [
+    .commonKeyTitle, .commonKeyArtist, .commonKeyAlbumName, .commonKeyArtwork,
+  ]
+
+  private static func saysWhatItIs(_ item: AVMetadataItem) -> Bool {
+    if let key = item.commonKey { return whatARecordingIs.contains(key) }
     guard let identifier = item.identifier?.rawValue.lowercased() else { return false }
-    return ["make", "model", "software", "creationdate", "author", "owner", "device"]
-      .contains { identifier.contains($0) }
+    // Track, disc and genre have no shared name; each format has its own.
+    return ["trkn", "tracknumber", "disk", "discnumber", "gnre", "genre"].contains { identifier.contains($0) }
   }
 }
 

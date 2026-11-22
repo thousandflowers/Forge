@@ -122,6 +122,21 @@ struct Branch: Codable, Hashable, Sendable {
 }
 
 /// Something true or false about a file before it is converted.
+extension Condition {
+  /// The same condition asked of something else, with whatever no longer
+  /// applies to it put right.
+  func testing(_ subject: Subject) -> Condition {
+    var changed = self
+    changed.subject = subject
+    // A comparison the new subject cannot make is swapped for its first.
+    if !subject.comparisons.contains(changed.comparison), let first = subject.comparisons.first {
+      changed.comparison = first
+    }
+    if subject == .kind, changed.kind == nil { changed.kind = .image }
+    return changed
+  }
+}
+
 struct Condition: Codable, Hashable, Sendable {
   enum Subject: String, Codable, CaseIterable, Sendable {
     case any, name, folder, kind, fileExtension, fileSize, longestSide, width, height
@@ -199,7 +214,11 @@ struct Condition: Codable, Hashable, Sendable {
     case .folder:
       return matches(file.url.deletingLastPathComponent().lastPathComponent)
     case .fileExtension:
-      return matches(file.url.pathExtension)
+      // One format, two spellings: a test for "jpeg" passed over photo.jpg, and
+      // one for "tif" over scan.tiff.
+      guard !needle.isEmpty else { return true }
+      let same = Self.spelling(of: file.url.pathExtension) == Self.spelling(of: needle)
+      return comparison == .differs ? !same : same
     case .kind:
       let same = ConvertKind(fileType: file.fileType) == kind
       return comparison == .differs ? !same : same
@@ -215,6 +234,14 @@ struct Condition: Codable, Hashable, Sendable {
       guard let size = file.dimensions else { return false }
       return compare(Double(max(size.width, size.height)))
     }
+  }
+
+  /// The extension macOS itself prefers for whatever this one names, so that
+  /// every spelling of a format compares equal. One it does not know stays as
+  /// it is.
+  private static func spelling(of fileExtension: String) -> String {
+    let lowered = fileExtension.lowercased()
+    return UTType(filenameExtension: lowered)?.preferredFilenameExtension ?? lowered
   }
 
   private var needle: String {

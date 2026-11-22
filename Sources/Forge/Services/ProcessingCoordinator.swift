@@ -88,7 +88,13 @@ actor ProcessingCoordinator {
           actions: preset.actions,
           presetName: preset.name
         )
-        try await self.persistence.appendHistory(history)
+        // The record is bookkeeping. A conversion whose output is written and
+        // whose history could not be saved is a conversion that worked.
+        do {
+          try await self.persistence.appendHistory(history)
+        } catch {
+          NSLog("Forge: converted %@ but could not record it in History: %@", file.fileName, error.localizedDescription)
+        }
         return history
       } catch {
         let history = ProcessingHistory(
@@ -208,6 +214,10 @@ actor ProcessingCoordinator {
     if let scratch { try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true) }
     defer { if let scratch { try? FileManager.default.removeItem(at: scratch) } }
 
+    // A move that writes several files is several copies and then one
+    // removal. Passing "move" down to each chain let the first one delete the
+    // original, and the second found nothing to read.
+    let movesAfterAll = destinationMode == .moveTo && scratch == nil
     var results: [ProcessingResult] = []
     for (index, chain) in chains.enumerated() {
       try Task.checkCancellation()
@@ -221,7 +231,7 @@ actor ProcessingCoordinator {
         try await runFormats(
           file: file,
           preset: copy,
-          destinationMode: scratch == nil ? destinationMode : .copyTo,
+          destinationMode: scratch == nil && !movesAfterAll ? destinationMode : .copyTo,
           destinationURL: scratch ?? destinationURL,
           counter: counter,
           progress: { fraction in progress(Double(index) * step + fraction * step) }
@@ -229,6 +239,7 @@ actor ProcessingCoordinator {
       )
     }
     let combined = try Self.merge(results)
+    if movesAfterAll { try removeSource(of: file, unlessAmong: [combined.outputURL] + combined.additionalOutputs) }
     guard let kind = resolution.merge else { return combined }
 
     let written = [combined.outputURL] + combined.additionalOutputs
@@ -283,7 +294,11 @@ actor ProcessingCoordinator {
       outputSize: results.reduce(0) { $0 + $1.outputSize },
       outputDimensions: first.outputDimensions,
       duration: results.reduce(0) { $0 + $1.duration },
-      additionalOutputs: first.additionalOutputs + results.dropFirst().map(\.outputURL),
+      // Every file of every result. The later results' own extras - pages two
+      // and three of a PDF - were left out, so a merge lost them and a watched
+      // folder did not know they were Forge's.
+      additionalOutputs: first.additionalOutputs
+        + results.dropFirst().flatMap { [$0.outputURL] + $0.additionalOutputs },
       appliedQuality: first.appliedQuality
     )
   }
@@ -322,6 +337,9 @@ actor ProcessingCoordinator {
       )
     }
 
+    // As with a split: every format is written from the original, which goes
+    // only once all of them exist.
+    let moves = destinationMode == .moveTo
     var results: [ProcessingResult] = []
     for (index, format) in formats.enumerated() {
       try Task.checkCancellation()
@@ -330,7 +348,7 @@ actor ProcessingCoordinator {
         try await executeProcessing(
           file: file,
           preset: Self.preset(preset, writingOnly: format),
-          destinationMode: destinationMode,
+          destinationMode: moves ? .copyTo : destinationMode,
           destinationURL: destinationURL,
           counter: counter,
           progress: { fraction in progress(Double(index) * step + fraction * step) }
@@ -338,7 +356,18 @@ actor ProcessingCoordinator {
       )
     }
 
-    return try Self.merge(results)
+    let combined = try Self.merge(results)
+    if moves { try removeSource(of: file, unlessAmong: [combined.outputURL] + combined.additionalOutputs) }
+    return combined
+  }
+
+  /// The end of a move: the original goes, unless one of the files just
+  /// written took its place.
+  private func removeSource(of file: ProcessableFile, unlessAmong written: [URL]) throws {
+    let source = file.url.standardizedFileURL
+    guard !written.contains(where: { $0.standardizedFileURL == source }),
+          FileManager.default.fileExists(atPath: source.path) else { return }
+    try FileManager.default.removeItem(at: source)
   }
 
   /// Every format the preset asks for, in the order it asks.
@@ -400,7 +429,11 @@ actor ProcessingCoordinator {
         let folder = plan.workURL.deletingLastPathComponent()
         let prefix = plan.workURL.deletingPathExtension().lastPathComponent
         let leftovers = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
-        for leftover in leftovers where leftover.lastPathComponent.hasPrefix(prefix) {
+        // ImageIO writes through a temporary of its own, named after the file
+        // it was asked for with one more dot in front, and leaves it when the
+        // write fails.
+        for leftover in leftovers
+        where leftover.lastPathComponent.hasPrefix(prefix) || leftover.lastPathComponent.hasPrefix("." + prefix) {
           try? FileManager.default.removeItem(at: leftover)
         }
       }
@@ -429,7 +462,9 @@ actor ProcessingCoordinator {
         )
         break
       } catch let error as ProcessingError {
-        guard case .unsupportedConversion = error else { throw error }
+        guard case .unsupportedConversion = error else {
+          throw Self.naming(error, scratch: plan.workURL, as: file)
+        }
         // Nothing has been written yet, but a processor that turned the pair
         // down after starting must not leave its scratch for the next one.
         try? FileManager.default.removeItem(at: plan.workURL)
@@ -483,6 +518,15 @@ actor ProcessingCoordinator {
       additionalOutputs: committed.extras,
       appliedQuality: result.appliedQuality
     )
+  }
+
+  /// An error about the scratch file is an error about the user's file: the
+  /// scratch name - `.forge-6549035B….dds` - means nothing to anybody.
+  private static func naming(_ error: ProcessingError, scratch: URL, as file: ProcessableFile) -> ProcessingError {
+    guard case .conversionFailed(let reason) = error else { return error }
+    let scratchName = scratch.lastPathComponent
+    guard reason.contains(scratchName) else { return error }
+    return .conversionFailed(reason: reason.replacingOccurrences(of: scratchName, with: file.fileName))
   }
 
   /// Move the finished scratch files into their final places, replacing
@@ -542,6 +586,15 @@ actor ProcessingCoordinator {
       let destination = try reserveUniqueURL(folder.appendingPathComponent(name))
       _ = try fileManager.replaceItemAt(destination, withItemAt: extra)
       return destination
+    }
+
+    // A file that names its companions - an OBJ names its material library -
+    // named them while they still had the scratch name. Only looked at when
+    // there are companions: a lone output has nobody to name.
+    // ponytail: reads each file whole; a size ceiling if frame folders get slow.
+    for url in moved.isEmpty ? [] : [primary] + moved {
+      guard let text = try? String(contentsOf: url, encoding: .utf8), text.contains(workBase) else { continue }
+      try text.replacingOccurrences(of: workBase, with: finalBase).write(to: url, atomically: true, encoding: .utf8)
     }
 
     return (primary, moved)

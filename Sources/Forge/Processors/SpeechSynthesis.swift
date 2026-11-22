@@ -65,14 +65,22 @@ enum SpeechSynthesis {
         gate.resume()
       }
 
+      // The end is the synthesiser saying it has finished the utterance. An
+      // empty buffer is not that: it also arrives between sentences, and
+      // stopping at the first one read two sentences of a document aloud and
+      // called it done. An empty buffer only starts a short wait, which more
+      // speech cancels, for the synthesiser that never reports its end.
+      let ending = Ending { deadline.cancel(); gate.resume() }
+      synthesizer.delegate = ending
+      objc_setAssociatedObject(synthesizer, &Ending.key, ending, .OBJC_ASSOCIATION_RETAIN)
+
       synthesizer.write(utterance) { buffer in
         guard let pcm = buffer as? AVAudioPCMBuffer else { return }
-        // A zero-length buffer is how the synthesiser says it has finished.
         guard pcm.frameLength > 0 else {
-          deadline.cancel()
-          gate.resume()
+          ending.waitBriefly()
           return
         }
+        ending.stillSpeaking()
         writer.append(pcm)
         progress(0.5)
       }
@@ -92,7 +100,41 @@ enum SpeechSynthesis {
   /// faster than real time when it is writing to a file rather than a speaker.
   private static func timeout(for text: String) -> Double {
     let seconds = Double(text.count) / 10
-    return min(max(seconds, 20), 300)
+    return min(max(seconds, 20), 3600)
+  }
+}
+
+/// Knows when the synthesiser has finished: told so, or left in silence.
+private final class Ending: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
+  static var key: UInt8 = 0
+  /// Long against the gap between two sentences, which is a few milliseconds
+  /// when writing to a file, and short against anybody's patience.
+  private static let silence: UInt64 = 3_000_000_000
+
+  private let finish: @Sendable () -> Void
+  private let lock = NSLock()
+  private var wait: Task<Void, Never>?
+
+  init(finish: @escaping @Sendable () -> Void) { self.finish = finish }
+
+  func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) { finish() }
+  func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) { finish() }
+
+  func waitBriefly() {
+    lock.lock()
+    defer { lock.unlock() }
+    wait?.cancel()
+    wait = Task { [finish] in
+      try? await Task.sleep(nanoseconds: Self.silence)
+      if !Task.isCancelled { finish() }
+    }
+  }
+
+  func stillSpeaking() {
+    lock.lock()
+    defer { lock.unlock() }
+    wait?.cancel()
+    wait = nil
   }
 }
 
@@ -105,6 +147,9 @@ private final class BufferWriter: @unchecked Sendable {
   private let lock = NSLock()
   private var file: AVAudioFile?
   private var failure: Error?
+  /// Set once the file is finished. A buffer arriving after that would open
+  /// the output afresh and replace the whole reading with its last sentence.
+  private var closed = false
 
   init(output: URL, formatID: AudioFormatID, type: UTType) {
     self.output = output
@@ -115,7 +160,7 @@ private final class BufferWriter: @unchecked Sendable {
   func append(_ buffer: AVAudioPCMBuffer) {
     lock.lock()
     defer { lock.unlock() }
-    guard failure == nil else { return }
+    guard failure == nil, !closed else { return }
 
     do {
       if file == nil {
@@ -151,6 +196,7 @@ private final class BufferWriter: @unchecked Sendable {
       throw ProcessingError.conversionFailed(reason: "The synthesiser produced no audio")
     }
     file = nil
+    closed = true
   }
 }
 

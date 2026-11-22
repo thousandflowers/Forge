@@ -75,6 +75,22 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
     self.actions = actions
   }
 
+  /// The same preset under another name: everything it does, asks and tests.
+  ///
+  /// Duplicate used to rebuild the copy from format, size, quality and filter,
+  /// the four things the first presets had, and so lost the name template, the
+  /// questions, the test and every block added since. The trigger word is the
+  /// one thing left behind: two presets answering to one word would both
+  /// claim the same renamed file.
+  func duplicate() -> RulePreset {
+    var copy = self
+    copy.id = UUID()
+    copy.name = "\(name) copy"
+    copy.nameTrigger = nil
+    copy.parameterValues = [:]
+    return copy
+  }
+
   /// Build a chain from the pieces a form would ask for. The order is the one
   /// that makes sense: change the format, then the size, then the quality,
   /// then anything applied on top.

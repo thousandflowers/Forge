@@ -632,7 +632,13 @@ final class BatchViewModel: ObservableObject {
 
     watching.cancel()
     throttle = nil
-    lastSaving = Self.saving(from: outputs.withLock { $0 }, sources: files)
+    // Against the files that were converted. Counting the ones that were
+    // stopped or failed as "before" made two finished films out of four read
+    // as 94% smaller.
+    lastSaving = Self.saving(
+      from: outputs.withLock { $0 },
+      sources: files.filter { statusMap[$0.id] == .completed }
+    )
     await model.refreshHistory()
 
     if model.settings.notifyWhenFinished, !cancellation.withLock({ $0 }) {

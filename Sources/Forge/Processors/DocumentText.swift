@@ -17,7 +17,8 @@ enum DocumentText {
       (.html, .html),
       (.rtf, .rtf),
       (UTType("public.rtfd"), .rtfd),
-      (UTType("org.oasis-open.opendocument.text"), .officeOpenXML),
+      // Not `.officeOpenXML`: that is Word's reader, and it refuses an ODT.
+      (UTType("org.oasis-open.opendocument.text"), .openDocument),
       (UTType("org.openxmlformats.wordprocessingml.document"), .officeOpenXML),
     ]
     return candidates.reduce(into: [:]) { result, candidate in
@@ -80,15 +81,41 @@ enum DocumentText {
     return document
   }
 
+  // MARK: - What a document says about itself
+
+  typealias Details = [NSAttributedString.DocumentAttributeKey: Any]
+
+  /// What it is called, and who it gives away.
+  private static let title: Set<NSAttributedString.DocumentAttributeKey> = [.title]
+  private static let descriptive: Set<NSAttributedString.DocumentAttributeKey> = [
+    .title, .author, .subject, .keywords, .company, .copyright, .comment, .editor, .manager, .category,
+  ]
+
+  /// The title, author and the rest, to be written onto whatever the document
+  /// becomes. Reading the words alone dropped all of it, so a document that
+  /// was to keep everything arrived without its author or its name. At the
+  /// thorough level only what it is called is kept, as with a PDF.
+  @MainActor
+  static func details(of url: URL, as type: UTType, keeping policy: PrivacyPolicy) -> Details {
+    guard let documentType = readable.first(where: { type.conforms(to: $0.key) })?.value else { return [:] }
+    var read: NSDictionary?
+    _ = try? NSAttributedString(url: url, options: [.documentType: documentType], documentAttributes: &read)
+    let all = (read as? Details) ?? [:]
+    let wanted = policy == .stripAll ? title : descriptive
+    return all.filter { wanted.contains($0.key) }
+  }
+
   // MARK: - Writing
 
   @MainActor
-  static func write(_ document: NSAttributedString, to output: URL, as type: UTType) throws {
+  static func write(
+    _ document: NSAttributedString, to output: URL, as type: UTType, details: Details = [:]
+  ) throws {
     guard canWrite(type) else {
       throw ProcessingError.unsupportedConversion(from: .plainText, to: type)
     }
     if type.conforms(to: .pdf) {
-      return try writePDF(document, to: output)
+      return try writePDF(document, to: output, details: details)
     }
 
     guard let documentType = writable.first(where: { type.conforms(to: $0.key) })?.value else {
@@ -102,7 +129,7 @@ enum DocumentText {
 
     let data = try document.data(
       from: NSRange(location: 0, length: document.length),
-      documentAttributes: [.documentType: documentType]
+      documentAttributes: details.merging([.documentType: documentType]) { _, type in type }
     )
     try data.write(to: output, options: .atomic)
   }
@@ -111,14 +138,18 @@ enum DocumentText {
   ///
   /// Going through the print system would work too, but it needs a print
   /// dialogue's worth of state for something that is really just typesetting.
-  private static func writePDF(_ document: NSAttributedString, to output: URL) throws {
+  private static func writePDF(_ document: NSAttributedString, to output: URL, details: Details = [:]) throws {
     // US Letter at 72 dpi, with a margin wide enough to read.
     let page = CGRect(x: 0, y: 0, width: 612, height: 792)
     let margin: CGFloat = 54
     let textArea = page.insetBy(dx: margin, dy: margin)
 
     var mediaBox = page
-    guard let context = CGContext(output as CFURL, mediaBox: &mediaBox, nil) else {
+    var information: [CFString: Any] = [:]
+    if let title = details[.title] as? String { information[kCGPDFContextTitle] = title }
+    if let author = details[.author] as? String { information[kCGPDFContextAuthor] = author }
+    if let subject = details[.subject] as? String { information[kCGPDFContextSubject] = subject }
+    guard let context = CGContext(output as CFURL, mediaBox: &mediaBox, information as CFDictionary) else {
       throw ProcessingError.conversionFailed(reason: "Cannot create \(output.lastPathComponent)")
     }
 

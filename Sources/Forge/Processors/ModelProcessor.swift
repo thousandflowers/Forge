@@ -41,12 +41,24 @@ final class ModelProcessor: FileProcessor, @unchecked Sendable {
     try asset.export(to: output)
     progress(1.0)
 
+    // Some formats are more than one file: an OBJ keeps its materials in a
+    // library beside it, written under the same name. Said out loud here, it
+    // is named and moved with the model instead of staying behind as scratch.
+    let stem = output.deletingPathExtension().lastPathComponent
+    let beside = (try? FileManager.default.contentsOfDirectory(
+      at: output.deletingLastPathComponent(), includingPropertiesForKeys: nil
+    )) ?? []
+    let companions = beside.filter {
+      $0.lastPathComponent != output.lastPathComponent && $0.deletingPathExtension().lastPathComponent == stem
+    }
+
     let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
     return ProcessingResult(
       outputURL: output,
       outputSize: attributes[.size] as? Int64 ?? 0,
       outputDimensions: nil,
-      duration: Date().timeIntervalSince(start)
+      duration: Date().timeIntervalSince(start),
+      additionalOutputs: companions
     )
   }
 }

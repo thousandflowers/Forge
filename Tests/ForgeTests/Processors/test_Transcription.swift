@@ -51,4 +51,45 @@ final class TranscriptionTests: BaseTestCase {
       "recognition ran past its own deadline"
     )
   }
+
+  /// A batch hands the recogniser several recordings at once, and it answered
+  /// some of them "No speech detected" - which ones depended on the timing.
+  /// Measured on 22 formats of one spoken sentence, four at a time: 12 refused,
+  /// all of which transcribe when asked alone.
+  func test_severalRecordingsAtOnceAreAllTranscribed() async throws {
+    try XCTSkipUnless(
+      SFSpeechRecognizer.authorizationStatus() == .authorized,
+      "speech recognition not authorised on this machine"
+    )
+    let spoken = path("spoken.aiff")
+    let say = Process()
+    say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+    say.arguments = ["-v", "Samantha", "-o", spoken.path, "The quick brown fox jumps over the lazy dog."]
+    try say.run()
+    say.waitUntilExit()
+    let copies = try (0..<6).map { index -> URL in
+      let copy = path("spoken-\(index).aiff")
+      try FileManager.default.copyItem(at: spoken, to: copy)
+      return copy
+    }
+
+    let answers = await withTaskGroup(of: Result<String, Error>.self) { group in
+      for copy in copies {
+        group.addTask {
+          do { return .success(try await Transcription.text(of: copy, locale: "en-US") { _ in }) }
+          catch { return .failure(error) }
+        }
+      }
+      var all: [Result<String, Error>] = []
+      for await answer in group { all.append(answer) }
+      return all
+    }
+
+    for answer in answers {
+      switch answer {
+      case .success(let text): XCTAssertTrue(text.lowercased().contains("fox"), text)
+      case .failure(let error): XCTFail("one of six said: \(error.localizedDescription)")
+      }
+    }
+  }
 }

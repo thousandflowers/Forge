@@ -208,8 +208,21 @@ enum NameTemplate {
   }
 
   /// A name that is only separators, or nothing at all, is not a name.
+  ///
+  /// Nor is a path. A template is text somebody else may have written - a
+  /// preset from the gallery, a file a friend sent - and `../../x` in one used
+  /// to write outside the folder the user chose. So the separators become
+  /// dashes, a line break becomes a space, and the leading dots that would
+  /// hide the file or climb out of the folder are dropped.
   private static func finish(_ name: String) -> String {
-    var trimmed = name.trimmingCharacters(in: .whitespaces)
+    var flat = ""
+    for character in name {
+      if character == "/" || character == ":" { flat.append("-") }
+      else if character.isNewline { flat.append(" ") }
+      else { flat.append(character) }
+    }
+    var trimmed = flat.trimmingCharacters(in: .whitespaces)
+    while trimmed.first == "." { trimmed.removeFirst() }
     while let last = trimmed.last, last == "_" || last == "-" || last == " " {
       trimmed.removeLast()
     }
