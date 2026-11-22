@@ -276,7 +276,16 @@ enum ExternalBridge {
       }
       // Sound asked of a film is the sound alone. Without this the picture
       // went into the .m4a as well, since the container will hold one.
-      if targetType.map(MediaProcessor.isSoundOnly) ?? false { arguments.append("-vn") }
+      if targetType.map(MediaProcessor.isSoundOnly) ?? false {
+        arguments.append("-vn")
+      } else if !wantsTheSubtitles {
+        // Every picture, every soundtrack and every subtitle, not ffmpeg's
+        // choice of one of each. The question marks let a film without one
+        // through.
+        arguments += ["-map", "0:v?", "-map", "0:a?", "-map", "0:s?"]
+        // An MP4 or a MOV holds its subtitles as mov_text and nothing else.
+        if ["mp4", "m4v", "mov"].contains(target) { arguments += ["-c:s", "mov_text"] }
+      }
       // An Ogg file holds Opus unless something else was asked for. Left to
       // itself, an ffmpeg built without Vorbis puts FLAC in it - which is what
       // `--to opus` produced, and which macOS cannot then read back.

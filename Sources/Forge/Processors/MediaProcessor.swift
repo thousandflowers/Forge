@@ -139,7 +139,9 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
     guard let ceiling = ImageProcessor.sizeCeiling(from: operations) else {
-      return try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress)
+      let result = try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress)
+      try await Self.checkNothingWasLeftBehind(from: asset, in: output)
+      return result
     }
     var aim = ceiling
     var smallest = Int64.max
@@ -150,7 +152,10 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       }
       try? FileManager.default.removeItem(at: output)
       let result = try await exportVideo(asset, to: output, operations: aimed, start: start, progress: progress)
-      if result.outputSize <= Int64(ceiling) { return result }
+      if result.outputSize <= Int64(ceiling) {
+        try await Self.checkNothingWasLeftBehind(from: asset, in: output)
+        return result
+      }
       smallest = min(smallest, result.outputSize)
       aim = max(1, Int(Double(aim) * Double(ceiling) / Double(result.outputSize) * 0.95))
     }
@@ -160,6 +165,55 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
         + "\(Int64(ceiling).formatted(.byteCount(style: .file))): the smallest it came out was "
         + "\(smallest.formatted(.byteCount(style: .file))). A smaller picture would fit; so would a shorter film."
     )
+  }
+
+  /// The tracks a film had that the export did not carry. An export session
+  /// keeps one soundtrack, drops sound it cannot put in the container (MP3 in
+  /// an MP4) and drops subtitles - all without a word, so a film with a
+  /// commentary track or with subtitles came back without them, "converted".
+  /// What it left behind is said, and a tool that keeps every track is asked
+  /// instead where there is one.
+  private static func checkNothingWasLeftBehind(from asset: AVURLAsset, in output: URL) async throws {
+    func count(_ asset: AVAsset, _ kinds: [AVMediaType]) async -> Int {
+      var total = 0
+      for kind in kinds { total += ((try? await asset.loadTracks(withMediaType: kind)) ?? []).count }
+      return total
+    }
+    let written = AVURLAsset(url: output)
+    let captions: [AVMediaType] = [.subtitle, .closedCaption, .text]
+    var lost: [String] = []
+    // ffprobe sees tracks macOS does not: an MP4's MP3 soundtrack is not there
+    // at all as far as AVFoundation is concerned, so its loss was invisible.
+    let soundBefore = max(await count(asset, [.audio]), streams(of: asset.url, kind: "audio"))
+    let soundAfter = max(await count(written, [.audio]), streams(of: output, kind: "audio"))
+    if soundAfter < soundBefore {
+      lost.append(soundAfter == 0 ? "its sound" : "\(soundBefore - soundAfter) of its \(soundBefore) soundtracks")
+    }
+    if await count(asset, captions) > 0, await count(written, captions) == 0 { lost.append("its subtitles") }
+    guard !lost.isEmpty else { return }
+
+    try? FileManager.default.removeItem(at: output)
+    if let handOn = handedOn(asset.url, to: output) { throw handOn }
+    throw ProcessingError.conversionFailed(
+      reason: "macOS would leave out \(lost.joined(separator: " and ")) of \(asset.url.lastPathComponent), "
+        + "so it was not converted. ffmpeg keeps every track: brew install ffmpeg"
+    )
+  }
+
+  /// How many streams of a kind ffprobe finds, or zero without ffprobe.
+  private static func streams(of url: URL, kind: String) -> Int {
+    guard let ffprobe = ExternalTools.locate("ffprobe") else { return 0 }
+    let process = Process()
+    process.executableURL = ffprobe
+    process.arguments = ["-v", "error", "-select_streams", kind == "audio" ? "a" : "s",
+                         "-show_entries", "stream=index", "-of", "csv=p=0", url.path]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = Pipe()
+    guard (try? process.run()) != nil else { return 0 }
+    let said = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return String(decoding: said, as: UTF8.self).split(whereSeparator: \.isNewline).count
   }
 
   // MARK: - What macOS could not do
