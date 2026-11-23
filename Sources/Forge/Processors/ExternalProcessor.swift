@@ -328,17 +328,17 @@ enum ExternalBridge {
     if let pandoc = ExternalTools.locate("pandoc"), pandocReads(source), pandocWrites(target) {
       // Standalone, or an HTML output is a fragment with no <head> and an EPUB
       // has no spine: a file somebody can open, not a piece of one.
-      return Plan(
-        tool: pandoc,
-        toolName: "pandoc",
-        // Plain text is read as Markdown, which it is a subset of: pandoc has
-        // no reader called "plain", so a .txt could not become an EPUB.
-        // Pictures travel inside the file, and are looked for beside the source.
-        arguments: ["--standalone"] + (source == "txt" ? ["-f", "markdown"] : [])
-          + (target == "html" ? ["--embed-resources"] : [])
-          + Self.statedDetails(of: input).flatMap { ["-M", "\($0.key)=\($0.value)"] }
-          + ["--resource-path", input.deletingLastPathComponent().path, input.path, "-o", output.path]
-      )
+      // Built a piece at a time: one long `+` chain of conditionals was more
+      // than the macOS 15 compiler would type-check.
+      var arguments = ["--standalone"]
+      // Plain text is read as Markdown, which it is a subset of: pandoc has
+      // no reader called "plain", so a .txt could not become an EPUB.
+      if source == "txt" { arguments += ["-f", "markdown"] }
+      // Pictures travel inside the file, and are looked for beside the source.
+      if target == "html" { arguments.append("--embed-resources") }
+      for (key, value) in Self.statedDetails(of: input) { arguments += ["-M", "\(key)=\(value)"] }
+      arguments += ["--resource-path", input.deletingLastPathComponent().path, input.path, "-o", output.path]
+      return Plan(tool: pandoc, toolName: "pandoc", arguments: arguments)
     }
 
     // ffmpeg turns time into time. A picture or a document as the target is
