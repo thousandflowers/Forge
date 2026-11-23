@@ -145,14 +145,41 @@ enum ExternalBridge {
   /// What ffmpeg has already said it writes, without asking it.
   static var ffmpegWritesIfKnown: Set<String> { ffmpegAnswers.peek()?.write ?? [] }
 
-  /// The formats an installed tool writes and the system does not, as types
-  /// this Mac knows by name - so a muxer for a broadcast format nobody opens is
-  /// not offered. Only what the tools have already said: asked from a view.
-  static func formatsWrittenByTools() -> [UTType] {
-    var extensions = ffmpegWritesIfKnown
-    if let pandoc = formats.peek()?.write {
-      let byName = Dictionary(extensionNames.map { ($0.value, $0.key) }, uniquingKeysWith: { first, _ in first })
-      extensions.formUnion(pandoc.map { byName[$0] ?? $0 })
+  /// What LibreOffice writes, by the kind of document it is given. LibreOffice
+  /// has no way to be asked, so this is what its export filters are for: a
+  /// text document does not become a spreadsheet, nor a deck a text.
+  // ponytail: a table of LibreOffice's export filters; extend it when a filter is wanted that is not here.
+  static let libreOfficeFamilies: [(reads: Set<String>, writes: Set<String>)] = [
+    (["doc", "docx", "odt", "rtf", "wpd", "pages", "txt", "html", "fodt"],
+     ["pdf", "docx", "doc", "odt", "rtf", "txt", "html", "epub", "png", "jpg"]),
+    (["xls", "xlsx", "ods", "numbers", "csv", "fods"],
+     ["pdf", "xlsx", "xls", "ods", "csv", "html", "png"]),
+    (["ppt", "pptx", "odp", "key", "fodp"],
+     ["pdf", "pptx", "ppt", "odp", "png", "jpg", "html"]),
+  ]
+
+  static func libreOfficeWrites(from source: String) -> Set<String> {
+    libreOfficeFamilies.filter { $0.reads.contains(source) }.reduce(into: Set<String>()) { $0.formUnion($1.writes) }
+  }
+
+  /// The formats an installed tool writes for this kind of file and the system
+  /// does not, as types this Mac knows by name. Each tool for its own kinds:
+  /// ffmpeg's muxers for sound and film, pandoc's and LibreOffice's writers
+  /// for documents - ffmpeg also writes WebVTT and playlists, and those are not
+  /// what a document becomes. Only what the tools have already said.
+  static func formatsWrittenByTools(for kind: ConvertKind) -> [UTType] {
+    var extensions: Set<String> = []
+    switch kind {
+    case .video, .audio:
+      extensions = ffmpegWritesIfKnown
+    case .document:
+      if let pandoc = formats.peek()?.write {
+        let byName = Dictionary(extensionNames.map { ($0.value, $0.key) }, uniquingKeysWith: { first, _ in first })
+        extensions.formUnion(pandoc.map { byName[$0] ?? $0 })
+      }
+      if libreOffice != nil { extensions.formUnion(libreOfficeFamilies.flatMap(\.writes)) }
+    default:
+      return []
     }
     return extensions.compactMap { ext in
       guard let type = UTType(filenameExtension: ext), !type.isDynamic else { return nil }
@@ -220,11 +247,11 @@ enum ExternalBridge {
     // time-based is worth offering it and nothing else is.
     let isTimeBased = type.conforms(to: .audiovisualContent) || type.conforms(to: .audio)
     if ExternalTools.locate("ffmpeg") != nil, isTimeBased { return true }
-    // LibreOffice opens what an office suite opens. Rather than list those
-    // formats - which would go stale and is a list nobody can finish - it is
-    // offered anything that is neither a picture nor a recording, and only
-    // after every processor that reads the format natively has declined.
-    return libreOffice != nil && !isTimeBased && !type.conforms(to: .image)
+    // LibreOffice opens what an office suite opens, and is asked only after
+    // every processor that reads the format natively has declined.
+    // What its filters read, not anything that is not a picture: offered
+    // everything else, it took a PDF asked for a JPEG away from the PDF path.
+    return libreOffice != nil && libreOfficeFamilies.contains { $0.reads.contains(ext.lowercased()) }
   }
 
   /// Whether a tool on this Mac writes the format - what `plan` would find a
@@ -285,7 +312,7 @@ enum ExternalBridge {
       $0.conforms(to: .audiovisualContent) || $0.conforms(to: .audio)
     } ?? false
     if !wantsSomethingStill, sourceIsTimeBased, ExternalTools.locate("ffmpeg") != nil { return true }
-    return wantsSomethingStill && libreOffice != nil
+    return libreOffice != nil && libreOfficeWrites(from: source).contains(target)
   }
 
   static func plan(from input: URL, to output: URL, operations: [Operation]) -> Plan? {
@@ -400,9 +427,7 @@ enum ExternalBridge {
       return Plan(tool: ffmpeg, toolName: "ffmpeg", arguments: arguments)
     }
 
-    if !wantsSomethingStill { return nil }
-
-    if let office = libreOffice {
+    if let office = libreOffice, libreOfficeWrites(from: source).contains(target) {
       // LibreOffice names its own output, after the input and the format it
       // was asked for, so it is given a folder to itself and the one file
       // that appears is moved into place.

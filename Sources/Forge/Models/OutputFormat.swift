@@ -50,7 +50,7 @@ struct OutputFormat: Identifiable, Hashable {
     case .document: fits = { !$0.conforms(to: .audiovisualContent) && !$0.conforms(to: .image) }
     default: return []
     }
-    let found = ExternalBridge.formatsWrittenByTools()
+    let found = ExternalBridge.formatsWrittenByTools(for: kind)
     return sorted(Set(found.filter { fits($0) && !own.contains($0) }))
   }
 

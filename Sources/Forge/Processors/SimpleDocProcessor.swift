@@ -94,7 +94,8 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       }
       // And for one only a tool writes - an EPUB, an ODT - the tool is given
       // the words. A Word file could become an EPUB and a PDF could not.
-      if ExternalBridge.couldPlan(from: "txt", to: output.pathExtension.lowercased()) {
+      // Pictures are drawn from the pages, never written as text.
+      if !Self.isAPictureFormat(outputType), ExternalBridge.couldPlan(from: "txt", to: output.pathExtension.lowercased()) {
         return try handToATool(input, at: output, operations: operations, progress: progress)
       }
       return try await renderPDF(input, to: output, operations: operations, progress: progress)

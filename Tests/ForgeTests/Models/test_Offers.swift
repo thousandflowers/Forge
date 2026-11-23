@@ -30,8 +30,12 @@ final class OfferTests: BaseTestCase {
 
   func test_aDocumentIsOfferedPicturesOnlyIfItIsAPDF() throws {
     let letter = try offered(for: try word())
-    XCTAssertFalse(letter.contains(.jpeg), "a Word document cannot become a JPEG, and was offered one")
-    XCTAssertFalse(letter.contains(.png))
+    // LibreOffice, where it is installed, does draw a Word file's first page.
+    if ExternalBridge.libreOffice == nil {
+      XCTAssertFalse(letter.contains(.jpeg), "a Word document cannot become a JPEG, and was offered one")
+      XCTAssertFalse(letter.contains(.png))
+    }
+    XCTAssertFalse(letter.contains(try XCTUnwrap(UTType("com.apple.icns"))), "nothing here makes an icon of a letter")
     XCTAssertTrue(letter.contains(.rtf))
     XCTAssertTrue(letter.contains(.pdf))
 
