@@ -452,6 +452,29 @@ final class PrivacyTests: BaseTestCase {
     )
   }
 
+  /// The block's "Keep everything", against a Mac set to remove everything:
+  /// the photograph still says where it was taken.
+  func test_keepEverythingInTheBlockBeatsSettings() async throws {
+    var settings = AppSettings()
+    settings.privacy = .stripAll
+    let source = try photograph(at: path("holiday.jpg"))
+
+    func hasLocation(after actions: [Forge.Operation], in name: String) async throws -> Bool {
+      let entry = try await coordinator(settings: settings).processFile(
+        try ProcessableFile(url: source),
+        with: RulePreset(name: "t", description: "", category: .image, actions: [.convertFormat(to: .jpeg)] + actions),
+        destinationMode: .copyTo, destinationURL: try folder(name)
+      ) { _ in }
+      return try Self.properties(of: XCTUnwrap(entry.outputURL))[kCGImagePropertyGPSDictionary] != nil
+    }
+
+    let without = try await hasLocation(after: [], in: "settings")
+    let with = try await hasLocation(after: [.stripMetadata(policy: .keepAll)], in: "block")
+    XCTAssertFalse(without, "Settings removes it when nothing is said")
+    XCTAssertTrue(with)
+    XCTAssertEqual(PrivacyPolicy.allCases.first?.blockTitle, "Keep everything")
+  }
+
   // MARK: - What the sheet shows
 
   /// Picking a second preset leaves nothing of the first one behind.

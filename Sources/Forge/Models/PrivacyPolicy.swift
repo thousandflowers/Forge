@@ -29,6 +29,9 @@ enum PrivacyPolicy: String, Codable, Sendable, Hashable, CaseIterable {
     }
   }
 
+  /// The choice as the Remove metadata block words it.
+  var blockTitle: String { self == .keepAll ? "Keep everything" : title }
+
   var summary: String {
     switch self {
     case .keepAll:

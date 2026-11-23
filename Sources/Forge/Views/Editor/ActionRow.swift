@@ -109,9 +109,8 @@ struct ActionRow: View {
         get: { policy },
         set: { action.operation = .stripMetadata(policy: $0) }
       )) {
-        ForEach(PrivacyPolicy.allCases.filter(\.removesSomething), id: \.self) {
-          Text($0.title).tag($0)
-        }
+        // Keeping is a choice too: it overrules a general preference to remove.
+        ForEach(PrivacyPolicy.allCases, id: \.self) { Text($0.blockTitle).tag($0) }
       }
       .labelsHidden()
       .frame(maxWidth: 260, alignment: .leading)
