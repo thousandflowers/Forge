@@ -301,6 +301,26 @@ extension RulePreset {
   }
 }
 
+extension ConvertKind {
+  /// The formats most people want from this kind, in the order shown. A kind
+  /// without a list has few enough formats to show them all.
+  private var common: [String] {
+    switch self {
+    case .image: return ["JPEG", "PNG", "HEIC", "WEBP", "TIFF", "PDF", "GIF", "AVIF"]
+    case .video: return ["MP4", "MOV", "M4V", "GIF", "M4A", "JPEG", "PNG", "TXT"]
+    case .audio: return ["M4A", "MP3", "WAV", "AIFF", "FLAC", "TXT"]
+    case .document: return ["PDF", "DOCX", "RTF", "HTML", "TXT", "JPEG", "PNG", "M4A"]
+    case .data, .model, .subtitle, .font: return []
+    }
+  }
+
+  /// The ones to show first, out of those these files can really become.
+  func leading(of offered: [OutputFormat]) -> [OutputFormat] {
+    let first = common.compactMap { label in offered.first { $0.label == label } }
+    return first.isEmpty ? offered : first
+  }
+}
+
 struct OutputGroup: Identifiable {
   let title: String
   let formats: [OutputFormat]

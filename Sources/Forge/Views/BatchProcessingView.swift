@@ -112,31 +112,28 @@ struct BatchProcessingView: View {
     .navigationTitle("Convert")
     .toolbar {
       ToolbarItemGroup {
-        Button { addFiles() } label: { Label("Add Files", systemImage: "plus") }
-        // Nothing to clear is not a reason to show a disabled bin: it is a
-        // reason for there to be no bin.
-        if !vm.files.isEmpty {
-          Button(role: .destructive) { clear() } label: { Label("Clear", systemImage: "trash") }
-            .disabled(vm.isProcessing)
+        // Behind the maker these would act on a list nobody can see.
+        if model.presetEditor == nil {
+          Button { addFiles() } label: { Label("Add Files", systemImage: "plus") }
+          // Nothing to clear is not a reason to show a disabled bin: it is a
+          // reason for there to be no bin.
+          if !vm.files.isEmpty {
+            Button(role: .destructive) { clear() } label: { Label("Clear", systemImage: "trash") }
+              .disabled(vm.isProcessing)
+          }
         }
       }
     }
     .sheet(isPresented: $showingOptions) {
-      ConvertOptionsSheet(
+      QuickConvertSheet(
         kinds: kinds,
         sources: vm.files,
-        fileCount: vm.files.count,
-        totalSize: totalSize,
         presets: offeredPresets,
-        defaultPrivacy: model.settings.privacy,
         choice: $choice,
         sameAsLast: LastConversions.offer(for: vm.files),
         onSameAsLast: sameAsLast,
-        onConvert: {
-          // Overwrite and Move both change what is already on disk, so they are
-          // worth a sentence before rather than an apology after.
-          if choice.destinationMode == .copyTo { start() } else { confirming = true }
-        }
+        onMore: openMaker,
+        onConvert: convert
       )
     }
     .sheet(item: $reviewing) { file in
@@ -293,9 +290,6 @@ struct BatchProcessingView: View {
     vm.add(urls)
     guard !vm.files.isEmpty else { return }
     if wasEmpty {
-      // A batch starts from the general preference and can then disagree with
-      // it, which is what makes the preference a default rather than a law.
-      choice.fitMode = model.settings.defaultFitMode
       // A new batch starts from nothing but where its files go. The last
       // batch's choice is one press away, as "Same as Last", instead of
       // riding along where it may not fit - a film's MOV · 1280×720 · HEVC
@@ -315,7 +309,8 @@ struct BatchProcessingView: View {
     // Files dropped while a batch is running join the list and wait their turn.
     // Routing them would start a second batch over the same files, which is two
     // conversions writing the same output names at once.
-    guard !vm.isProcessing else { return }
+    // Nor while the maker is open over the list: they join what it converts.
+    guard !vm.isProcessing, model.presetEditor == nil else { return }
     // Nothing chosen yet: the sheet is the question. Asked before "Replace
     // these files?", which a new batch kept from the last one's Overwrite
     // asked about a conversion nobody had picked.
@@ -401,6 +396,33 @@ struct BatchProcessingView: View {
     adhoc = nil
     choice = choice.cleared()
     showingOptions = true
+  }
+
+  /// Overwrite and Move both change what is already on disk, so they are worth
+  /// a sentence before rather than an apology after.
+  private func convert() {
+    if choice.destinationMode == .copyTo { start() } else { confirming = true }
+  }
+
+  /// The maker with these files in it, and back here however it is left.
+  private func openMaker() {
+    model.presetEditor = PresetEditorRequest(
+      preset: choice.draftForMaker,
+      conversion: EditorConversion(
+        sources: vm.files,
+        fitMode: model.settings.defaultFitMode,
+        mode: choice.destinationMode,
+        destination: choice.destinationURL,
+        onBack: { take($0); showingOptions = true },
+        onConvert: { take($0); convert() }
+      )
+    )
+  }
+
+  private func take(_ outcome: EditorConversion.Outcome) {
+    choice = choice.edited(outcome.chain)
+    choice.destinationMode = outcome.mode
+    choice.destinationURL = outcome.destination
   }
 
   /// The last conversion of this kind, run on these files: the same chain and

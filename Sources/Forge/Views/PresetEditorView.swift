@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 struct PresetEditorRequest: Identifiable {
   let id = UUID()
   let preset: RulePreset?
+  /// Files to convert once, when it was opened from Quick convert.
+  var conversion: EditorConversion? = nil
 }
 
 /// The preset editor, laid out the way Shortcuts lays out an automation: the
@@ -15,6 +17,7 @@ struct PresetEditorRequest: Identifiable {
 /// removed: a preset with nothing coming in is not a preset.
 struct PresetEditorView: View {
   private let existing: RulePreset?
+  private let conversion: EditorConversion?
   private let onSave: (RulePreset) -> Void
   private let onClose: () -> Void
 
@@ -35,8 +38,9 @@ struct PresetEditorView: View {
   @State private var inputFormats: Set<String>
   @State private var nameTrigger: String
   @State private var gate: Condition?
-  @State private var choosingFormats = false
   @State private var confirmingDiscard = false
+  @State private var destinationMode: DestinationMode
+  @State private var destinationURL: URL?
   /// A fork about to be removed with steps in its arms, waiting for a yes.
   @State private var removingFork: UUID?
   @FocusState private var focus: Field?
@@ -71,8 +75,16 @@ struct PresetEditorView: View {
   /// The canvas itself, as a container: the end of the top-level chain.
   private static let rootID = UUID()
 
-  init(preset: RulePreset?, onSave: @escaping (RulePreset) -> Void, onClose: @escaping () -> Void) {
+  init(
+    preset: RulePreset?,
+    conversion: EditorConversion? = nil,
+    onSave: @escaping (RulePreset) -> Void,
+    onClose: @escaping () -> Void
+  ) {
     self.existing = preset
+    self.conversion = conversion
+    _destinationMode = State(initialValue: conversion?.mode ?? .copyTo)
+    _destinationURL = State(initialValue: conversion?.destination)
     self.onSave = onSave
     self.onClose = onClose
     let actions = preset?.actions ?? []
@@ -82,12 +94,12 @@ struct PresetEditorView: View {
     }
     _name = State(initialValue: preset?.name ?? "")
     _description = State(initialValue: preset?.description ?? "")
-    _category = State(initialValue: preset?.category ?? .image)
+    _category = State(initialValue: conversion?.category ?? preset?.category ?? .image)
     _formats = State(initialValue: chosen)
     _steps = State(initialValue: actions.filter { if case .convertFormat = $0 { return false } else { return true } }.map(Action.init))
     _parameters = State(initialValue: preset?.parameters ?? [])
     _nameTemplate = State(initialValue: preset?.nameTemplate ?? "")
-    _showsFormats = State(initialValue: !chosen.isEmpty)
+    _showsFormats = State(initialValue: conversion != nil || !chosen.isEmpty)
     _showsTemplate = State(initialValue: !(preset?.nameTemplate ?? "").isEmpty)
     _inputFormats = State(initialValue: Set(preset?.inputFormats ?? []))
     _nameTrigger = State(initialValue: preset?.nameTrigger ?? "")
@@ -96,13 +108,13 @@ struct PresetEditorView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      topBar
+      if let conversion { conversionBar(conversion) } else { topBar }
       Divider()
       HStack(spacing: 0) {
         VStack(spacing: 0) {
           canvas
           // The sample file after each step, small; click for the big view.
-          PreviewStrip(preset: draft(), coordinator: model.coordinator) { original, step in
+          PreviewStrip(preset: draft(), coordinator: model.coordinator, own: conversion?.sources.first) { original, step in
             withAnimation(.easeOut(duration: 0.15)) { compared = Compared(original: original, step: step) }
           }
         }
@@ -204,9 +216,42 @@ struct PresetEditorView: View {
     .padding(.vertical, 12)
   }
 
+  /// The top bar with files in the maker: back, keep it, or convert once.
+  private func conversionBar(_ conversion: EditorConversion) -> some View {
+    let needsFolder = destinationMode != .overwrite && destinationURL == nil
+    return ConversionBar(
+      title: conversion.title,
+      suggestedName: conversion.sources.first.map {
+        ProcessingHistory.describedName(for: $0.url, actions: draft().actions)
+      } ?? "",
+      blocked: unsound ?? (needsFolder ? "Choose a folder to go to" : nil),
+      unsound: unsound,
+      escGoesBack: compared == nil,
+      back: { onClose(); conversion.onBack(outcome) },
+      save: { name in
+        var preset = draft()
+        preset.name = name
+        // What the preset it started from said about itself, which this no
+        // longer is; and one word cannot start two presets.
+        preset.description = ""
+        if model.presets.contains(where: { $0.nameTrigger == preset.nameTrigger }) { preset.nameTrigger = nil }
+        model.install(preset)
+      },
+      convert: { onClose(); conversion.onConvert(outcome) }
+    )
+  }
+
+  private var outcome: EditorConversion.Outcome {
+    .init(chain: draft(), mode: destinationMode, destination: destinationURL)
+  }
+
   /// Why Save is off, in the words the button shows. `nil` means it is on.
   private var cannotSave: String? {
-    if name.trimmingCharacters(in: .whitespaces).isEmpty { return "Give it a name" }
+    name.trimmingCharacters(in: .whitespaces).isEmpty ? "Give it a name" : unsound
+  }
+
+  /// What is wrong with the chain itself, whatever it is called.
+  private var unsound: String? {
     if !keysAreSound { return "Every question needs its own key" }
     let hasSplit = steps.contains { if case .split = $0.operation { return true } else { return false } }
     let hasJoinOrMerge = steps.contains { if case .join = $0.operation { return true }; if case .merge = $0.operation { return true }; return false }
@@ -265,6 +310,8 @@ struct PresetEditorView: View {
           if showsFormats { connected { formatsBlock }.dropSpot(.endOf(Self.rootID), into: self) }
           if showsTemplate { connected { templateBlock }.dropSpot(.endOf(Self.rootID), into: self) }
         }
+
+        if let conversion { connected { destinationBlock(conversion) } }
       }
       .padding(.horizontal, 24)
       .padding(.vertical, 16)
@@ -353,7 +400,7 @@ struct PresetEditorView: View {
   private func fork(_ step: Binding<Action>) -> some View {
     let isSplit: Bool = { if case .split = step.wrappedValue.operation { return true } else { return false } }()
     return VStack(spacing: 0) {
-      connected {
+      connected(insertingAt: .step(step.wrappedValue.id)) {
         HStack(spacing: 8) {
           BlockIcon(symbol: step.wrappedValue.operation.symbol, tint: LibraryEntry.Group.logic.color)
           if isSplit {
@@ -508,14 +555,15 @@ struct PresetEditorView: View {
 
   /// A question on the canvas: dropping a step on it puts the step first.
   private func questionRow(_ parameter: Binding<PresetParameter>) -> some View {
-    connected { questionBlock(parameter) }
+    let index = parameters.firstIndex { $0.id == parameter.wrappedValue.id } ?? 0
+    return connected(insertingAt: .question(index)) { questionBlock(parameter) }
       .dropSpot(steps.first.map { .before($0.id) } ?? .endOf(Self.rootID), into: self)
   }
 
   /// A step on the canvas: drags to reorder, takes drops in front of itself.
   private func stepRow(_ step: Binding<Action>) -> some View {
     let id = step.wrappedValue.id
-    return connected { stepBlock(step) }
+    return connected(insertingAt: .step(id)) { stepBlock(step) }
       .onDrag { NSItemProvider(object: "step:\(id.uuidString)" as NSString) }
       .dropSpot(.before(id), into: self)
   }
@@ -543,7 +591,7 @@ struct PresetEditorView: View {
     guard let entry = LibraryEntry.all(for: category).first(where: { $0.id == payload }), available(entry) else { return }
     switch entry.kind {
     case .step(let kind):
-      let step = Action(kind.blank(for: category))
+      let step = blank(kind)
       if !steps.insert(step, at: spot, root: Self.rootID) { steps.append(step) }
       steps.ensureJoins()
     case .formats where spot.target != Self.rootID && !steps.contains(where: { $0.id == spot.target }):
@@ -564,101 +612,32 @@ struct PresetEditorView: View {
 
   func isDropTarget(_ spot: DropSpot) -> Bool { dropTarget == spot }
 
-  /// A block with the line that leads down to it from the one above.
-  private func connected<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+  /// A block with the line that leads down to it from the one above, and on
+  /// that line the + that puts another block between the two.
+  private func connected<Content: View>(insertingAt point: InsertPoint? = nil, @ViewBuilder _ content: () -> Content) -> some View {
     VStack(spacing: 0) {
+      if let point {
+        Rectangle().fill(Color.secondary.opacity(0.35)).frame(width: 2, height: 6)
+        InsertButton(entries: point.offers(for: category, in: steps)) { insert($0, at: point) }
+      }
       VStack(spacing: 0) {
-        Rectangle().fill(Color.secondary.opacity(0.35)).frame(width: 2, height: 16)
+        Rectangle().fill(Color.secondary.opacity(0.35)).frame(width: 2, height: point == nil ? 16 : 6)
         Image(systemName: "arrowtriangle.down.fill")
           .font(.system(size: 9))
           .foregroundStyle(Color.secondary.opacity(0.5))
           .offset(y: -3)
       }
-      .frame(height: 22)
+      .frame(height: point == nil ? 22 : 12)
       .accessibilityHidden(true)
       content()
     }
   }
 
-  /// The files this preset takes, what starts it, and the test they have to
-  /// pass. Always first, never removed.
   private var inputBlock: some View {
-    BlockCard(title: "Files that come in", symbol: category.icon, tint: .teal, remove: nil, inline: false) {
-      VStack(alignment: .leading, spacing: 10) {
-        HStack(spacing: 10) {
-          Picker("Kind", selection: $category) {
-            ForEach(PresetCategory.allCases, id: \.self) { Text($0.title).tag($0) }
-          }
-          .labelsHidden()
-          .fixedSize()
-
-          if category == .custom {
-            Button {
-              choosingFormats = true
-            } label: {
-              Label("Choose formats…", systemImage: "line.3.horizontal.decrease.circle")
-            }
-            // The anchor keeps one width whatever is chosen: a label that grew
-            // with the count moved the popover under the pointer at every click.
-            .popover(isPresented: $choosingFormats, arrowEdge: .bottom) { formatsPopover }
-            Text(inputFormats.isEmpty ? "Any file Forge opens." : InputFormats.chosen(inputFormats.count))
-              .font(.callout)
-              .foregroundStyle(.secondary)
-              .monospacedDigit()
-          } else {
-            Text("Every \(category.noun) file dropped on Forge, or into a folder it watches.")
-              .font(.callout)
-              .foregroundStyle(.secondary)
-              .fixedSize(horizontal: false, vertical: true)
-          }
-        }
-
-        Divider()
-
-        // Runs when: dropped, or renamed to say so.
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-          Text("Runs when").foregroundStyle(.secondary).frame(width: 74, alignment: .trailing)
-          VStack(alignment: .leading, spacing: 6) {
-            Text("a file is dropped on Forge, or lands in a folder Forge watches")
-              .font(.callout)
-              .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 6) {
-              Text("or a file is renamed with the word").font(.callout)
-              Text("_").foregroundStyle(.tertiary)
-              TextField("word", text: $nameTrigger)
-                .frame(width: 90)
-                .font(.callout.monospaced())
-                .accessibilityLabel(Text("Trigger word"))
-            }
-            if !nameTrigger.trimmingCharacters(in: .whitespaces).isEmpty {
-              Text("In a watched folder, foto.jpg renamed to foto_\(nameTrigger.trimmingCharacters(in: .whitespaces)).jpg runs this preset, whatever the folder's own preset is. The word is dropped from the output's name.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-          }
-        }
-
-        // Only if: a gate on the whole preset.
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-          Text("Only if").foregroundStyle(.secondary).frame(width: 74, alignment: .trailing)
-          VStack(alignment: .leading, spacing: 6) {
-            Toggle(isOn: Binding(get: { gate != nil }, set: { gate = $0 ? Condition() : nil })) {
-              Text("the file passes a test; otherwise it is left alone")
-            }
-            .toggleStyle(.checkbox)
-            .font(.callout)
-            if let current = gate {
-              ConditionEditor(condition: Binding(get: { current }, set: { gate = $0 }))
-            }
-          }
-        }
-      }
-    }
-  }
-
-  private var formatsPopover: some View {
-    InputFormatsPopover(chosen: $inputFormats)
+    InputBlock(
+      conversion: conversion, category: $category, inputFormats: $inputFormats,
+      nameTrigger: $nameTrigger, gate: $gate
+    )
   }
 
   private func questionBlock(_ parameter: Binding<PresetParameter>) -> some View {
@@ -676,7 +655,7 @@ struct PresetEditorView: View {
   }
 
   private var formatsBlock: some View {
-    BlockCard(title: "Comes out as", symbol: "arrow.triangle.2.circlepath", tint: LibraryEntry.Group.output.color, remove: {
+    BlockCard(title: "Comes out as", symbol: "arrow.triangle.2.circlepath", tint: LibraryEntry.Group.output.color, remove: conversion != nil ? nil : {
       formats.removeAll()
       showsFormats = false
     }) {
@@ -706,6 +685,12 @@ struct PresetEditorView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
+    }
+  }
+
+  private func destinationBlock(_ conversion: EditorConversion) -> some View {
+    BlockCard(title: "Goes to", symbol: "folder", tint: .gray, remove: nil, inline: false) {
+      DestinationPicker(mode: $destinationMode, url: $destinationURL, fileCount: conversion.sources.count)
     }
   }
 
@@ -749,20 +734,38 @@ struct PresetEditorView: View {
     case .formats: showsFormats = true
     case .template: showsTemplate = true
     case .question(let kind): add(kind)
-    case .step(let kind): steps.append(Action(kind.blank(for: category)))
+    case .step(let kind): steps.append(blank(kind))
+    }
+  }
+
+  /// A new step. While converting, a resize starts the way Settings says new
+  /// conversions fit.
+  private func blank(_ kind: ActionKind) -> Action {
+    var operation = kind.blank(for: category)
+    if kind == .resize, let conversion, case .resize(let width, let height, _) = operation {
+      operation = .resize(width: width, height: height, fitMode: conversion.fitMode)
+    }
+    return Action(operation)
+  }
+
+  private func insert(_ entry: LibraryEntry, at point: InsertPoint) {
+    switch (point, entry.kind) {
+    case (.question(let index), .question(let kind)): add(kind, at: index)
+    case (.question, _): add(entry)
+    case (.step(let id), _): land(entry.id, at: .before(id))
     }
   }
 
   /// A question needs a key nothing else is using, since the key is what a
   /// name template spends.
-  private func add(_ kind: PresetParameter.Kind) {
+  private func add(_ kind: PresetParameter.Kind, at index: Int? = nil) {
     var key = kind.defaultKey
     var attempt = 2
     while parameters.contains(where: { $0.key == key }) {
       key = "\(kind.defaultKey)\(attempt)"
       attempt += 1
     }
-    parameters.append(PresetParameter(key: key, label: kind.title, kind: kind))
+    parameters.insert(PresetParameter(key: key, label: kind.title, kind: kind), at: index ?? parameters.count)
   }
 
   // MARK: - Formats
@@ -790,6 +793,8 @@ struct PresetEditorView: View {
   /// The formats worth offering for what this preset is about. An audio preset
   /// has no business listing TIFF.
   private var offeredFormats: [OutputFormat] {
+    // With files in hand, what those files can really become.
+    if let conversion { return conversion.formats }
     switch category {
     case .image: return OutputFormat.imagesWithTools + OutputFormat.text
     case .video: return OutputFormat.video + OutputFormat.images + OutputFormat.text

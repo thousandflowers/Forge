@@ -168,20 +168,22 @@ struct BlockIcon: View {
 struct Chip: View {
   let title: String
   let selected: Bool
+  let large: Bool
   let action: () -> Void
 
-  init(_ title: String, selected: Bool, action: @escaping () -> Void) {
+  init(_ title: String, selected: Bool, large: Bool = false, action: @escaping () -> Void) {
     self.title = title
     self.selected = selected
+    self.large = large
     self.action = action
   }
 
   var body: some View {
     Button(action: action) {
       Text(title)
-        .font(.callout)
-        .padding(.horizontal, 11)
-        .padding(.vertical, 5)
+        .font(large ? .body : .callout)
+        .padding(.horizontal, large ? 14 : 11)
+        .padding(.vertical, large ? 7 : 5)
         .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Color.accentColor : Color.secondary.opacity(0.14)))
         .foregroundStyle(selected ? Color.white : Color.primary)
     }

@@ -903,53 +903,6 @@ final class ConvertKindTests: XCTestCase {
   }
 }
 
-/// What the sheet hands the coordinator.
-final class ConvertChoiceTests: XCTestCase {
-
-  /// Nothing chosen is nothing to run: Convert stays off rather than writing a
-  /// copy of the file under a new name.
-  func test_anEmptyChoiceResolvesToNothing() {
-    XCTAssertNil(ConvertChoice().resolved(against: []))
-  }
-
-  func test_theFieldsBecomeAChainInTheOrderTheyRun() throws {
-    var choice = ConvertChoice()
-    choice.format = OutputFormat(type: .jpeg)
-    choice.width = 1280
-    choice.quality = 80
-
-    let preset = try XCTUnwrap(choice.resolved(against: []))
-    let actions = preset.actions
-    XCTAssertEqual(actions.count, 3)
-    if case .convertFormat(let to) = actions[0] { XCTAssertEqual(to, UTType.jpeg) } else { XCTFail("format first") }
-    if case .resize(let width, _, _) = actions[1] { XCTAssertEqual(width, 1280) } else { XCTFail("resize second") }
-    if case .quality(let level) = actions[2] { XCTAssertEqual(level, 80) } else { XCTFail("quality third") }
-  }
-
-  /// A chosen preset is run as it stands, because it can hold things the sheet
-  /// has no control for.
-  func test_aChosenPresetIsRunWhole() {
-    let preset = RulePreset(
-      name: "Two filters",
-      description: "",
-      category: .image,
-      actions: [.filter(type: .grayscale), .filter(type: .sepia)]
-    )
-    var choice = ConvertChoice()
-    choice.presetID = preset.id
-
-    XCTAssertEqual(choice.resolved(against: [preset])?.actions.count, 2)
-  }
-
-  /// Asking for text asks for the language too, even when it is left open.
-  func test_askingForTextAddsRecognition() {
-    var choice = ConvertChoice()
-    choice.format = OutputFormat(type: .plainText)
-    XCTAssertTrue(choice.wantsText)
-    XCTAssertTrue(choice.customActions.contains { if case .recognizeText = $0 { return true } else { return false } })
-  }
-}
-
 /// Somewhere for a batch's callback to leave what it saw, since it is called
 /// from whatever thread the conversion finished on.
 private final class OutputBox: @unchecked Sendable {
@@ -1388,33 +1341,6 @@ final class NumberTokenTests: XCTestCase {
   }
 }
 
-/// The Convert sheet's Custom size has a height as well as a width.
-final class CustomSizeChoiceTests: XCTestCase {
-  func test_aCustomSizeResizesToBothSides() {
-    var choice = ConvertChoice()
-    choice.width = 1600
-    choice.height = 900
-    choice.fitMode = .cropCenter
-    XCTAssertEqual(choice.customActions, [.resize(width: 1600, height: 900, fitMode: .cropCenter)])
-  }
-
-  func test_aPresetWithBothSidesFillsBoth() {
-    let preset = RulePreset(
-      name: "Square", description: "", category: .image,
-      actions: [.resize(width: 1080, height: 1080, fitMode: .cropCenter)]
-    )
-    let choice = ConvertChoice().adopting(preset)
-    XCTAssertEqual(choice.width, 1080)
-    XCTAssertEqual(choice.height, 1080)
-  }
-
-  func test_aWidthAloneStillMeansThatWidth() {
-    var choice = ConvertChoice()
-    choice.width = 1280
-    XCTAssertEqual(choice.customActions, [.resize(width: 1280, height: nil, fitMode: .proportional)])
-  }
-}
-
 /// The Custom size menu's ready-made shapes.
 final class CustomSizeMenuTests: XCTestCase {
   func test_aShapeGivesTheMatchingHeight() {
@@ -1454,10 +1380,10 @@ final class ConvertSheetNothingTests: XCTestCase {
 
   func test_nothingLeavesNoneOfTheLastPresetBehind() {
     let afterPreset = ConvertChoice().adopting(webJPEG)
-    XCTAssertFalse(afterPreset.customActions.isEmpty)
+    XCTAssertFalse(afterPreset.draft.actions.isEmpty)
     let nothing = afterPreset.cleared()
     XCTAssertNil(nothing.presetID)
-    XCTAssertEqual(nothing.customActions, [], "the old JPEG Q80 used to run anyway")
+    XCTAssertEqual(nothing.draft.actions, [], "the old JPEG Q80 used to run anyway")
     XCTAssertNil(nothing.resolved(against: [webJPEG]))
   }
 
@@ -1521,7 +1447,7 @@ final class LastConversionTests: BaseTestCase {
     var last = ConvertChoice().adopting(webJPEG)
     last.destinationURL = URL(fileURLWithPath: "/tmp/out")
     let next = last.cleared()
-    XCTAssertEqual(next.customActions, [])
+    XCTAssertEqual(next.draft.actions, [])
     XCTAssertEqual(next.destinationURL, last.destinationURL)
   }
 }

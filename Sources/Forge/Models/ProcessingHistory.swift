@@ -76,7 +76,7 @@ extension ProcessingHistory {
       .map { OutputFormat(type: $0).label } ?? source.pathExtension.uppercased()
     let formats = actions.compactMap { if case .convertFormat(let to) = $0 { return OutputFormat(type: to).label } else { return nil } }
     let others = actions
-      .filter { if case .convertFormat = $0 { return false } else { return true } }
+      .filter { !$0.isFormat }
       .map(PresetCard.chip)
 
     let into = formats.isEmpty ? "" : "→ " + formats.joined(separator: " + ")

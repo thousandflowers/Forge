@@ -27,6 +27,7 @@ struct ContentView: View {
       if let request = model.presetEditor {
         PresetEditorView(
           preset: request.preset,
+          conversion: request.conversion,
           onSave: { model.savePreset($0) },
           onClose: { model.presetEditor = nil }
         )

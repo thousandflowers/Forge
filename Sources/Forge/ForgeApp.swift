@@ -78,6 +78,7 @@ struct ForgeCommands: Commands {
     CommandGroup(replacing: .newItem) {
       Button("New Preset") { model.presetEditor = PresetEditorRequest(preset: nil) }
         .keyboardShortcut("n")
+        .disabled(model.presetEditor != nil)
       Button("Add Files…") { addFiles() }
         .keyboardShortcut("o")
     }
@@ -85,6 +86,7 @@ struct ForgeCommands: Commands {
     CommandGroup(replacing: .appSettings) {
       Button("Settings…") { model.section = .settings }
         .keyboardShortcut(",")
+        .disabled(model.presetEditor != nil)
     }
     // The default item put up "Help isn't available for Forge."
     CommandGroup(replacing: .help) {
@@ -95,6 +97,9 @@ struct ForgeCommands: Commands {
       ForEach(Array(AppSection.allCases.enumerated()), id: \.element) { index, section in
         Button(section.title) { model.section = section }
           .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")))
+          // The editor covers the window: a section changed behind it took the
+          // files it was opened with away.
+          .disabled(model.presetEditor != nil)
       }
     }
   }
