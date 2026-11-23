@@ -207,7 +207,7 @@ final class ExternalToolTests: BaseTestCase {
   /// launch inside AttributeGraph. It only ever reads what pandoc already said.
   func test_canWriteNeverRunsATool() throws {
     let epub = try XCTUnwrap(UTType(filenameExtension: "epub"))
-    ExternalBridge.forgetToolFormats()
+    ExternalBridge.forgetToolFormats(rewarm: false)
     _ = ExternalBridge.canWrite(epub)
     XCTAssertFalse(ExternalBridge.pandocHasAnswered, "canWrite asked pandoc")
   }

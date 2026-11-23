@@ -82,10 +82,13 @@ enum ExternalBridge {
   }
 
   /// Forget what the tools said about themselves.
-  static func forgetToolFormats() {
+  /// - Parameter rewarm: ask the tools again straight away, in the
+  ///   background. Off only in a test that needs to see nothing asked yet:
+  ///   the background answer could otherwise arrive before it looks.
+  static func forgetToolFormats(rewarm: Bool = true) {
     formats.clear()
     ffmpegAnswers.clear()
-    warmUp()
+    if rewarm { warmUp() }
   }
 
   /// Whether pandoc has been asked yet. Reading this never runs it.
