@@ -16,7 +16,7 @@ final class PreviewRunnerTests: BaseTestCase {
       .resize(width: 200, height: nil, fitMode: .proportional),
       .quality(level: 40),
     ]))
-    XCTAssertEqual(stages.map(\.title), ["Resize", "Set quality"])
+    XCTAssertEqual(stages.map(\.title), ["Resize", "Quality"])
     // Each stage writes the format, so the weights compare like with like.
     XCTAssertEqual(stages[0].preset.actions, [.convertFormat(to: .jpeg), .resize(width: 200, height: nil, fitMode: .proportional)])
     XCTAssertEqual(stages[1].preset.actions.count, 3)
@@ -43,7 +43,7 @@ final class PreviewRunnerTests: BaseTestCase {
       scratch: try folder("scratch")
     )
 
-    XCTAssertEqual(steps.map(\.title), ["Original", "Resize", "Set quality"])
+    XCTAssertEqual(steps.map(\.title), ["Original", "Resize", "Quality"])
     XCTAssertEqual(steps[0].url, source.standardizedFileURL)
     XCTAssertEqual(steps[1].width, 200)
     XCTAssertEqual(steps[1].height, 150)

@@ -47,11 +47,11 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .merge(let kind): return "Merge into \(kind.title)"
     case .convertFormat: return "Convert format"
     case .resize(_, _, let mode): return mode == .cropCenter ? "Crop" : "Resize"
-    case .quality: return "Set quality"
-    case .filter: return "Apply filter"
-    case .recognizeText: return "Read text"
-    case .encode: return "Choose codec"
-    case .limitSize: return "Fit within a size"
+    case .quality: return "Quality"
+    case .filter: return "Filter"
+    case .recognizeText: return "Read the text"
+    case .encode: return "Codec"
+    case .limitSize: return "Max file size"
     case .stripMetadata: return "Remove metadata"
     }
   }

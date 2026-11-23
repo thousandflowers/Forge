@@ -8,7 +8,7 @@ extension View {
     self
       .overlay(alignment: .top) {
         if editor.isDropTarget(spot), spot.isBefore {
-          Rectangle().fill(Color.accentColor).frame(maxWidth: 640).frame(height: 3).offset(y: 8)
+          Rectangle().fill(Color.accentColor).frame(maxWidth: Metrics.blockColumn).frame(height: 3).offset(y: 8)
         }
       }
       .onDrop(of: [.text], isTargeted: Binding(get: { editor.isDropTarget(spot) }, set: { editor.setDropTarget(spot, $0) })) { providers in

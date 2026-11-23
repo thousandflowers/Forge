@@ -387,7 +387,7 @@ struct ConvertOptionsSheet: View {
 
   /// A promise about the finished file rather than a setting for the encoder.
   private var ceilingField: some View {
-    field("Fit within a size") {
+    field("Max file size") {
       HStack(spacing: 10) {
         Toggle("No ceiling", isOn: Binding(
           get: { choice.maxBytes == nil },
@@ -423,10 +423,9 @@ struct ConvertOptionsSheet: View {
           Slider(
             value: Binding(
               get: { Double(quality) },
-              set: { value in edit { $0.quality = Int(value) } }
+              set: { value in edit { $0.quality = Int(value.rounded()) } }
             ),
-            in: 1...100,
-            step: 1
+            in: 1...100
           )
           .frame(width: 220)
           Text("\(quality)")

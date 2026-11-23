@@ -339,7 +339,7 @@ struct PresetEditorView: View {
       }
       .padding(.horizontal, 14)
       .padding(.vertical, 8)
-      .frame(maxWidth: 640)
+      .frame(maxWidth: Metrics.blockColumn)
       .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
       .overlay(Capsule().strokeBorder(LibraryEntry.Group.logic.color.opacity(0.4)))
     }
@@ -490,15 +490,17 @@ struct PresetEditorView: View {
           .padding(.vertical, root ? 14 : 8)
           .contentShape(Rectangle())
       }
-      .menuStyle(.borderlessButton)
+      // Not borderlessButton: that style drops the label's own padding, and the
+      // words sat on the dashes.
+      .menuStyle(.button).buttonStyle(.plain)
       .menuIndicator(.hidden)
       .accessibilityLabel(root ? "Add a block at the end" : "Add a step to this path")
       .background(
-        RoundedRectangle(cornerRadius: 10)
+        RoundedRectangle(cornerRadius: Metrics.blockRadius, style: .continuous)
           .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
           .foregroundStyle(isDropTarget(.endOf(container)) ? Color.accentColor : Color.secondary.opacity(0.3))
       )
-      .frame(maxWidth: 640)
+      .frame(maxWidth: Metrics.blockColumn)
       .frame(maxWidth: .infinity)
     }
     .dropSpot(.endOf(container), into: self)

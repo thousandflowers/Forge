@@ -17,11 +17,15 @@ struct PresetParameter: Codable, Hashable, Identifiable, Sendable {
 
     var title: String {
       switch self {
-      case .maxFileSize: return "Maximum size"
+      case .maxFileSize: return "Max file size"
       case .width: return "Width"
       case .quality: return "Quality"
       }
     }
+
+    /// What the block is called: a question, so it is never taken for the step
+    /// of the same name that is fixed.
+    var blockTitle: String { "Ask for \(title.lowercased())" }
 
     var unit: String {
       switch self {
