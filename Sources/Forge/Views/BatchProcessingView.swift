@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct BatchProcessingView: View {
   @EnvironmentObject private var model: AppModel
   @StateObject private var vm = BatchViewModel()
+  @ObservedObject private var installer = ToolInstaller.shared
 
   @State private var choice = ConvertChoice()
   /// Empty until a column header is clicked: the list keeps the order the
@@ -64,7 +65,26 @@ struct BatchProcessingView: View {
           .foregroundStyle(.secondary)
           .padding(.horizontal).padding(.vertical, 8)
       }
+
+      // Where the need is: a file that would not open, and the tool that
+      // opens it. Once it is in, the files are tried again.
+      let openers = vm.openers
+      if !openers.isEmpty {
+        Divider()
+        VStack(alignment: .leading, spacing: 8) {
+          ForEach(openers, id: \.tool.id) { offer in
+            ToolOfferRow(
+              tool: offer.tool,
+              because: "\(offer.names) needs \(offer.tool.formula) to open. It adds \(offer.tool.adds).",
+              installer: installer,
+              then: { vm.retry(offer.urls) }
+            )
+          }
+        }
+        .padding(.horizontal).padding(.vertical, 8)
+      }
     }
+    .confirmsToolInstalls(with: installer)
     // A drop is accepted anywhere on the screen. Hanging this on the empty
     // state meant dragging worked for the first file and silently stopped
     // working for the second.
@@ -497,6 +517,37 @@ final class BatchViewModel: ObservableObject {
     files.append(contentsOf: added)
     loadVideoDimensions(for: added)
     skipped = Self.describe(unreadable)
+    // Turned away, or taken in with nothing that can read it - an old Word
+    // file is a file macOS can name and Forge cannot open.
+    let unopened = added.filter { file in !Conversions.processors.contains { $0.canProcess(file) } }.map(\.url)
+    turnedAway = unreadable + unopened
+  }
+
+  /// What was turned away, kept so it can be tried again once a tool is in.
+  @Published private(set) var turnedAway: [URL] = []
+
+  struct Opener {
+    let tool: ExternalTool
+    let urls: [URL]
+    var names: String {
+      urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) of these files"
+    }
+  }
+
+  /// For each tool that would open something turned away, which files.
+  var openers: [Opener] {
+    var grouped: [String: (tool: ExternalTool, urls: [URL])] = [:]
+    for url in turnedAway {
+      guard let tool = ToolOffers.opener(for: url) else { continue }
+      grouped[tool.binary, default: (tool, [])].urls.append(url)
+    }
+    return grouped.values.map { Opener(tool: $0.tool, urls: $0.urls) }.sorted { $0.tool.formula < $1.tool.formula }
+  }
+
+  /// Once a tool is in, the files it opens are taken in again.
+  func retry(_ urls: [URL]) {
+    files.removeAll { file in urls.contains(file.url) }
+    add(urls)
   }
 
   /// The files that were turned away, named by what they are rather than

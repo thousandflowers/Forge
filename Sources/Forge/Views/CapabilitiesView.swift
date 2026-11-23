@@ -15,7 +15,7 @@ struct CapabilitiesView: View {
   @State private var census: [String: Int] = [:]
   @State private var scanning = false
   @State private var hasScanned = false
-  @StateObject private var installer = ToolInstaller()
+  @ObservedObject private var installer = ToolInstaller.shared
 
   var body: some View {
     VStack(spacing: 0) {
@@ -37,22 +37,7 @@ struct CapabilitiesView: View {
     .searchable(text: $search, placement: .toolbar, prompt: "Search capabilities")
     // Installing writes to the user's Mac, so the exact command is shown once
     // before it runs. Everything after that happens in here.
-    .confirmationDialog(
-      installer.confirming.map { "Install \($0.formula)?" } ?? "",
-      isPresented: Binding(
-        get: { installer.confirming != nil },
-        set: { if !$0 { installer.confirming = nil } }
-      )
-    ) {
-      if let tool = installer.confirming {
-        Button("Install") { installer.install(tool) }
-        Button("Cancel", role: .cancel) { installer.confirming = nil }
-      }
-    } message: {
-      if let tool = installer.confirming {
-        Text("Forge will run “\(tool.installCommand)”. Homebrew installs it on your Mac; Forge neither ships nor hosts it.")
-      }
-    }
+    .confirmsToolInstalls(with: installer)
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
         Button {
@@ -328,7 +313,7 @@ private struct CapabilityCard: View {
       VStack(alignment: .leading, spacing: 6) {
         caption("\(tool.binary) would add \(tool.adds). Homebrew installs it here.")
         if ExternalTools.hasHomebrew {
-          Button("Install \(tool.formula)") { installer.confirming = tool }
+          Button("Install \(tool.formula)") { installer.ask(tool) }
             .controlSize(.small)
         } else {
           caption("Homebrew is not here either, and installing that is a step Forge will not take for you. brew.sh has the one line.")
@@ -338,7 +323,7 @@ private struct CapabilityCard: View {
   }
 
   private func retry(_ tool: ExternalTool) -> some View {
-    Button("Try Again") { installer.confirming = tool }
+    Button("Try Again") { installer.ask(tool) }
       .controlSize(.small)
   }
 
@@ -425,47 +410,3 @@ extension Capability.Status {
 }
 
 
-/// Installs the tools the Capabilities screen offers, and remembers how each
-/// one is getting on.
-///
-/// Kept out of the cards so that a card redrawing — which happens on every
-/// keystroke in the search box — cannot restart or lose an install.
-@MainActor
-final class ToolInstaller: ObservableObject {
-
-  enum State: Equatable {
-    case idle
-    /// The last line Homebrew printed, so a long install shows signs of life.
-    case running(String)
-    case failed(String)
-    case installed
-  }
-
-  @Published private(set) var states: [String: State] = [:]
-  /// The tool waiting on a yes for Homebrew. Installing writes to the user's
-  /// Mac, so it is asked once, with the exact command.
-  @Published var confirming: ExternalTool?
-
-  func state(of binary: String) -> State { states[binary] ?? .idle }
-
-  func install(_ tool: ExternalTool) {
-    confirming = nil
-    states[tool.binary] = .running("")
-
-    Task { [weak self] in
-      // Bound once, strongly: a weak capture is a mutable reference, and one
-      // cannot be read again from inside the progress closure's own task.
-      guard let self else { return }
-      do {
-        try await ExternalTools.install(tool) { [self] line in
-          Task { @MainActor in
-            self.states[tool.binary] = .running(line)
-          }
-        }
-        self.states[tool.binary] = .installed
-      } catch {
-        self.states[tool.binary] = .failed(error.localizedDescription)
-      }
-    }
-  }
-}

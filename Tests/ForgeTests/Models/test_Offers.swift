@@ -137,4 +137,23 @@ final class OfferTests: BaseTestCase {
     XCTAssertTrue(tools.formats.contains { $0.type == mkv })
     XCTAssertFalse(tools.formats.contains { $0.type == .mpeg4Movie }, "what macOS writes stays where it was")
   }
+
+  /// A tool not on this Mac is offered for the kinds of file it serves and
+  /// for no other, and an old Office file - which nothing on macOS opens -
+  /// points at the one tool that would.
+  func test_aMissingToolIsOfferedWhereItWouldHelp() throws {
+    let office = try XCTUnwrap(ToolOffers.all.first { $0.formula == "libreoffice" })
+    XCTAssertTrue(office.isCask)
+    XCTAssertEqual(office.installCommand, "brew install --cask libreoffice")
+    XCTAssertEqual(office.serves, [.document])
+
+    let word97 = path("letter.doc")
+    try Data("not really".utf8).write(to: word97)
+    if !office.isInstalled {
+      XCTAssertEqual(ToolOffers.opener(for: word97)?.formula, "libreoffice")
+      XCTAssertTrue(ToolOffers.missing(for: [.document]).contains(office))
+    }
+    XCTAssertFalse(ToolOffers.missing(for: [.image]).contains(office), "not offered for pictures")
+    XCTAssertNil(ToolOffers.opener(for: path("photo.png")), "a picture needs nothing installed")
+  }
 }

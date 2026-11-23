@@ -82,7 +82,11 @@ enum ExternalBridge {
   }
 
   /// Forget what the tools said about themselves.
-  static func forgetToolFormats() { formats.clear() }
+  static func forgetToolFormats() {
+    formats.clear()
+    ffmpegAnswers.clear()
+    warmUp()
+  }
 
   /// Whether pandoc has been asked yet. Reading this never runs it.
   static var pandocHasAnswered: Bool { formats.peek() != nil }

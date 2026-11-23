@@ -137,6 +137,7 @@ struct ConvertOptionsSheet: View {
   @Environment(\.dismiss) private var dismiss
   @State private var showingCustomSize = false
 
+  @ObservedObject private var installer = ToolInstaller.shared
   let kinds: Set<ConvertKind>
   /// The files themselves, since what is offered depends on what each one is.
   let sources: [ProcessableFile]
@@ -167,6 +168,8 @@ struct ConvertOptionsSheet: View {
       footer
     }
     .frame(width: 680, height: 600)
+    // The sheet is where an install is started, so it is where it is confirmed.
+    .confirmsToolInstalls(with: installer)
     .translucentSheet()
   }
 
@@ -282,6 +285,11 @@ struct ConvertOptionsSheet: View {
               }
             }
           }
+        }
+        // What a tool that is not here would add, with the button that adds it.
+        // The formats appear above as soon as it is in.
+        ForEach(ToolOffers.missing(for: [kind]), id: \.id) { tool in
+          ToolOfferRow(tool: tool, because: "With \(tool.formula): \(tool.adds).", installer: installer)
         }
       }
     }
@@ -478,10 +486,22 @@ struct ConvertOptionsSheet: View {
 
   private var mixedNote: some View {
     field("These files") {
-      Text("More than one kind was dropped, and each kind takes different settings. Pick a preset above, or drop one kind at a time to set the format, size and quality by hand.")
-        .font(.callout)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
+      VStack(alignment: .leading, spacing: 10) {
+        // No kind at all is not "more than one": it is files Forge cannot open,
+        // and the useful thing to say is what would open them.
+        Text(kinds.isEmpty
+          ? "Forge cannot open these yet."
+          : "More than one kind was dropped, and each kind takes different settings. Pick a preset above, or drop one kind at a time to set the format, size and quality by hand.")
+          .font(.callout)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        if kinds.isEmpty {
+          let tools = Dictionary(grouping: sources.compactMap { ToolOffers.opener(for: $0.url) }, by: \.id).compactMap(\.value.first)
+          ForEach(tools, id: \.id) { tool in
+            ToolOfferRow(tool: tool, because: "\(tool.formula) opens them. It adds \(tool.adds).", installer: installer)
+          }
+        }
+      }
     }
   }
 

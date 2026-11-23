@@ -208,7 +208,7 @@ enum Capabilities {
           name: "Extra image encoders",
           requires: "an encoder macOS does not ship",
           approximateSize: "a few megabytes",
-          tool: ExternalTool(binary: "cwebp", formula: "webp", adds: "writing WebP"),
+          tool: ExternalTool(binary: "cwebp", formula: "webp", adds: "writing WebP", serves: [.image]),
           isWired: true
         )),
         evidence: ["webp", "jxl"]
@@ -222,7 +222,7 @@ enum Capabilities {
           name: "Extra video codecs",
           requires: "a codec library the size of FFmpeg",
           approximateSize: "tens of megabytes",
-          tool: ExternalTool(binary: "ffmpeg", formula: "ffmpeg", adds: "WMV, MXF, FLV, AV1 and VP9"),
+          tool: ExternalTool(binary: "ffmpeg", formula: "ffmpeg", adds: "MKV, WebM, AVI, MP3, OGG, WMV and dozens more", serves: [.video, .audio]),
           isWired: true
         )),
         evidence: ["wmv", "mxf", "flv", "avi", "mkv", "webm"]
@@ -236,10 +236,27 @@ enum Capabilities {
           name: "Office and ebook formats",
           requires: "a document engine of its own",
           approximateSize: "hundreds of megabytes",
-          tool: ExternalTool(binary: "pandoc", formula: "pandoc", adds: "XLSX, PPTX, EPUB and friends"),
+          tool: ExternalTool(binary: "pandoc", formula: "pandoc", adds: "EPUB, ODT, PPTX, Markdown and dozens more", serves: [.document]),
           isWired: true
         )),
-        evidence: ["xlsx", "pptx", "epub", "mobi", "azw3", "odt", "ods"]
+        evidence: ["epub", "mobi", "azw3", "odt", "rst", "org", "tex", "ipynb"]
+      ),
+      Capability(
+        id: "office-suite",
+        title: "Old Office files, Pages, Numbers and Keynote",
+        summary: "Word 97, Excel and PowerPoint, and Apple's own office formats, into PDF and text.",
+        symbol: "doc.richtext",
+        status: .needsPack(.init(
+          name: "An office suite",
+          requires: "a whole office suite, which reads what nothing else does",
+          approximateSize: "about a gigabyte",
+          tool: ExternalTool(
+            binary: "soffice", formula: "libreoffice", adds: "DOC, XLS, PPT, XLSX, PPTX, Pages, Numbers and Keynote",
+            isCask: true, insideApplications: "LibreOffice.app/Contents/MacOS/soffice", serves: [.document]
+          ),
+          isWired: true
+        )),
+        evidence: ["doc", "xls", "ppt", "xlsx", "pptx", "pages", "numbers", "key", "ods", "odp", "wpd"]
       ),
       Capability(
         id: "fonts",
@@ -250,7 +267,7 @@ enum Capabilities {
           name: "Font tools",
           requires: "a font writer - CoreText reads font tables but cannot write one",
           approximateSize: "a few megabytes",
-          tool: ExternalTool(binary: "ttx", formula: "fonttools", adds: "writing TrueType, OpenType, WOFF"),
+          tool: ExternalTool(binary: "ttx", formula: "fonttools", adds: "writing TrueType, OpenType, WOFF", serves: [.font]),
           // ExternalBridge.Fonts calls it (ttf/otf to woff2 and back); the card
           // said "Forge does not call it yet" over a conversion that works.
           isWired: true
