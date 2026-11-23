@@ -80,20 +80,6 @@ struct ConvertChoice: Equatable {
     return updated
   }
 
-  /// The last batch's choice, handed to a new one. Kept only where the sheet
-  /// will show it: a preset the new files are offered, or hand-set fields on
-  /// a batch of one kind that honours them. Anything else used to ride along
-  /// unseen - a JPEG preset from a batch of photos turned the next drop, a
-  /// film, into hundreds of 4K frames with no preset showing as chosen.
-  /// Where the files go is not about what they are, so it always carries.
-  func carried(offered: [RulePreset], kinds: Set<ConvertKind>) -> ConvertChoice {
-    if let presetID {
-      return offered.contains { $0.id == presetID } ? self : cleared()
-    }
-    guard let custom = resolved(against: []) else { return self }
-    return kinds.count == 1 && custom.suits(kinds) ? self : cleared()
-  }
-
   var needsDestination: Bool { destinationMode != .overwrite }
 
   /// The actions to run when no preset is in charge, in the order they run.
@@ -148,6 +134,9 @@ struct ConvertOptionsSheet: View {
   /// is starting from rather than an empty choice.
   let defaultPrivacy: PrivacyPolicy
   @Binding var choice: ConvertChoice
+  /// The last conversion of this kind of file, offered as one press.
+  var sameAsLast: LastConversion? = nil
+  var onSameAsLast: () -> Void = {}
   let onConvert: () -> Void
 
   /// The one kind in the batch, or nil when the batch is mixed. Per-kind
@@ -546,6 +535,16 @@ struct ConvertOptionsSheet: View {
 
       Spacer(minLength: 12)
 
+      if let last = sameAsLast {
+        let chain = last.preset.actions.map(PresetCard.chip).joined(separator: " · ")
+        Button {
+          dismiss()
+          onSameAsLast()
+        } label: {
+          Text("Same as Last: \(chain)").lineLimit(1).truncationMode(.tail)
+        }
+        .help("Convert the way the last \(kind?.title ?? "file") was: \(chain)")
+      }
       Button("Cancel") { dismiss() }
         .keyboardShortcut(.cancelAction)
       Button {

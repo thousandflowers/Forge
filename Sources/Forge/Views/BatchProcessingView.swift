@@ -133,6 +133,8 @@ struct BatchProcessingView: View {
         presets: offeredPresets,
         defaultPrivacy: model.settings.privacy,
         choice: $choice,
+        sameAsLast: LastConversions.offer(for: vm.files),
+        onSameAsLast: sameAsLast,
         onConvert: {
           // Overwrite and Move both change what is already on disk, so they are
           // worth a sentence before rather than an apology after.
@@ -290,7 +292,11 @@ struct BatchProcessingView: View {
       // A batch starts from the general preference and can then disagree with
       // it, which is what makes the preference a default rather than a law.
       choice.fitMode = model.settings.defaultFitMode
-      choice = choice.carried(offered: offeredPresets, kinds: kinds)
+      // A new batch starts from nothing but where its files go. The last
+      // batch's choice is one press away, as "Same as Last", instead of
+      // riding along where it may not fit - a film's MOV · 1280×720 · HEVC
+      // showed on the next song.
+      choice = choice.cleared()
     }
     route()
   }
@@ -306,6 +312,10 @@ struct BatchProcessingView: View {
     // Routing them would start a second batch over the same files, which is two
     // conversions writing the same output names at once.
     guard !vm.isProcessing else { return }
+    // Nothing chosen yet: the sheet is the question. Asked before "Replace
+    // these files?", which a new batch kept from the last one's Overwrite
+    // asked about a conversion nobody had picked.
+    guard preset != nil else { openOptions(); return }
 
     let plans = vm.files.map {
       ConversionPlan(file: $0, preset: preset, destinationMode: choice.destinationMode)
@@ -385,7 +395,19 @@ struct BatchProcessingView: View {
   /// puts them back in charge of the chain.
   private func openOptions() {
     adhoc = nil
+    choice = choice.cleared()
     showingOptions = true
+  }
+
+  /// The last conversion of this kind, run on these files: the same chain and
+  /// the same place, with the same question first if that place is over the
+  /// originals.
+  private func sameAsLast() {
+    guard let last = LastConversions.offer(for: vm.files) else { return }
+    adhoc = last.preset
+    choice.destinationMode = last.mode
+    choice.destinationURL = last.destination
+    if last.mode == .copyTo { start() } else { confirming = true }
   }
 
   /// Take a conversion handed over from somewhere else in the app - the same
@@ -414,6 +436,10 @@ struct BatchProcessingView: View {
 
   private func start() {
     guard let preset else { return }
+    LastConversions.record(
+      LastConversion(preset: preset, mode: choice.destinationMode, destination: choice.destinationURL),
+      for: kinds
+    )
     Task {
       await vm.convert(
         model: model,
