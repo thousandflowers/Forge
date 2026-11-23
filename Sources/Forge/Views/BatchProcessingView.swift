@@ -218,7 +218,7 @@ struct BatchProcessingView: View {
         HStack(spacing: 6) {
           if status == .processing, let fraction = vm.fileProgress[f.id] {
             ProgressView(value: fraction).progressViewStyle(.linear).frame(maxWidth: 120)
-          } else if status == .failed, let reason = vm.failures[f.id] {
+          } else if status == .failed || status == .skipped, let reason = vm.failures[f.id] {
             HStack(spacing: 6) {
               status.label
               Text(reason).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
@@ -761,7 +761,7 @@ final class BatchViewModel: ObservableObject {
 
     case .finished(let id, let status, let output, _, let error):
       statusMap[id] = status
-      failures[id] = status == .failed ? error : nil
+      failures[id] = status == .failed || status == .skipped ? error : nil
       fileProgress[id] = status == .completed ? 1 : 0
       if let output { model.remember(output) }
       let done = statusMap.values.filter { $0 != .pending && $0 != .processing }.count

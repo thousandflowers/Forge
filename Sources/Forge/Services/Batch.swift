@@ -21,6 +21,7 @@ enum Batch {
     var converted = 0
     var failed = 0
     var cancelled = 0
+    var skipped = 0
   }
 
   /// Convert `files`, reporting each step through `onEvent`.
@@ -87,6 +88,8 @@ enum Batch {
             )
           } catch is CancellationError {
             return .finished(id: file.id, status: .cancelled, output: nil, outputs: [], error: nil)
+          } catch ProcessingError.leftAlone(let reason) {
+            return .finished(id: file.id, status: .skipped, output: nil, outputs: [], error: reason)
           } catch {
             return .finished(
               id: file.id, status: .failed, output: nil, outputs: [], error: error.localizedDescription
@@ -102,6 +105,7 @@ enum Batch {
           switch status {
           case .completed: report.converted += 1
           case .cancelled: report.cancelled += 1
+          case .skipped: report.skipped += 1
           default: report.failed += 1
           }
         }

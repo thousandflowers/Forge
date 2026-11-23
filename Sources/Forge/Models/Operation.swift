@@ -284,9 +284,38 @@ struct Condition: Codable, Hashable, Sendable {
       let what = subject == .fileExtension ? ".\(needle)" : "“\(text)”"
       return "\(subject.title.lowercased()) \(comparison.title) \(what)"
     case .fileSize, .longestSide, .width, .height:
-      let number = value == value.rounded() ? String(Int(value)) : String(value)
-      return "\(subject.title.lowercased()) \(comparison.title) \(number) \(subject.unit)"
+      return "\(subject.title.lowercased()) \(comparison.title) \(Self.number(value)) \(subject.unit)"
     }
+  }
+
+  /// What this file is, in the condition's own terms - "Longest side is
+  /// 300 px" - so a file left alone says why next to what was asked.
+  func measured(in file: ProcessableFile) -> String {
+    let what = subject.title
+    switch subject {
+    case .any:
+      return "Any file"
+    case .name:
+      return "\(what) is “\(file.url.deletingPathExtension().lastPathComponent)”"
+    case .folder:
+      return "\(what) is “\(file.url.deletingLastPathComponent().lastPathComponent)”"
+    case .fileExtension:
+      return "\(what) is .\(file.url.pathExtension.lowercased())"
+    case .kind:
+      return "\(what) is \(ConvertKind(fileType: file.fileType)?.title ?? "unknown")"
+    case .fileSize:
+      return "\(what) is \(Self.number(Double(file.fileSize) / 1_000_000)) MB"
+    case .width, .height, .longestSide:
+      guard let size = file.dimensions else { return "\(what) could not be measured" }
+      let side = subject == .width ? size.width : subject == .height ? size.height : max(size.width, size.height)
+      return "\(what) is \(side) px"
+    }
+  }
+
+  /// Whole numbers without a point, the rest to one decimal: "5", "2.3".
+  private static func number(_ value: Double) -> String {
+    let tenth = (value * 10).rounded() / 10
+    return tenth == tenth.rounded() ? String(Int(tenth)) : String(tenth)
   }
 }
 

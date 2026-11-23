@@ -82,7 +82,7 @@ actor ProcessingCoordinator {
           fileURL: file.url,
           ruleId: preset.id,
           timestamp: Date(),
-          status: error is CancellationError ? .cancelled : .failed,
+          status: error is CancellationError ? .cancelled : Self.isLeftAlone(error) ? .skipped : .failed,
           // Not CancellationError's own text, which History showed verbatim:
           // "The operation couldn't be completed. (Swift.CancellationError error 1.)"
           errorMessage: error is CancellationError ? "Stopped before it finished." : error.localizedDescription,
@@ -167,7 +167,7 @@ actor ProcessingCoordinator {
   ) async throws -> ProcessingResult {
     // A preset with a gate leaves alone whatever does not pass it, and says so.
     if let gate = preset.gate, !gate.holds(for: file) {
-      throw ProcessingError.validationFailed(message: "Left alone: \(gate.summary) is not true of this file.")
+      throw ProcessingError.leftAlone(reason: "\(gate.measured(in: file)). Only if: \(gate.summary).")
     }
 
     // Every `if` decided for this file, every split fanned out: what is left
@@ -259,6 +259,11 @@ actor ProcessingCoordinator {
   /// The name template for one branch of a split: `{branch}` becomes the
   /// branch's name; a template that never mentions it gets the name on the
   /// end, so two copies of one file never fight over one name.
+  static func isLeftAlone(_ error: Error) -> Bool {
+    if case ProcessingError.leftAlone = error { return true }
+    return false
+  }
+
   static func template(_ template: String, branch: String) -> String {
     template.contains("{branch}")
       ? template.replacingOccurrences(of: "{branch}", with: branch)

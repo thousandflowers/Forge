@@ -487,7 +487,8 @@ final class AppModel: ObservableObject {
       entry.outputs.forEach(remember)
     } catch is CancellationError {
       // nothing to say
-    } catch ProcessingError.unreadableFormat, ProcessingError.unsupportedConversion, ProcessingError.unknownType {
+    } catch ProcessingError.unreadableFormat, ProcessingError.unsupportedConversion, ProcessingError.unknownType,
+            ProcessingError.leftAlone {
       // A watched folder receives whatever is dropped in it. Files the preset
       // cannot convert are recorded in history; interrupting the user for each
       // one is not useful.

@@ -13,6 +13,9 @@ enum ProcessingError: LocalizedError, Sendable {
   case unsupportedConversion(from: UTType, to: UTType)
   case conversionFailed(reason: String)
   case validationFailed(message: String)
+  /// The preset's "Only if" is not true of this file, so it was left as it
+  /// is - which is the preset doing its job, not a failure.
+  case leftAlone(reason: String)
 
   var errorDescription: String? {
     switch self {
@@ -28,6 +31,8 @@ enum ProcessingError: LocalizedError, Sendable {
       return reason
     case .validationFailed(let message):
       return message
+    case .leftAlone(let reason):
+      return reason
     }
   }
 
