@@ -313,9 +313,9 @@ final class AppModel: ObservableObject {
     preset.position = (presets.map(\.position).max() ?? 0) + 1
     // A run that was not a saved preset - the command line, a batch set up by
     // hand - has no name worth keeping: "command line (from history)". It is
-    // named after what it was done to.
+    // named for what it does: "PNG → JPEG, 400 × 300, Q70".
     if !presets.contains(where: { $0.id == entry.ruleId }) {
-      preset.name = "Like \(entry.fileURL.lastPathComponent)"
+      preset.name = ProcessingHistory.describedName(for: entry.fileURL, actions: preset.actions)
     }
     savePreset(preset)
     // And shown: nothing on the History screen changed, so there was no way

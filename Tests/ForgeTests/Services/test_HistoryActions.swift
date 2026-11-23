@@ -46,6 +46,37 @@ final class HistoryActionTests: BaseTestCase {
     XCTAssertEqual(onDisk.map(\.name), [saved.name])
   }
 
+  /// A batch set up by hand has no name of its own, so it is named for what it
+  /// does - not for the one file it happened to run on.
+  func test_savePreset_namesAOneOffForWhatItDoes() throws {
+    let model = AppModel(persistence: store)
+
+    model.savePreset(from: Self.entry(actions: [
+      .convertFormat(to: .jpeg),
+      .resize(width: 400, height: 300, fitMode: .proportional),
+      .quality(level: 70),
+    ]))
+    XCTAssertEqual(model.presets.first?.name, "PNG → JPEG, 400 × 300, Q70")
+  }
+
+  func test_describedName_readsWellWithoutAFormatOrWithSeveral() {
+    let photo = URL(fileURLWithPath: "/tmp/photo.JPG")
+    XCTAssertEqual(ProcessingHistory.describedName(for: photo, actions: [.quality(level: 70)]), "JPEG, Q70")
+    XCTAssertEqual(
+      ProcessingHistory.describedName(for: photo, actions: [.convertFormat(to: .png), .convertFormat(to: .tiff)]),
+      "JPEG → PNG + TIFF"
+    )
+    // No extension to read a kind from: what it becomes is still worth saying.
+    XCTAssertEqual(
+      ProcessingHistory.describedName(for: URL(fileURLWithPath: "/tmp/photo"), actions: [.convertFormat(to: .png)]),
+      "→ PNG"
+    )
+    XCTAssertEqual(
+      ProcessingHistory.describedName(for: URL(fileURLWithPath: "/tmp/photo"), actions: [.quality(level: 70)]),
+      "Q70"
+    )
+  }
+
   /// History written before the chain was recorded describes a conversion it
   /// cannot reproduce, and says so rather than offering a preset that does
   /// nothing.
