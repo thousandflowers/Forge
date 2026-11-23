@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 import PDFKit
 import UniformTypeIdentifiers
 @testable import Forge
@@ -183,5 +184,36 @@ final class DocumentConversionTests: BaseTestCase {
     let output = try await convert(source, to: .plainText)
     let text = try String(contentsOf: output, encoding: .utf8)
     XCTAssertEqual(text.trimmingCharacters(in: .whitespacesAndNewlines), "Forge keeps plain text plain.")
+  }
+
+  // MARK: - A second pass
+
+  /// Text saved by an older Windows program is Latin-1, and was read as Mac
+  /// Roman: "Café" came back "CafÈ".
+  func test_latin1TextIsReadAsLatin1() async throws {
+    let source = path("menu.txt")
+    try Data([0x43, 0x61, 0x66, 0xE9, 0x20, 0x64, 0xE9, 0x6A, 0xE0, 0x20, 0x76, 0x75, 0x0A]).write(to: source)
+    let output = try await convert(source, to: .rtf)
+    let rtf = try NSAttributedString(url: output, options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil)
+    XCTAssertTrue(rtf.string.contains("Café déjà vu"), rtf.string)
+  }
+
+  /// Markdown was carried across as the characters it is typed in: a heading
+  /// arrived in a Word file as a line beginning with a hash.
+  func test_markdownIsReadAsWhatItMeans() async throws {
+    let source = path("notes.md")
+    try "# HeadingAlpha\n\nA paragraph with **BoldBravo** in it.\n\n- ItemOne\n- ItemTwo\n".write(to: source, atomically: true, encoding: .utf8)
+
+    let html = try String(contentsOf: try await convert(source, to: .html), encoding: .utf8)
+    XCTAssertFalse(html.contains("# HeadingAlpha"), "the hash is markup, not text")
+    XCTAssertFalse(html.contains("**BoldBravo**"))
+    XCTAssertTrue(html.contains("HeadingAlpha") && html.contains("BoldBravo") && html.contains("ItemTwo"))
+
+    let rtf = try NSAttributedString(url: try await convert(source, to: .rtf), options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil)
+    let heading = (rtf.string as NSString).range(of: "HeadingAlpha")
+    let body = (rtf.string as NSString).range(of: "paragraph")
+    let headingFont = try XCTUnwrap(rtf.attribute(.font, at: heading.location, effectiveRange: nil) as? NSFont)
+    let bodyFont = try XCTUnwrap(rtf.attribute(.font, at: body.location, effectiveRange: nil) as? NSFont)
+    XCTAssertGreaterThan(headingFont.pointSize, bodyFont.pointSize, "a heading is larger than what is under it")
   }
 }

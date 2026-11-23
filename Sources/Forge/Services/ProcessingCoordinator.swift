@@ -4,28 +4,9 @@ import UniformTypeIdentifiers
 /// Runs conversions, decides where their output lands, and keeps every write
 /// off the file the user already has on disk.
 actor ProcessingCoordinator {
-  /// The processors, in the order they get asked. Images first because ImageIO
-  /// reads the widest set of types; documents last because their readers are
-  /// the most permissive about what counts as text.
-  private let processors: [FileProcessor] = [
-    // Before the image processor, which would claim an SVG through
-    // `readableImageTypes` and then hand ImageIO a file it cannot decode.
-    VectorProcessor(),
-    ImageProcessor(),
-    // Before the media path: AVFoundation lists WebVTT among the types it
-    // opens, and then finds no tracks in one, so a subtitle handed to it fails
-    // with "contains no audio or video tracks" rather than being converted.
-    SubtitleProcessor(),
-    MediaProcessor(),
-    // Before the document reader: JSON and CSV are plain text as far as the
-    // system is concerned, and the document reader would take them.
-    DataProcessor(),
-    SimpleDocProcessor(),
-    ModelProcessor(),
-    // Last: a conversion macOS can do itself is still done by macOS, and a
-    // tool the user installed is only asked about what is left over.
-    ExternalProcessor(),
-  ]
+  /// The processors, in the order they get asked: the same list the sheet
+  /// consults to decide what to offer.
+  private let processors: [FileProcessor] = Conversions.processors
 
   private let persistence: PersistenceManager
   private var settings: AppSettings
@@ -101,7 +82,7 @@ actor ProcessingCoordinator {
           fileURL: file.url,
           ruleId: preset.id,
           timestamp: Date(),
-          status: error is CancellationError ? .cancelled : .failed,
+          status: error is CancellationError ? .cancelled : Self.isLeftAlone(error) ? .skipped : .failed,
           // Not CancellationError's own text, which History showed verbatim:
           // "The operation couldn't be completed. (Swift.CancellationError error 1.)"
           errorMessage: error is CancellationError ? "Stopped before it finished." : error.localizedDescription,
@@ -186,7 +167,7 @@ actor ProcessingCoordinator {
   ) async throws -> ProcessingResult {
     // A preset with a gate leaves alone whatever does not pass it, and says so.
     if let gate = preset.gate, !gate.holds(for: file) {
-      throw ProcessingError.validationFailed(message: "Left alone: \(gate.summary) is not true of this file.")
+      throw ProcessingError.leftAlone(reason: "\(gate.measured(in: file)). Only if: \(gate.summary).")
     }
 
     // Every `if` decided for this file, every split fanned out: what is left
@@ -278,6 +259,11 @@ actor ProcessingCoordinator {
   /// The name template for one branch of a split: `{branch}` becomes the
   /// branch's name; a template that never mentions it gets the name on the
   /// end, so two copies of one file never fight over one name.
+  static func isLeftAlone(_ error: Error) -> Bool {
+    if case ProcessingError.leftAlone = error { return true }
+    return false
+  }
+
   static func template(_ template: String, branch: String) -> String {
     template.contains("{branch}")
       ? template.replacingOccurrences(of: "{branch}", with: branch)
@@ -397,6 +383,7 @@ actor ProcessingCoordinator {
     guard processors.contains(where: { $0.canProcess(file) }) else {
       throw ProcessingError.unreadableFormat(file.fileType)
     }
+    try Completeness.refuseIfIncomplete(file.url)
 
     // A preset says what it cares about; Settings says the rest; and what is
     // written into the file's own name beats both, because somebody typed it
@@ -474,6 +461,16 @@ actor ProcessingCoordinator {
 
     guard let result = attempt else {
       throw declined ?? ProcessingError.unreadableFormat(file.fileType)
+    }
+    // A ceiling is a promise about the result. Pictures, sound and film work
+    // towards it; for the rest - a PDF, a document, data - there is nothing to
+    // turn down, and the ceiling was simply not looked at. It is now: a file
+    // over it is not handed over as though it fitted.
+    if let ceiling = ImageProcessor.sizeCeiling(from: operations), result.outputSize > Int64(ceiling) {
+      throw ProcessingError.conversionFailed(
+        reason: "\(file.fileName) comes out at \(result.outputSize.formatted(.byteCount(style: .file))), over the "
+          + "\(Int64(ceiling).formatted(.byteCount(style: .file))) asked for, and Forge has no way to make this kind of file smaller."
+      )
     }
 
     try Task.checkCancellation()
@@ -620,9 +617,15 @@ actor ProcessingCoordinator {
     destinationMode: DestinationMode,
     destinationFolder: URL?
   ) throws -> OutputPlan {
-    let outputExtension = preset.targetFormat.flatMap(FormatCatalog.fileExtension(for:))
-      ?? FormatCatalog.fileExtension(for: file.fileType)
-      ?? file.url.pathExtension
+    // A file that stays the format it is keeps the extension it has: `keep.jpg`
+    // resized or replaced in place came back as `keep.jpeg`. One that changes
+    // format takes the format's own name.
+    let format = preset.targetFormat ?? file.fileType
+    let own = file.url.pathExtension
+    let asked = preset.outputExtension.flatMap { (format.tags[.filenameExtension] ?? []).contains($0) ? $0 : nil }
+    let outputExtension = asked
+      ?? ((format.tags[.filenameExtension] ?? []).contains(own.lowercased()) ? own : nil)
+      ?? FormatCatalog.fileExtension(for: format) ?? own
     let suffix = Self.sizeSuffix(for: preset)
     let context = Self.nameContext(
       for: file, preset: preset, operations: operations, extension: outputExtension, counter: counter

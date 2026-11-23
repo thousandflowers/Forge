@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct BatchProcessingView: View {
   @EnvironmentObject private var model: AppModel
   @StateObject private var vm = BatchViewModel()
+  @ObservedObject private var installer = ToolInstaller.shared
 
   @State private var choice = ConvertChoice()
   /// Empty until a column header is clicked: the list keeps the order the
@@ -64,7 +65,26 @@ struct BatchProcessingView: View {
           .foregroundStyle(.secondary)
           .padding(.horizontal).padding(.vertical, 8)
       }
+
+      // Where the need is: a file that would not open, and the tool that
+      // opens it. Once it is in, the files are tried again.
+      let openers = vm.openers
+      if !openers.isEmpty {
+        Divider()
+        VStack(alignment: .leading, spacing: 8) {
+          ForEach(openers, id: \.tool.id) { offer in
+            ToolOfferRow(
+              tool: offer.tool,
+              because: "\(offer.names) needs \(offer.tool.formula) to open. It adds \(offer.tool.adds).",
+              installer: installer,
+              then: { vm.retry(offer.urls) }
+            )
+          }
+        }
+        .padding(.horizontal).padding(.vertical, 8)
+      }
     }
+    .confirmsToolInstalls(with: installer)
     // A drop is accepted anywhere on the screen. Hanging this on the empty
     // state meant dragging worked for the first file and silently stopped
     // working for the second.
@@ -107,11 +127,14 @@ struct BatchProcessingView: View {
     .sheet(isPresented: $showingOptions) {
       ConvertOptionsSheet(
         kinds: kinds,
+        sources: vm.files,
         fileCount: vm.files.count,
         totalSize: totalSize,
         presets: offeredPresets,
         defaultPrivacy: model.settings.privacy,
         choice: $choice,
+        sameAsLast: LastConversions.offer(for: vm.files),
+        onSameAsLast: sameAsLast,
         onConvert: {
           // Overwrite and Move both change what is already on disk, so they are
           // worth a sentence before rather than an apology after.
@@ -195,7 +218,7 @@ struct BatchProcessingView: View {
         HStack(spacing: 6) {
           if status == .processing, let fraction = vm.fileProgress[f.id] {
             ProgressView(value: fraction).progressViewStyle(.linear).frame(maxWidth: 120)
-          } else if status == .failed, let reason = vm.failures[f.id] {
+          } else if status == .failed || status == .skipped, let reason = vm.failures[f.id] {
             HStack(spacing: 6) {
               status.label
               Text(reason).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
@@ -269,7 +292,11 @@ struct BatchProcessingView: View {
       // A batch starts from the general preference and can then disagree with
       // it, which is what makes the preference a default rather than a law.
       choice.fitMode = model.settings.defaultFitMode
-      choice = choice.carried(offered: offeredPresets, kinds: kinds)
+      // A new batch starts from nothing but where its files go. The last
+      // batch's choice is one press away, as "Same as Last", instead of
+      // riding along where it may not fit - a film's MOV · 1280×720 · HEVC
+      // showed on the next song.
+      choice = choice.cleared()
     }
     route()
   }
@@ -285,6 +312,10 @@ struct BatchProcessingView: View {
     // Routing them would start a second batch over the same files, which is two
     // conversions writing the same output names at once.
     guard !vm.isProcessing else { return }
+    // Nothing chosen yet: the sheet is the question. Asked before "Replace
+    // these files?", which a new batch kept from the last one's Overwrite
+    // asked about a conversion nobody had picked.
+    guard preset != nil else { openOptions(); return }
 
     let plans = vm.files.map {
       ConversionPlan(file: $0, preset: preset, destinationMode: choice.destinationMode)
@@ -345,9 +376,14 @@ struct BatchProcessingView: View {
       .sorted { $0.kind.rawValue < $1.kind.rawValue }
   }
 
-  /// The presets the sheet shows: the ones that take at least one of these files.
+  /// The presets the sheet shows: the ones that take at least one of these
+  /// files, and whose format every one of them can become. Decided here as
+  /// well as in the sheet, because this list is also what a choice carried
+  /// over from the last batch is checked against.
   private var offeredPresets: [RulePreset] {
-    model.usablePresets.filter { preset in vm.files.contains { preset.accepts($0.url) } }
+    model.usablePresets.filter { preset in
+      vm.files.contains { preset.accepts($0.url) } && preset.suits(kinds) && preset.suits(vm.files)
+    }
   }
 
   private func clear() {
@@ -359,7 +395,19 @@ struct BatchProcessingView: View {
   /// puts them back in charge of the chain.
   private func openOptions() {
     adhoc = nil
+    choice = choice.cleared()
     showingOptions = true
+  }
+
+  /// The last conversion of this kind, run on these files: the same chain and
+  /// the same place, with the same question first if that place is over the
+  /// originals.
+  private func sameAsLast() {
+    guard let last = LastConversions.offer(for: vm.files) else { return }
+    adhoc = last.preset
+    choice.destinationMode = last.mode
+    choice.destinationURL = last.destination
+    if last.mode == .copyTo { start() } else { confirming = true }
   }
 
   /// Take a conversion handed over from somewhere else in the app - the same
@@ -388,6 +436,10 @@ struct BatchProcessingView: View {
 
   private func start() {
     guard let preset else { return }
+    LastConversions.record(
+      LastConversion(preset: preset, mode: choice.destinationMode, destination: choice.destinationURL),
+      for: kinds
+    )
     Task {
       await vm.convert(
         model: model,
@@ -491,6 +543,37 @@ final class BatchViewModel: ObservableObject {
     files.append(contentsOf: added)
     loadVideoDimensions(for: added)
     skipped = Self.describe(unreadable)
+    // Turned away, or taken in with nothing that can read it - an old Word
+    // file is a file macOS can name and Forge cannot open.
+    let unopened = added.filter { file in !Conversions.processors.contains { $0.canProcess(file) } }.map(\.url)
+    turnedAway = unreadable + unopened
+  }
+
+  /// What was turned away, kept so it can be tried again once a tool is in.
+  @Published private(set) var turnedAway: [URL] = []
+
+  struct Opener {
+    let tool: ExternalTool
+    let urls: [URL]
+    var names: String {
+      urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) of these files"
+    }
+  }
+
+  /// For each tool that would open something turned away, which files.
+  var openers: [Opener] {
+    var grouped: [String: (tool: ExternalTool, urls: [URL])] = [:]
+    for url in turnedAway {
+      guard let tool = ToolOffers.opener(for: url) else { continue }
+      grouped[tool.binary, default: (tool, [])].urls.append(url)
+    }
+    return grouped.values.map { Opener(tool: $0.tool, urls: $0.urls) }.sorted { $0.tool.formula < $1.tool.formula }
+  }
+
+  /// Once a tool is in, the files it opens are taken in again.
+  func retry(_ urls: [URL]) {
+    files.removeAll { file in urls.contains(file.url) }
+    add(urls)
   }
 
   /// The files that were turned away, named by what they are rather than
@@ -678,7 +761,7 @@ final class BatchViewModel: ObservableObject {
 
     case .finished(let id, let status, let output, _, let error):
       statusMap[id] = status
-      failures[id] = status == .failed ? error : nil
+      failures[id] = status == .failed || status == .skipped ? error : nil
       fileProgress[id] = status == .completed ? 1 : 0
       if let output { model.remember(output) }
       let done = statusMap.values.filter { $0 != .pending && $0 != .processing }.count

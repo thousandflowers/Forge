@@ -1159,12 +1159,14 @@ final class HistoryTests: BaseTestCase {
   /// A failure recorded a duration of zero, so a conversion that gave up after
   /// two minutes and one that failed at once read the same.
   func test_aFailureRecordsHowLongItTookAndWhy() async throws {
-    let source = try Fixture.image(at: path("photo.png"), width: 100, height: 100)
-    let icns = try XCTUnwrap(UTType("com.apple.icns"))
+    // A file that is not the picture its name says it is: nothing decodes it.
+    // (It used to be a PNG asked to become an ICNS, which now works.)
+    let source = path("broken.jpg")
+    try Data("not a picture at all".utf8).write(to: source)
 
     _ = try? await coordinator().processFile(
       try ProcessableFile(url: source),
-      with: .make(format: icns, category: .image),
+      with: .make(format: .png, category: .image),
       destinationMode: .copyTo,
       destinationURL: try folder("out")
     ) { _ in }
@@ -1466,31 +1468,61 @@ final class ConvertSheetNothingTests: XCTestCase {
   }
 }
 
-/// A new batch does not inherit what it cannot show.
-final class CarriedChoiceTests: XCTestCase {
+/// "Same as Last": one conversion remembered per kind of file, offered only
+/// where it still fits.
+final class LastConversionTests: BaseTestCase {
   private let webJPEG = RulePreset(name: "Web JPEG", description: "", targetFormat: .jpeg, quality: 80, category: .image)
-  private let video720 = RulePreset(name: "Video 720p", description: "", targetFormat: .mpeg4Movie,
-                                    resize: ResizeSpec(width: 1280, height: 720, fitMode: .proportional), category: .video)
+  /// Whichever sound format the Audio group offers first, so the test is
+  /// about remembering rather than about one format's name.
+  private let song = RulePreset(name: "This batch", description: "", category: .custom,
+                                actions: [.convertFormat(to: OutputFormat.audio.compactMap(\.type).first!)])
+  private var defaults: UserDefaults!
 
-  func test_aPresetTheNewFilesAreNotOfferedIsDropped() {
+  override func setUpWithError() throws {
+    try super.setUpWithError()
+    defaults = UserDefaults(suiteName: "forge.tests.last.\(UUID().uuidString)")
+  }
+
+  private func file(_ name: String) throws -> ProcessableFile {
+    let url = path(name)
+    if url.pathExtension == "wav" { try Fixture.audio(at: url, seconds: 1) } else { try Fixture.image(at: url) }
+    return try ProcessableFile(url: url)
+  }
+
+  /// A film in between does not take the song's conversion away.
+  func test_eachKindKeepsItsOwnLast() throws {
+    let out = try folder("out")
+    LastConversions.record(.init(preset: song, mode: .copyTo, destination: out), for: [.audio], in: defaults)
+    LastConversions.record(.init(preset: webJPEG, mode: .copyTo, destination: out), for: [.image], in: defaults)
+
+    XCTAssertEqual(LastConversions.offer(for: [try file("a.wav")], in: defaults)?.preset, song)
+    XCTAssertEqual(LastConversions.offer(for: [try file("b.png")], in: defaults)?.preset, webJPEG)
+  }
+
+  func test_aKindNeverConvertedIsOfferedNothing() throws {
+    LastConversions.record(.init(preset: webJPEG, mode: .overwrite), for: [.image], in: defaults)
+    XCTAssertNil(LastConversions.offer(for: [try file("a.wav")], in: defaults))
+  }
+
+  /// A mixed batch has no one "last" to be like.
+  func test_aMixedBatchIsOfferedNothing() throws {
+    LastConversions.record(.init(preset: webJPEG, mode: .overwrite), for: [.image, .audio], in: defaults)
+    XCTAssertNil(LastConversions.offer(for: [try file("a.wav"), try file("b.png")], in: defaults))
+  }
+
+  /// The folder it wrote into was deleted: pressing it would fail, so it is not there.
+  func test_aFolderThatIsGoneIsNotOffered() throws {
+    let gone = workspace.appendingPathComponent("gone", isDirectory: true)
+    LastConversions.record(.init(preset: webJPEG, mode: .copyTo, destination: gone), for: [.image], in: defaults)
+    XCTAssertNil(LastConversions.offer(for: [try file("b.png")], in: defaults))
+  }
+
+  func test_aSheetOpenedAgainStartsFromNothingButTheFolder() {
     var last = ConvertChoice().adopting(webJPEG)
     last.destinationURL = URL(fileURLWithPath: "/tmp/out")
-    let next = last.carried(offered: [video720], kinds: [.video])
-    XCTAssertNil(next.presetID)
-    XCTAssertEqual(next.customActions, [], "no JPEG left to run on the film")
-    XCTAssertEqual(next.destinationURL, last.destinationURL, "where files go still carries")
-  }
-
-  func test_anOfferedPresetCarriesSoTheSecondBatchJustRuns() {
-    let last = ConvertChoice().adopting(webJPEG)
-    XCTAssertEqual(last.carried(offered: [webJPEG], kinds: [.image]), last)
-  }
-
-  func test_handSetFieldsCarryOnlyWhereTheyAreShown() {
-    var custom = ConvertChoice()
-    custom.format = OutputFormat(type: .png)
-    XCTAssertEqual(custom.carried(offered: [], kinds: [.image]).format, custom.format)
-    XCTAssertEqual(custom.carried(offered: [], kinds: [.image, .audio]).customActions, [], "a mixed batch hides the fields")
+    let next = last.cleared()
+    XCTAssertEqual(next.customActions, [])
+    XCTAssertEqual(next.destinationURL, last.destinationURL)
   }
 }
 

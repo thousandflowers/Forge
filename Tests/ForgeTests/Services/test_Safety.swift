@@ -54,7 +54,7 @@ final class SafetyTests: BaseTestCase {
     ) { _ in }
 
     XCTAssertEqual(entry.status, .completed, entry.errorMessage ?? "")
-    XCTAssertEqual(contents(of: destination), ["photo_arch.png", "photo_web.jpeg"])
+    XCTAssertEqual(contents(of: destination), ["photo_arch.png", "photo_web.jpg"])
     XCTAssertFalse(exists(source))
   }
 
@@ -399,5 +399,30 @@ final class SafetyTests: BaseTestCase {
     XCTAssertTrue(FormatCatalog.isReadableImage(filed), filed.identifier)
     XCTAssertFalse(FormatCatalog.isReadableImage(.plainText))
     XCTAssertFalse(FormatCatalog.isReadableImage(try XCTUnwrap(UTType(filenameExtension: "nothing-reads-this"))))
+  }
+
+  /// Half a photograph decoded as far as it went, the rest grey; a third of a
+  /// recording came out a third as long. Both were reported as converted.
+  func test_aFileThatStopsBeforeItsEndIsRefused() async throws {
+    let photo = try Fixture.image(at: path("whole.jpg"), width: 800, height: 600)
+    let picture = try Fixture.image(at: path("whole.png"), width: 400, height: 300)
+    let sound = try Fixture.audio(at: path("whole.wav"), seconds: 2)
+    for whole in [photo, picture, sound] {
+      XCTAssertNil(Completeness.whatIsMissing(whole), "\(whole.lastPathComponent) is whole")
+      let bytes = try Data(contentsOf: whole)
+      let cut = path("cut." + whole.pathExtension)
+      try bytes.prefix(bytes.count * 6 / 10).write(to: cut)
+      XCTAssertNotNil(Completeness.whatIsMissing(cut), "\(cut.lastPathComponent) was cut off")
+
+      do {
+        let entry = try await coordinator().processFile(
+          try ProcessableFile(url: cut), with: .make(format: whole.pathExtension == "wav" ? .aiff : .tiff, category: .custom),
+          destinationMode: .copyTo, destinationURL: try folder("out-\(UUID().uuidString.prefix(4))")
+        ) { _ in }
+        XCTAssertNotEqual(entry.status, .completed, "\(cut.lastPathComponent) was reported as converted")
+      } catch {
+        XCTAssertTrue(error.localizedDescription.contains("incomplete"), error.localizedDescription)
+      }
+    }
   }
 }

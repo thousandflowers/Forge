@@ -48,6 +48,10 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   /// from the output's name.
   var nameTrigger: String? = nil
 
+  /// The extension asked for, where it is one of several the format goes by:
+  /// `--to jpg` was written as `.jpeg`. Nil takes the format's own name.
+  var outputExtension: String? = nil
+
   /// A test the file has to pass, or the preset leaves it alone.
   var gate: Condition? = nil
 
@@ -134,7 +138,11 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
     }
     if let quality { actions.append(.quality(level: quality)) }
     actions.append(contentsOf: filters.map { .filter(type: $0) })
-    if targetFormat?.conforms(to: .plainText) == true {
+    // The language travels with the chain whenever one was given, not only
+    // into plain text: a recording transcribed into a Word file, or a document
+    // read aloud, asks the same question - which language is this in - and the
+    // answer was being dropped on the way.
+    if targetFormat?.conforms(to: .plainText) == true || !ocrLanguages.isEmpty {
       actions.append(.recognizeText(languages: ocrLanguages))
     }
     return actions
@@ -147,6 +155,19 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   /// A preset with no steps could be saved, and converting with it copied the
   /// file and reported "1 converted" - work that looks like work and is not.
   var doesSomething: Bool { !actions.isEmpty }
+
+  /// A preset that asks questions, finished by the answers: each one becomes
+  /// the step it stands for, and the answers travel along so the file name can
+  /// say what was asked for. A question nobody answered takes its default.
+  func answered(with answers: [String: Double]) -> RulePreset {
+    var answered = self
+    for parameter in parameters {
+      let value = answers[parameter.key] ?? parameter.defaultValue
+      answered = answered.replacing(parameter.operation(for: value))
+      answered.parameterValues[parameter.key] = value
+    }
+    return answered
+  }
 
   /// A copy with `action` put in place of the one of its kind already there,
   /// or added if there is none.
@@ -201,7 +222,7 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
 extension RulePreset {
   private enum CodingKeys: String, CodingKey {
     case id, name, description, category, position, isEnabled, actions
-    case parameters, nameTemplate, inputFormats, nameTrigger, gate
+    case parameters, nameTemplate, inputFormats, nameTrigger, gate, outputExtension
     // The shape presets were saved in before they became a chain.
     case targetFormat, resize, quality, filters, ocrLanguages
   }
@@ -227,6 +248,7 @@ extension RulePreset {
     nameTemplate = try container.decodeIfPresent(String.self, forKey: .nameTemplate)
     inputFormats = try container.decodeIfPresent([String].self, forKey: .inputFormats)
     nameTrigger = try container.decodeIfPresent(String.self, forKey: .nameTrigger)
+    outputExtension = try container.decodeIfPresent(String.self, forKey: .outputExtension)
     gate = try container.decodeIfPresent(Condition.self, forKey: .gate)
 
     if let actions = try container.decodeIfPresent([Operation].self, forKey: .actions) {
@@ -256,6 +278,7 @@ extension RulePreset {
     try container.encodeIfPresent(nameTemplate, forKey: .nameTemplate)
     try container.encodeIfPresent(inputFormats, forKey: .inputFormats)
     try container.encodeIfPresent(nameTrigger, forKey: .nameTrigger)
+    try container.encodeIfPresent(outputExtension, forKey: .outputExtension)
     try container.encodeIfPresent(gate, forKey: .gate)
   }
 

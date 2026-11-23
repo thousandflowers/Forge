@@ -12,12 +12,12 @@ enum SizeInName {
   /// counts them: a thousand thousand, not 1024 squared, because that is the
   /// number macOS shows and the number somebody is copying.
   private static let units: [(suffix: String, bytes: Double)] = [
+    // The unit spelled out, and only then. `4k`, `8K`, `20k` are how
+    // wallpapers, renders and camera files are named, and read as a size they
+    // shrank `wallpaper_4k.png` to fit in four kilobytes.
     ("gb", 1_000_000_000),
     ("mb", 1_000_000),
     ("kb", 1_000),
-    ("g", 1_000_000_000),
-    ("m", 1_000_000),
-    ("k", 1_000),
   ]
 
   /// The ceiling a filename asks for, or nil if it asks for nothing.

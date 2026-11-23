@@ -17,17 +17,31 @@ struct ExternalTool: Hashable, Identifiable, Sendable {
   let formula: String
   /// What having it adds, in the user's words.
   let adds: String
+  /// Installed as an application rather than a command (LibreOffice).
+  var isCask = false
+  /// Where it lives when it is an application, inside Applications.
+  var insideApplications: String? = nil
+  /// The kinds of file it gives more formats to. The Convert sheet offers to
+  /// install it for these, and for nothing else.
+  var serves: Set<ConvertKind> = []
 
   var id: String { binary }
 
   /// Where this tool is on this Mac, or nil if it is not here.
-  var location: URL? { ExternalTools.locate(binary) }
+  var location: URL? {
+    if let found = ExternalTools.locate(binary) { return found }
+    guard let insideApplications else { return nil }
+    let folders = [URL(fileURLWithPath: "/Applications"),
+                   FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications")]
+    return folders.map { $0.appendingPathComponent(insideApplications) }
+      .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+  }
 
   var isInstalled: Bool { location != nil }
 
-  /// The command that installs it. Shown and copied, never run behind the
-  /// user's back: it writes to their machine, so they run it.
-  var installCommand: String { "brew install \(formula)" }
+  /// The command that installs it. Shown before it runs, and run only once
+  /// the user has said so: it writes to their machine.
+  var installCommand: String { "brew install \(isCask ? "--cask " : "")\(formula)" }
 }
 
 /// Where to look for tools, and what is there.
@@ -115,7 +129,7 @@ enum ExternalTools {
     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
       let process = Process()
       process.executableURL = brew
-      process.arguments = ["install", tool.formula]
+      process.arguments = ["install"] + (tool.isCask ? ["--cask"] : []) + [tool.formula]
 
       // Homebrew asks questions when it thinks a person is watching. Nobody is.
       var environment = ProcessInfo.processInfo.environment
@@ -143,7 +157,7 @@ enum ExternalTools {
           continuation.resume()
         } else {
           continuation.resume(throwing: ProcessingError.conversionFailed(
-            reason: "brew install \(tool.formula) stopped with status \(finished.terminationStatus)"
+            reason: "\(tool.installCommand) stopped with status \(finished.terminationStatus)"
           ))
         }
       }

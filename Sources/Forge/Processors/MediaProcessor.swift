@@ -23,6 +23,16 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     FormatCatalog.isReadableMedia(file.fileType)
   }
 
+  func takes(_ file: ProcessableFile, to target: UTType) -> Bool {
+    // A subtitle is the track inside the film, which only the tools reach.
+    if Subtitles.carriesCues(Conversions.fileExtension(of: target)) { return false }
+    // Words are a transcript; sound and film containers are what this writes.
+    if Self.isWords(target) { return true }
+    if FormatCatalog.audioFormatID(for: target) != nil || FormatCatalog.isWritableVideo(target) { return true }
+    // Frames, of something that has a picture.
+    return !file.fileType.conforms(to: .audio) && FormatCatalog.isWritableImage(target)
+  }
+
   func process(
     _ input: URL,
     to output: URL,
@@ -42,10 +52,12 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       throw CancellationError()
     } catch {
       // AVFoundation's own words are "Cannot Open", in the system language,
-      // which say neither what nor why.
-      throw ProcessingError.conversionFailed(
-        reason: "\(input.lastPathComponent) cannot be opened: it looks damaged or incomplete. "
-          + "If it is still being copied or downloaded, try again once it has arrived."
+      // which say neither what nor why. It lists AVI and MPEG among the files
+      // it reads and opens few of them, so "damaged" was said of files that
+      // play: a tool that can do the pair is asked before anything is said.
+      throw Self.handedOn(input, to: output) ?? ProcessingError.conversionFailed(
+        reason: "\(input.lastPathComponent) cannot be opened by macOS: it may use a codec macOS has no reader for, "
+          + "or be damaged or still arriving.\(Self.whatWouldRead)"
       )
     }
 
@@ -77,15 +89,20 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
         input, to: output, as: wanted, operations: operations, start: start, progress: progress
       )
     }
+    // Words asked of a film with no soundtrack: there is nothing to write down,
+    // which is not the same as these two formats being impossible.
+    if Self.isWords(wanted) {
+      throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no sound to turn into words")
+    }
 
     if videoTracks.isEmpty {
       // Audio asked for a movie container is wrapped rather than converted:
       // the export writes the track into the container as it stands.
       let requestedType = Self.outputType(for: output, operations: operations, fallback: .mpeg4Audio)
       if FormatCatalog.isWritableVideo(requestedType) {
-        return try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress)
+        return try await handingOn(input, to: output) { try await exportVideoWithinItsCeiling(asset, to: output, operations: operations, start: start, progress: progress) }
       }
-      return try await convertAudio(input, to: output, operations: operations, start: start, progress: progress)
+      return try await handingOn(input, to: output) { try await convertAudio(input, to: output, operations: operations, start: start, progress: progress) }
     }
 
     // A video asked to become an image is a frame export, not a re-encode:
@@ -105,10 +122,177 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       guard !audioTracks.isEmpty else {
         throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no sound to keep")
       }
-      return try await convertAudio(input, to: output, operations: operations, start: start, progress: progress)
+      return try await handingOn(input, to: output) { try await convertAudio(input, to: output, operations: operations, start: start, progress: progress) }
     }
 
-    return try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress)
+    return try await handingOn(input, to: output) { try await exportVideoWithinItsCeiling(asset, to: output, operations: operations, start: start, progress: progress) }
+  }
+
+  /// A ceiling is a promise about the file, and an export session treats it as
+  /// an aim: asked for 500 kB it wrote 554. So it is asked again for less, in
+  /// proportion to how far over it went, until what it writes fits.
+  private func exportVideoWithinItsCeiling(
+    _ asset: AVURLAsset,
+    to output: URL,
+    operations: [Operation],
+    start: Date,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> ProcessingResult {
+    guard let ceiling = ImageProcessor.sizeCeiling(from: operations) else {
+      let result = try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress)
+      try await Self.checkNothingWasLeftBehind(from: asset, in: output)
+      return result
+    }
+    var aim = ceiling
+    var smallest = Int64.max
+    for _ in 0..<4 {
+      let aimed = operations.map { operation -> Operation in
+        if case .limitSize = operation { return .limitSize(bytes: aim) }
+        return operation
+      }
+      try? FileManager.default.removeItem(at: output)
+      let result = try await exportVideo(asset, to: output, operations: aimed, start: start, progress: progress)
+      if result.outputSize <= Int64(ceiling) {
+        try await Self.checkNothingWasLeftBehind(from: asset, in: output)
+        return result
+      }
+      smallest = min(smallest, result.outputSize)
+      aim = max(1, Int(Double(aim) * Double(ceiling) / Double(result.outputSize) * 0.95))
+    }
+    try? FileManager.default.removeItem(at: output)
+    throw ProcessingError.conversionFailed(
+      reason: "\(asset.url.lastPathComponent) cannot be made to fit in "
+        + "\(Int64(ceiling).formatted(.byteCount(style: .file))): the smallest it came out was "
+        + "\(smallest.formatted(.byteCount(style: .file))). A smaller picture would fit; so would a shorter film."
+    )
+  }
+
+  /// The tracks a film had that the export did not carry. An export session
+  /// keeps one soundtrack, drops sound it cannot put in the container (MP3 in
+  /// an MP4) and drops subtitles - all without a word, so a film with a
+  /// commentary track or with subtitles came back without them, "converted".
+  /// What it left behind is said, and a tool that keeps every track is asked
+  /// instead where there is one.
+  private static func checkNothingWasLeftBehind(from asset: AVURLAsset, in output: URL) async throws {
+    func count(_ asset: AVAsset, _ kinds: [AVMediaType]) async -> Int {
+      var total = 0
+      for kind in kinds { total += ((try? await asset.loadTracks(withMediaType: kind)) ?? []).count }
+      return total
+    }
+    let written = AVURLAsset(url: output)
+    let captions: [AVMediaType] = [.subtitle, .closedCaption, .text]
+    var lost: [String] = []
+    // ffprobe sees tracks macOS does not: an MP4's MP3 soundtrack is not there
+    // at all as far as AVFoundation is concerned, so its loss was invisible.
+    let soundBefore = max(await count(asset, [.audio]), streams(of: asset.url, kind: "audio"))
+    let soundAfter = max(await count(written, [.audio]), streams(of: output, kind: "audio"))
+    if soundAfter < soundBefore {
+      lost.append(soundAfter == 0 ? "its sound" : "\(soundBefore - soundAfter) of its \(soundBefore) soundtracks")
+    }
+    if await count(asset, captions) > 0, await count(written, captions) == 0 { lost.append("its subtitles") }
+    guard !lost.isEmpty else { return }
+
+    try? FileManager.default.removeItem(at: output)
+    if let handOn = handedOn(asset.url, to: output) { throw handOn }
+    throw ProcessingError.conversionFailed(
+      reason: "macOS would leave out \(lost.joined(separator: " and ")) of \(asset.url.lastPathComponent), "
+        + "so it was not converted. ffmpeg keeps every track: brew install ffmpeg"
+    )
+  }
+
+  /// The cover picture and the chapters, which the tags do not include: a
+  /// song's cover was lost into FLAC and M4B, and an audiobook's chapters into
+  /// anything at all. Copied across by ffmpeg where it is installed, without
+  /// touching the sound already written.
+  private static func carryCoverAndChapters(from input: URL, to output: URL) {
+    guard let ffmpeg = ExternalTools.locate("ffmpeg"), let ffprobe = ExternalTools.locate("ffprobe") else { return }
+    func probe(_ url: URL, _ arguments: [String]) -> String {
+      let process = Process()
+      process.executableURL = ffprobe
+      process.arguments = ["-v", "error"] + arguments + ["-of", "csv=p=0", url.path]
+      let said = Pipe()
+      process.standardOutput = said
+      process.standardError = Pipe()
+      guard (try? process.run()) != nil else { return "" }
+      let text = String(decoding: said.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+      process.waitUntilExit()
+      return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    func cover(_ url: URL) -> Bool {
+      probe(url, ["-select_streams", "v", "-show_entries", "stream_disposition=attached_pic"]).contains("1")
+    }
+    func chapters(_ url: URL) -> Int {
+      probe(url, ["-show_chapters"]).split(whereSeparator: \.isNewline).count
+    }
+    let wantsCover = cover(input) && !cover(output) && !["wav", "aiff", "aif", "caf"].contains(output.pathExtension.lowercased())
+    let wantsChapters = chapters(input) > 0 && chapters(output) == 0
+    guard wantsCover || wantsChapters else { return }
+
+    let together = output.deletingLastPathComponent()
+      .appendingPathComponent(".forge-extras-\(UUID().uuidString).\(output.pathExtension)")
+    defer { try? FileManager.default.removeItem(at: together) }
+    var arguments = ["-hide_banner", "-loglevel", "error", "-y", "-i", output.path, "-i", input.path,
+                     "-map", "0", "-map_metadata", "0"]
+    if wantsCover { arguments += ["-map", "1:v:0", "-disposition:v:0", "attached_pic"] }
+    arguments += ["-map_chapters", wantsChapters ? "1" : "0", "-c", "copy", together.path]
+    // Worth having and not worth failing a finished conversion over.
+    guard (try? ExternalTools.run(ffmpeg, arguments)) != nil,
+          FileManager.default.fileExists(atPath: together.path) else { return }
+    _ = try? FileManager.default.replaceItemAt(output, withItemAt: together)
+  }
+
+  /// How many streams of a kind ffprobe finds, or zero without ffprobe.
+  private static func streams(of url: URL, kind: String) -> Int {
+    guard let ffprobe = ExternalTools.locate("ffprobe") else { return 0 }
+    let process = Process()
+    process.executableURL = ffprobe
+    process.arguments = ["-v", "error", "-select_streams", kind == "audio" ? "a" : "s",
+                         "-show_entries", "stream=index", "-of", "csv=p=0", url.path]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = Pipe()
+    guard (try? process.run()) != nil else { return 0 }
+    let said = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return String(decoding: said, as: UTF8.self).split(whereSeparator: \.isNewline).count
+  }
+
+  // MARK: - What macOS could not do
+
+  /// Run the work; if macOS itself gave up on it - a codec it has no reader
+  /// for, a sample rate its encoder will not take - hand the pair to a tool
+  /// that can, or say which tool would. Its own error was a number: "Core
+  /// Audio error 1954115647".
+  private func handingOn(
+    _ input: URL, to output: URL, _ work: () async throws -> ProcessingResult
+  ) async throws -> ProcessingResult {
+    do {
+      return try await work()
+    } catch let error as ProcessingError {
+      throw error
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      throw Self.handedOn(input, to: output) ?? ProcessingError.conversionFailed(
+        reason: "macOS cannot make \(input.lastPathComponent) into \(output.pathExtension.uppercased()) "
+          + "(\(error.localizedDescription)).\(Self.whatWouldRead)"
+      )
+    }
+  }
+
+  /// "This pair is not mine", if a tool here would take it: the coordinator
+  /// then asks the next processor, which is the tools.
+  private static func handedOn(_ input: URL, to output: URL) -> ProcessingError? {
+    let source = input.pathExtension.lowercased()
+    let target = output.pathExtension.lowercased()
+    guard ExternalBridge.couldPlan(from: source, to: target) else { return nil }
+    return .unsupportedConversion(
+      from: UTType(filenameExtension: source) ?? .movie, to: UTType(filenameExtension: target) ?? .data
+    )
+  }
+
+  private static var whatWouldRead: String {
+    ExternalTools.locate("ffmpeg") == nil ? " ffmpeg reads most of what macOS does not: brew install ffmpeg" : ""
   }
 
   /// Audio that is not also a movie: `.m4a`, `.wav`, `.flac`, not `.mp4`.
@@ -192,12 +376,38 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     generator.requestedTimeToleranceAfter = .zero
     generator.maximumSize = try await Self.frameSize(for: operations, asset: asset)
 
-    let step = 1 / Self.framesPerSecond
+    // A whole number of hundredths of a second, because that is the only
+    // delay a GIF can state: a twelfth of a second was written as 0.08 and the
+    // animation ran four per cent fast. Sampling at what will be written keeps
+    // it in time.
+    let step = (100 / Self.framesPerSecond).rounded() / 100
     let times = stride(from: 0, to: duration, by: step).map {
       CMTime(seconds: $0, preferredTimescale: 600)
     }
     guard !times.isEmpty else {
       throw ProcessingError.conversionFailed(reason: "The video is too short to sample")
+    }
+
+    // Stills are written as they are made. Held until the end, ninety seconds
+    // of film was a gigabyte of frames in memory before the first was saved.
+    if !FormatCatalog.holdsMultipleFrames(type) {
+      var extras: [URL] = []
+      var first: CGImage?
+      for (index, time) in times.enumerated() {
+        try Task.checkCancellation()
+        let image = try generator.copyCGImage(at: time, actualTime: nil)
+        let destination = index == 0 ? output : output.numbered(index + 1, of: times.count)
+        _ = try Self.writeFrames([ImageFrame(image: image, duration: step)], to: destination, as: type, operations: operations)
+        if index == 0 { first = image } else { extras.append(destination) }
+        progress(Double(index + 1) / Double(times.count))
+      }
+      return ProcessingResult(
+        outputURL: output,
+        outputSize: try Self.fileSize(output),
+        outputDimensions: first.map { ($0.width, $0.height) },
+        duration: Date().timeIntervalSince(start),
+        additionalOutputs: extras
+      )
     }
 
     var frames: [ImageFrame] = []
@@ -227,7 +437,10 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     guard let track = try await asset.loadTracks(withMediaType: .video).first else {
       return CGSize(width: defaultFrameSide, height: defaultFrameSide)
     }
-    let natural = try await track.load(.naturalSize)
+    // As it is shown: a film shot upright is stored on its side with a note to
+    // turn it, and measured as stored its frames came out a third the size.
+    let stored = try await track.load(.naturalSize)
+    let natural = stored.applying(try await track.load(.preferredTransform))
     if let asked = operations.compactMap(resizeRequest).first,
        let size = renderSize(natural: CGSize(width: abs(natural.width), height: abs(natural.height)),
                              width: asked.width, height: asked.height, mode: .proportional) {
@@ -300,9 +513,31 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       )
     }
 
+    // A codec that was asked for and that this container cannot hold: the
+    // fallback wrote H.264 into the MP4 and said nothing about the ProRes.
+    if let codec = Self.chosenCodec(in: operations), session.presetName != codec.exportPreset {
+      throw ProcessingError.conversionFailed(
+        reason: "\(codec.title) does not fit in "
+          + "\((FormatCatalog.fileExtension(for: outputType) ?? outputType.identifier).uppercased()). A MOV holds it."
+      )
+    }
+
     session.outputURL = output
     session.outputFileType = fileType
     session.shouldOptimizeForNetworkUse = true
+
+    // How small: a ceiling that was asked for, or a share of what the film
+    // would otherwise weigh for a quality below the top. The session is told
+    // the size and keeps the picture's shape and its frame rate; choosing a
+    // "low quality" preset instead shrank a 1280 x 720 film to 568 x 320.
+    var limit = ImageProcessor.sizeCeiling(from: operations).map(Int64.init)
+    if let quality = operations.compactMap(Self.qualityLevel).first, quality < 100,
+       session.presetName != AVAssetExportPresetPassthrough,
+       let whole = try? await session.estimatedOutputFileLengthInBytes, whole > 0 {
+      let share = Int64(Double(whole) * Double(quality) / 100)
+      limit = min(limit ?? share, share)
+    }
+    if let limit, session.presetName != AVAssetExportPresetPassthrough { session.fileLengthLimit = limit }
     if let resizing {
       guard session.presetName != AVAssetExportPresetPassthrough else {
         throw ProcessingError.conversionFailed(reason: "This video cannot be resized into that container")
@@ -361,9 +596,9 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     case .cancelled:
       throw CancellationError()
     default:
-      throw ProcessingError.conversionFailed(
-        reason: session.error?.localizedDescription ?? "Video export did not complete"
-      )
+      // The session's own error, as it is: the caller decides whether a tool
+      // can do what macOS could not before anything is said about it.
+      throw session.error ?? ProcessingError.conversionFailed(reason: "Video export did not complete")
     }
 
     progress(1.0)
@@ -387,17 +622,8 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   /// the named sizes stop at 640 × 480 and only ever came close to what was
   /// asked, so an exact size is drawn by `composition(for:operations:)`.
   static func videoPreset(for operations: [Operation], available: [String]) -> String {
-    if let quality = operations.compactMap(Self.qualityLevel).first {
-      let tiers = [
-        (limit: 33, preset: AVAssetExportPresetLowQuality),
-        (limit: 66, preset: AVAssetExportPresetMediumQuality),
-        (limit: 100, preset: AVAssetExportPresetHighestQuality),
-      ]
-      if let tier = tiers.first(where: { quality <= $0.limit && available.contains($0.preset) }) {
-        return tier.preset
-      }
-    }
-
+    // Always the one that keeps the picture as it is. Quality is a matter of
+    // how many bytes, and is settled by telling the session a size.
     return available.contains(AVAssetExportPresetHighestQuality)
       ? AVAssetExportPresetHighestQuality
       : AVAssetExportPresetPassthrough
@@ -545,15 +771,42 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // to 44.1 kHz stereo is not a conversion the user requested.
     var settings: [String: Any] = [
       AVFormatIDKey: formatID,
-      AVSampleRateKey: sourceFormat.sampleRate,
+      // Opus is made at 48 kHz and a handful of rates below it, and refuses
+      // the rest - 44.1 kHz, the commonest of all, included.
+      AVSampleRateKey: formatID == kAudioFormatOpus && ![8_000, 12_000, 16_000, 24_000, 48_000].contains(sourceFormat.sampleRate)
+        ? 48_000 : sourceFormat.sampleRate,
       AVNumberOfChannelsKey: Int(sourceFormat.channelCount),
     ]
+    // The depth the recording has, where it says: everything used to be cut
+    // to 16 bits, a 24-bit master included, and FLAC was written at 24 from a
+    // 16-bit source. A compressed source has no depth of its own and gets 16.
+    let description = inputFile.fileFormat.streamDescription.pointee
+    let sourceBits = description.mFormatID == kAudioFormatLinearPCM && description.mBitsPerChannel > 0
+      ? Int(description.mBitsPerChannel) : 16
+    let isLossy = formatID == kAudioFormatMPEG4AAC || formatID == kAudioFormatOpus
+    let seconds = sourceFormat.sampleRate > 0 ? Double(inputFile.length) / sourceFormat.sampleRate : 0
+    let ceiling = ImageProcessor.sizeCeiling(from: operations)
+
     if formatID == kAudioFormatLinearPCM {
-      settings[AVLinearPCMBitDepthKey] = 16
-      settings[AVLinearPCMIsFloatKey] = false
+      // Float stays float where the container takes it; AIFF does not.
+      let isFloat = description.mFormatFlags & kAudioFormatFlagIsFloat != 0 && !FormatCatalog.usesBigEndianPCM(outputType)
+      settings[AVLinearPCMBitDepthKey] = isFloat ? 32 : min(sourceBits, 32)
+      settings[AVLinearPCMIsFloatKey] = isFloat
       settings[AVLinearPCMIsBigEndianKey] = FormatCatalog.usesBigEndianPCM(outputType)
-    } else if let quality = operations.compactMap(Self.qualityLevel).first {
-      settings[AVEncoderBitRateKey] = Self.bitrate(forQuality: quality, channels: Int(sourceFormat.channelCount))
+    } else if isLossy {
+      // A bit rate means something to an encoder that throws sound away, and
+      // was an error to one that does not: "quality 80" on a FLAC failed.
+      var rate = operations.compactMap(Self.qualityLevel).first.map {
+        Self.bitrate(forQuality: $0, channels: Int(sourceFormat.channelCount))
+      }
+      // A size that was asked for is a bit rate, once the length is known.
+      if let ceiling, seconds > 0 {
+        let fits = Int(Double(ceiling) * 8 / seconds * 0.95)
+        rate = min(rate ?? fits, fits)
+      }
+      if let rate { settings[AVEncoderBitRateKey] = rate }
+    } else {
+      settings[AVEncoderBitDepthHintKey] = min(sourceBits, 24)
     }
 
     let totalFrames = inputFile.length
@@ -561,10 +814,30 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       progress(totalFrames > 0 ? Double(position) / Double(totalFrames) : 0)
     }
 
+    // What was written has to be something: a clip of a few milliseconds made
+    // a 42-byte FLAC that nothing opens, reported as converted.
+    guard ((try? AVAudioFile(forReading: output))?.length ?? 0) > 0 else {
+      throw ProcessingError.conversionFailed(
+        reason: "\(input.lastPathComponent) is too short to be written as "
+          + "\((FormatCatalog.fileExtension(for: outputType) ?? outputType.identifier).uppercased())."
+      )
+    }
+
     try await Self.carryTags(
       from: input, to: output, type: outputType, privacy: PrivacyFilter.policy(in: operations)
     )
+    Self.carryCoverAndChapters(from: input, to: output)
     progress(1.0)
+
+    // A ceiling is a promise about the result. Where the format gave no way
+    // to keep it - nothing can make a WAV smaller - that is said, not skipped.
+    if let ceiling, let size = try? Self.fileSize(output), size > Int64(ceiling) {
+      throw ProcessingError.conversionFailed(
+        reason: "\(input.lastPathComponent) comes out at \(size.formatted(.byteCount(style: .file))), over the "
+          + "\(Int64(ceiling).formatted(.byteCount(style: .file))) asked for, and "
+          + "\((FormatCatalog.fileExtension(for: outputType) ?? "this format").uppercased()) cannot be made smaller."
+      )
+    }
 
     return ProcessingResult(
       outputURL: output,
@@ -695,7 +968,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   }
 
   /// Map a 1-100 quality level onto a per-channel bitrate.
-  private static func bitrate(forQuality quality: Int, channels: Int) -> Int {
+  static func bitrate(forQuality quality: Int, channels: Int) -> Int {
     let perChannel = 32_000 + (max(1, min(100, quality)) * 1_280)
     return perChannel * max(1, channels)
   }

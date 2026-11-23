@@ -15,6 +15,10 @@ struct ContentView: View {
     } detail: {
       detail
     }
+    // Covered by the editor, and so out of reach: the grid of presets behind it
+    // could still be walked and pressed by VoiceOver, and by anything else
+    // that reads the window that way.
+    .accessibilityHidden(model.presetEditor != nil)
     .task { await model.bootstrap() }
     .preferredColorScheme(model.settings.appearance.colorScheme)
     // A preset is a program, and a program is not written in a sheet: the

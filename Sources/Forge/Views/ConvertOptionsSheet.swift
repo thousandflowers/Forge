@@ -80,20 +80,6 @@ struct ConvertChoice: Equatable {
     return updated
   }
 
-  /// The last batch's choice, handed to a new one. Kept only where the sheet
-  /// will show it: a preset the new files are offered, or hand-set fields on
-  /// a batch of one kind that honours them. Anything else used to ride along
-  /// unseen - a JPEG preset from a batch of photos turned the next drop, a
-  /// film, into hundreds of 4K frames with no preset showing as chosen.
-  /// Where the files go is not about what they are, so it always carries.
-  func carried(offered: [RulePreset], kinds: Set<ConvertKind>) -> ConvertChoice {
-    if let presetID {
-      return offered.contains { $0.id == presetID } ? self : cleared()
-    }
-    guard let custom = resolved(against: []) else { return self }
-    return kinds.count == 1 && custom.suits(kinds) ? self : cleared()
-  }
-
   var needsDestination: Bool { destinationMode != .overwrite }
 
   /// The actions to run when no preset is in charge, in the order they run.
@@ -117,17 +103,7 @@ struct ConvertChoice: Equatable {
   /// assembled from the fields for this batch alone.
   func resolved(against presets: [RulePreset]) -> RulePreset? {
     if let presetID, let preset = presets.first(where: { $0.id == presetID }) {
-      guard !preset.parameters.isEmpty else { return preset }
-      // A preset that asks questions is finished by the answers: each one
-      // becomes the action it stands for, and the answers travel along so the
-      // filename can say what was asked for.
-      var answered = preset
-      for parameter in preset.parameters {
-        let value = answers[parameter.key] ?? parameter.defaultValue
-        answered = answered.replacing(parameter.operation(for: value))
-        answered.parameterValues[parameter.key] = value
-      }
-      return answered
+      return preset.parameters.isEmpty ? preset : preset.answered(with: answers)
     }
     let actions = customActions
     guard !actions.isEmpty else { return nil }
@@ -147,7 +123,10 @@ struct ConvertOptionsSheet: View {
   @Environment(\.dismiss) private var dismiss
   @State private var showingCustomSize = false
 
+  @ObservedObject private var installer = ToolInstaller.shared
   let kinds: Set<ConvertKind>
+  /// The files themselves, since what is offered depends on what each one is.
+  let sources: [ProcessableFile]
   let fileCount: Int
   let totalSize: Int64
   let presets: [RulePreset]
@@ -155,6 +134,9 @@ struct ConvertOptionsSheet: View {
   /// is starting from rather than an empty choice.
   let defaultPrivacy: PrivacyPolicy
   @Binding var choice: ConvertChoice
+  /// The last conversion of this kind of file, offered as one press.
+  var sameAsLast: LastConversion? = nil
+  var onSameAsLast: () -> Void = {}
   let onConvert: () -> Void
 
   /// The one kind in the batch, or nil when the batch is mixed. Per-kind
@@ -175,6 +157,8 @@ struct ConvertOptionsSheet: View {
       footer
     }
     .frame(width: 680, height: 600)
+    // The sheet is where an install is started, so it is where it is confirmed.
+    .confirmsToolInstalls(with: installer)
     .translucentSheet()
   }
 
@@ -249,8 +233,11 @@ struct ConvertOptionsSheet: View {
   /// makes JPEGs and happens to be filed under Video was not being offered for
   /// a picture, and nothing anywhere said why.
   private var offeredPresets: [RulePreset] {
-    let fitting = presets.filter { $0.suits(kinds) }
-    return fitting.isEmpty ? presets : fitting
+    // By the files, not only by their kind: a JPEG preset is right for "a
+    // document" that is a PDF and wrong for one that is a Word file. And no
+    // falling back to every preset when none fits - that offered exactly the
+    // conversions that could not finish.
+    presets.filter { $0.suits(kinds) && $0.suits(sources) }
   }
 
   private var presetField: some View {
@@ -274,7 +261,7 @@ struct ConvertOptionsSheet: View {
             edit { $0.format = .keep }
           }
         }
-        ForEach(kind.outputGroups.filter { !$0.formats.isEmpty }) { group in
+        ForEach(kind.outputGroups(for: sources).filter { !$0.formats.isEmpty }) { group in
           VStack(alignment: .leading, spacing: 5) {
             Text(group.title)
               .font(.caption)
@@ -287,6 +274,11 @@ struct ConvertOptionsSheet: View {
               }
             }
           }
+        }
+        // What a tool that is not here would add, with the button that adds it.
+        // The formats appear above as soon as it is in.
+        ForEach(ToolOffers.missing(for: [kind]), id: \.id) { tool in
+          ToolOfferRow(tool: tool, because: "With \(tool.formula): \(tool.adds).", installer: installer)
         }
       }
     }
@@ -483,10 +475,22 @@ struct ConvertOptionsSheet: View {
 
   private var mixedNote: some View {
     field("These files") {
-      Text("More than one kind was dropped, and each kind takes different settings. Pick a preset above, or drop one kind at a time to set the format, size and quality by hand.")
-        .font(.callout)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
+      VStack(alignment: .leading, spacing: 10) {
+        // No kind at all is not "more than one": it is files Forge cannot open,
+        // and the useful thing to say is what would open them.
+        Text(kinds.isEmpty
+          ? "Forge cannot open these yet."
+          : "More than one kind was dropped, and each kind takes different settings. Pick a preset above, or drop one kind at a time to set the format, size and quality by hand.")
+          .font(.callout)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        if kinds.isEmpty {
+          let tools = Dictionary(grouping: sources.compactMap { ToolOffers.opener(for: $0.url) }, by: \.id).compactMap(\.value.first)
+          ForEach(tools, id: \.id) { tool in
+            ToolOfferRow(tool: tool, because: "\(tool.formula) opens them. It adds \(tool.adds).", installer: installer)
+          }
+        }
+      }
     }
   }
 
@@ -531,6 +535,16 @@ struct ConvertOptionsSheet: View {
 
       Spacer(minLength: 12)
 
+      if let last = sameAsLast {
+        let chain = last.preset.actions.map(PresetCard.chip).joined(separator: " · ")
+        Button {
+          dismiss()
+          onSameAsLast()
+        } label: {
+          Text("Same as Last: \(chain)").lineLimit(1).truncationMode(.tail)
+        }
+        .help("Convert the way the last \(kind?.title ?? "file") was: \(chain)")
+      }
       Button("Cancel") { dismiss() }
         .keyboardShortcut(.cancelAction)
       Button {

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import UniformTypeIdentifiers
 
@@ -81,18 +82,110 @@ enum ExternalBridge {
   }
 
   /// Forget what the tools said about themselves.
-  static func forgetToolFormats() { formats.clear() }
+  static func forgetToolFormats() {
+    formats.clear()
+    ffmpegAnswers.clear()
+    warmUp()
+  }
 
   /// Whether pandoc has been asked yet. Reading this never runs it.
   static var pandocHasAnswered: Bool { formats.peek() != nil }
 
-  /// Ask pandoc now, off the main thread, so the first question a window
+  /// Ask the tools now, off the main thread, so the first question a window
   /// asks already has its answer.
   static func warmUp() {
-    Task.detached(priority: .utility) { _ = pandocFormats }
+    Task.detached(priority: .userInitiated) { _ = ffmpegWrites }
+    Task.detached(priority: .userInitiated) { _ = pandocFormats }
   }
 
   private static let formats = FormatAnswers()
+  private static let ffmpegAnswers = FormatAnswers()
+
+  /// The file extensions ffmpeg writes, from ffmpeg itself: each muxer it has
+  /// says which extensions it is for. A question per muxer, nearly two hundred
+  /// of them, asked side by side, and the answer kept on disk against the
+  /// ffmpeg that gave it: asked one at a time in the background it took longer
+  /// than it takes to open the Convert sheet, which then offered none of them.
+  static var ffmpegWrites: Set<String> {
+    ffmpegAnswers.answer {
+      guard let ffmpeg = ExternalTools.locate("ffmpeg") else { return ([], []) }
+      let stamp = (try? ffmpeg.resolvingSymlinksInPath().resourceValues(forKeys: [.contentModificationDateKey]))?
+        .contentModificationDate?.timeIntervalSince1970 ?? 0
+      let key = "\(ffmpeg.resolvingSymlinksInPath().path)|\(Int(stamp))"
+      let kept = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+        .appendingPathComponent("Forge", isDirectory: true).appendingPathComponent("ffmpeg-writes.json")
+      if let kept, let data = try? Data(contentsOf: kept),
+         let saved = try? JSONDecoder().decode([String: [String]].self, from: data), let known = saved[key] {
+        return ([], Set(known))
+      }
+
+      let muxers = Array(list(ffmpeg, "-muxers"))
+      var found = [Set<String>](repeating: [], count: muxers.count)
+      found.withUnsafeMutableBufferPointer { slots in
+        let base = slots.baseAddress!
+        DispatchQueue.concurrentPerform(iterations: muxers.count) { index in
+          let help = run(ffmpeg, ["-hide_banner", "-h", "muxer=\(muxers[index])"])
+          guard let line = help.split(whereSeparator: \.isNewline).first(where: { $0.contains("Common extensions:") }) else { return }
+          let named = line.split(separator: ":", maxSplits: 1).last ?? ""
+          base[index] = Set(named.split(separator: ",").map {
+            $0.trimmingCharacters(in: .whitespaces.union(CharacterSet(charactersIn: "."))).lowercased()
+          })
+        }
+      }
+      let extensions = found.reduce(into: Set<String>()) { $0.formUnion($1) }
+
+      if let kept, !extensions.isEmpty {
+        try? FileManager.default.createDirectory(at: kept.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? JSONEncoder().encode([key: extensions.sorted()]).write(to: kept, options: .atomic)
+      }
+      return ([], extensions)
+    }.write
+  }
+
+  /// What ffmpeg has already said it writes, without asking it.
+  static var ffmpegWritesIfKnown: Set<String> { ffmpegAnswers.peek()?.write ?? [] }
+
+  /// What LibreOffice writes, by the kind of document it is given. LibreOffice
+  /// has no way to be asked, so this is what its export filters are for: a
+  /// text document does not become a spreadsheet, nor a deck a text.
+  // ponytail: a table of LibreOffice's export filters; extend it when a filter is wanted that is not here.
+  static let libreOfficeFamilies: [(reads: Set<String>, writes: Set<String>)] = [
+    (["doc", "docx", "odt", "rtf", "wpd", "pages", "txt", "html", "fodt"],
+     ["pdf", "docx", "doc", "odt", "rtf", "txt", "html", "epub", "png", "jpg"]),
+    (["xls", "xlsx", "ods", "numbers", "csv", "fods"],
+     ["pdf", "xlsx", "xls", "ods", "csv", "html", "png"]),
+    (["ppt", "pptx", "odp", "key", "fodp"],
+     ["pdf", "pptx", "ppt", "odp", "png", "jpg", "html"]),
+  ]
+
+  static func libreOfficeWrites(from source: String) -> Set<String> {
+    libreOfficeFamilies.filter { $0.reads.contains(source) }.reduce(into: Set<String>()) { $0.formUnion($1.writes) }
+  }
+
+  /// The formats an installed tool writes for this kind of file and the system
+  /// does not, as types this Mac knows by name. Each tool for its own kinds:
+  /// ffmpeg's muxers for sound and film, pandoc's and LibreOffice's writers
+  /// for documents - ffmpeg also writes WebVTT and playlists, and those are not
+  /// what a document becomes. Only what the tools have already said.
+  static func formatsWrittenByTools(for kind: ConvertKind) -> [UTType] {
+    var extensions: Set<String> = []
+    switch kind {
+    case .video, .audio:
+      extensions = ffmpegWritesIfKnown
+    case .document:
+      if let pandoc = formats.peek()?.write {
+        let byName = Dictionary(extensionNames.map { ($0.value, $0.key) }, uniquingKeysWith: { first, _ in first })
+        extensions.formUnion(pandoc.map { byName[$0] ?? $0 })
+      }
+      if libreOffice != nil { extensions.formUnion(libreOfficeFamilies.flatMap(\.writes)) }
+    default:
+      return []
+    }
+    return extensions.compactMap { ext in
+      guard let type = UTType(filenameExtension: ext), !type.isDynamic else { return nil }
+      return type
+    }
+  }
 
   private final class FormatAnswers: @unchecked Sendable {
     private let lock = NSLock()
@@ -136,6 +229,16 @@ enum ExternalBridge {
     "txt": "plain",
   ]
 
+  /// Whether pandoc reads a file of this extension, as far as it has said.
+  /// Asked when a file is first looked at, which can be while a window is
+  /// being drawn, so pandoc is not run for the answer.
+  static func pandocIsKnownToRead(_ ext: String) -> Bool {
+    formats.peek()?.read.contains(name(of: ext)) ?? false
+  }
+
+  /// Whether pandoc writes this format. Runs pandoc if it has not been asked.
+  static func pandocWritesFormat(_ ext: String) -> Bool { pandocWrites(ext) }
+
   static func canHandle(_ type: UTType) -> Bool {
     guard let ext = type.preferredFilenameExtension else { return false }
     if Fonts.handles(ext) { return ExternalTools.locate("fonttools") != nil }
@@ -144,11 +247,11 @@ enum ExternalBridge {
     // time-based is worth offering it and nothing else is.
     let isTimeBased = type.conforms(to: .audiovisualContent) || type.conforms(to: .audio)
     if ExternalTools.locate("ffmpeg") != nil, isTimeBased { return true }
-    // LibreOffice opens what an office suite opens. Rather than list those
-    // formats - which would go stale and is a list nobody can finish - it is
-    // offered anything that is neither a picture nor a recording, and only
-    // after every processor that reads the format natively has declined.
-    return libreOffice != nil && !isTimeBased && !type.conforms(to: .image)
+    // LibreOffice opens what an office suite opens, and is asked only after
+    // every processor that reads the format natively has declined.
+    // What its filters read, not anything that is not a picture: offered
+    // everything else, it took a PDF asked for a JPEG away from the PDF path.
+    return libreOffice != nil && libreOfficeFamilies.contains { $0.reads.contains(ext.lowercased()) }
   }
 
   /// Whether a tool on this Mac writes the format - what `plan` would find a
@@ -170,9 +273,52 @@ enum ExternalBridge {
     return isTimeBased && ExternalTools.locate("ffmpeg") != nil
   }
 
+  /// The subtitle formats ffmpeg writes. It reads the track out of a film and
+  /// has no writer for the rest: asked for an SBV it answered "Unable to
+  /// choose an output format", which went to the user as it stood.
+  private static let subtitlesFFmpegWrites: Set<String> = ["srt", "vtt", "webvtt"]
+
+  private static func isASubtitleNoToolWrites(_ target: String) -> Bool {
+    Subtitles.carriesCues(target) && !subtitlesFFmpegWrites.contains(target)
+  }
+
+  /// Whether `plan` would find a tool for the pair, judged by the two
+  /// extensions: the same conditions in the same order. The conformance tests
+  /// fail if the two part.
+  ///
+  /// This is asked while a sheet is being drawn, so pandoc is consulted only
+  /// if it has already answered: running it there waited on a subprocess in
+  /// the middle of a SwiftUI update.
+  static func couldPlan(from source: String, to target: String) -> Bool {
+    if isASubtitleNoToolWrites(target) { return false }
+    let nowhere = URL(fileURLWithPath: "/dev/null")
+    if ExternalTools.locate("fonttools") != nil,
+       Fonts.arguments(from: source, to: target, input: nowhere, output: nowhere) != nil {
+      return true
+    }
+    if ExternalTools.locate("pandoc") != nil, let known = formats.peek(),
+       source == "txt" ? !known.read.isEmpty : known.read.contains(name(of: source)),
+       known.write.contains(name(of: target)) {
+      return true
+    }
+
+    let sourceType = UTType(filenameExtension: source)
+    let wantsTheSubtitles = Subtitles.carriesCues(target)
+      && (sourceType?.conforms(to: .audiovisualContent) ?? false)
+    let wantsSomethingStill = !wantsTheSubtitles && (UTType(filenameExtension: target).map {
+      $0.conforms(to: .image) || $0.conforms(to: .text) || $0.conforms(to: .pdf)
+    } ?? false)
+    let sourceIsTimeBased = sourceType.map {
+      $0.conforms(to: .audiovisualContent) || $0.conforms(to: .audio)
+    } ?? false
+    if !wantsSomethingStill, sourceIsTimeBased, ExternalTools.locate("ffmpeg") != nil { return true }
+    return libreOffice != nil && libreOfficeWrites(from: source).contains(target)
+  }
+
   static func plan(from input: URL, to output: URL, operations: [Operation]) -> Plan? {
     let source = input.pathExtension.lowercased()
     let target = output.pathExtension.lowercased()
+    if isASubtitleNoToolWrites(target) { return nil }
 
     if let fonttools = ExternalTools.locate("fonttools"),
        let arguments = Fonts.arguments(from: source, to: target, input: input, output: output) {
@@ -182,11 +328,17 @@ enum ExternalBridge {
     if let pandoc = ExternalTools.locate("pandoc"), pandocReads(source), pandocWrites(target) {
       // Standalone, or an HTML output is a fragment with no <head> and an EPUB
       // has no spine: a file somebody can open, not a piece of one.
-      return Plan(
-        tool: pandoc,
-        toolName: "pandoc",
-        arguments: ["--standalone", input.path, "-o", output.path]
-      )
+      // Built a piece at a time: one long `+` chain of conditionals was more
+      // than the macOS 15 compiler would type-check.
+      var arguments = ["--standalone"]
+      // Plain text is read as Markdown, which it is a subset of: pandoc has
+      // no reader called "plain", so a .txt could not become an EPUB.
+      if source == "txt" { arguments += ["-f", "markdown"] }
+      // Pictures travel inside the file, and are looked for beside the source.
+      if target == "html" { arguments.append("--embed-resources") }
+      for (key, value) in Self.statedDetails(of: input) { arguments += ["-M", "\(key)=\(value)"] }
+      arguments += ["--resource-path", input.deletingLastPathComponent().path, input.path, "-o", output.path]
+      return Plan(tool: pandoc, toolName: "pandoc", arguments: arguments)
     }
 
     // ffmpeg turns time into time. A picture or a document as the target is
@@ -219,10 +371,49 @@ enum ExternalBridge {
         // would try to carry the picture and the sound into a .srt.
         arguments += ["-map", "0:s:0"]
       }
-      if let size = Self.size(in: operations) {
-        // -2 rather than -1 for the side that follows: some encoders refuse an
-        // odd number of pixels, and this rounds to an even one.
-        arguments += ["-vf", "scale=\(size.width ?? -2):\(size.height ?? -2)"]
+      // Sound asked of a film is the sound alone. Without this the picture
+      // went into the .m4a as well, since the container will hold one.
+      if targetType.map(MediaProcessor.isSoundOnly) ?? false {
+        arguments.append("-vn")
+      } else if !wantsTheSubtitles {
+        // Every picture, every soundtrack and every subtitle, not ffmpeg's
+        // choice of one of each. The question marks let a film without one
+        // through.
+        arguments += ["-map", "0:v?", "-map", "0:a?"]
+        // Subtitles only where the container has a way to hold them: an MP4 or
+        // a MOV as mov_text, Matroska and WebM as text of their own. Mapped into
+        // anything else - an MXF, an AVI - ffmpeg stopped looking for an encoder.
+        if ["mp4", "m4v", "mov"].contains(target) { arguments += ["-map", "0:s?", "-c:s", "mov_text"] }
+        if target == "mkv" { arguments += ["-map", "0:s?", "-c:s", "srt"] }
+        if target == "webm" { arguments += ["-map", "0:s?", "-c:s", "webvtt"] }
+      }
+      // An Ogg file holds Opus unless something else was asked for. Left to
+      // itself, an ffmpeg built without Vorbis puts FLAC in it - which is what
+      // `--to opus` produced, and which macOS cannot then read back.
+      if ["ogg", "oga", "opus"].contains(target), MediaProcessor.chosenCodec(in: operations) == nil {
+        arguments += ["-c:a", "libopus"]
+      }
+      // MXF takes sound at 48 kHz and nothing else; a film recorded at 44.1
+      // failed with ffmpeg's "only 48khz is implemented".
+      if target == "mxf" { arguments += ["-ar", "48000"] }
+      if let filter = Self.scaling(in: operations) { arguments += ["-vf", filter] }
+      // The encoder that was asked for, and how hard to squeeze: both were
+      // dropped on this path, so a codec chosen for an MKV made no difference.
+      for operation in operations {
+        switch operation {
+        case .encode(let codec):
+          if let name = Self.ffmpegName[codec] { arguments += [codec.isVideo ? "-c:v" : "-c:a", name] }
+        case .quality(let level):
+          if targetType.map(MediaProcessor.isSoundOnly) ?? false {
+            arguments += ["-b:a", "\(MediaProcessor.bitrate(forQuality: level, channels: 2) / 1000)k"]
+          } else {
+            // 100 is visually lossless and 1 is barely a picture: the encoders'
+            // own scale runs the other way, from about 16 to about 40.
+            arguments += ["-crf", "\(40 - level * 24 / 100)"]
+          }
+        default:
+          break
+        }
       }
       // ffmpeg carries every tag across unless told otherwise, so a privacy
       // level was a promise this path did not keep. It removes a named tag or
@@ -236,9 +427,7 @@ enum ExternalBridge {
       return Plan(tool: ffmpeg, toolName: "ffmpeg", arguments: arguments)
     }
 
-    if !wantsSomethingStill { return nil }
-
-    if let office = libreOffice {
+    if let office = libreOffice, libreOfficeWrites(from: source).contains(target) {
       // LibreOffice names its own output, after the input and the format it
       // was asked for, so it is given a folder to itself and the one file
       // that appears is moved into place.
@@ -263,6 +452,52 @@ enum ExternalBridge {
     return nil
   }
 
+  /// What ffmpeg calls each encoder.
+  private static let ffmpegName: [Codec: String] = [
+    .h264: "libx264", .hevc: "libx265", .proRes422: "prores_ks", .proRes4444: "prores_ks",
+    .aac: "aac", .appleLossless: "alac", .flac: "flac", .linearPCM: "pcm_s16le", .opus: "libopus",
+  ]
+
+  /// The new size as ffmpeg's scale filter, honouring the fit. A bare scale to
+  /// both sides stretched every film, whatever fit had been chosen.
+  private static func scaling(in operations: [Operation]) -> String? {
+    for operation in operations {
+      guard case .resize(let width, let height, let mode) = operation, width != nil || height != nil else { continue }
+      // -2 rather than -1 for a side that follows: some encoders refuse an odd
+      // number of pixels, and this rounds to an even one.
+      guard let width, let height else { return "scale=\(width ?? -2):\(height ?? -2)" }
+      switch mode {
+      case .stretch:
+        return "scale=\(width):\(height)"
+      case .proportional:
+        return "scale=\(width):\(height):force_original_aspect_ratio=decrease:force_divisible_by=2"
+      case .cropCenter:
+        return "scale=\(width):\(height):force_original_aspect_ratio=increase,crop=\(width):\(height)"
+      case .pad:
+        return "scale=\(width):\(height):force_original_aspect_ratio=decrease,pad=\(width):\(height):(ow-iw)/2:(oh-ih)/2"
+      }
+    }
+    return nil
+  }
+
+  /// Who wrote a document and what it is called, where the system reads them
+  /// and pandoc does not: a Word file written by macOS keeps them where pandoc
+  /// does not look, and they were lost on the way through it. Only the
+  /// formats the system reads without a web view, so this is safe off the
+  /// main thread.
+  private static func statedDetails(of input: URL) -> [String: String] {
+    let readers: [String: NSAttributedString.DocumentType] = ["docx": .officeOpenXML, "odt": .openDocument, "rtf": .rtf]
+    guard let reader = readers[input.pathExtension.lowercased()] else { return [:] }
+    var read: NSDictionary?
+    _ = try? NSAttributedString(url: input, options: [.documentType: reader], documentAttributes: &read)
+    let found = (read as? [NSAttributedString.DocumentAttributeKey: Any]) ?? [:]
+    var details: [String: String] = [:]
+    for (key, name) in [(NSAttributedString.DocumentAttributeKey.title, "title"), (.author, "author"), (.subject, "subject")] {
+      if let value = found[key] as? String, !value.isEmpty { details[name] = value }
+    }
+    return details
+  }
+
   private static func size(in operations: [Operation]) -> (width: Int?, height: Int?)? {
     for operation in operations {
       if case .resize(let width, let height, _) = operation, width != nil || height != nil {
@@ -273,7 +508,7 @@ enum ExternalBridge {
   }
 
   private static func pandocReads(_ ext: String) -> Bool {
-    pandocFormats.read.contains(name(of: ext))
+    ext.lowercased() == "txt" ? !pandocFormats.read.isEmpty : pandocFormats.read.contains(name(of: ext))
   }
 
   private static func pandocWrites(_ ext: String) -> Bool {
@@ -287,10 +522,40 @@ enum ExternalBridge {
 
   private static func askPandoc() -> (read: Set<String>, write: Set<String>) {
     guard let pandoc = ExternalTools.locate("pandoc") else { return ([], []) }
-    return (list(pandoc, "--list-input-formats"), list(pandoc, "--list-output-formats"))
+    // Its own internal formats are in both lists - `json`, `native` and `xml`
+    // are how pandoc writes down a document it has parsed, not JSON or XML as
+    // anybody means them. Left in, a CSV asked for XML became pandoc's notes
+    // on a table, reported as converted.
+    let itsOwn: Set<String> = ["json", "native", "xml"]
+    return (
+      list(pandoc, "--list-input-formats").subtracting(itsOwn),
+      list(pandoc, "--list-output-formats").subtracting(itsOwn)
+    )
+  }
+
+  private static func run(_ tool: URL, _ arguments: [String]) -> String {
+    let process = Process()
+    process.executableURL = tool
+    process.arguments = arguments
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = Pipe()
+    guard (try? process.run()) != nil else { return "" }
+    let said = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return String(decoding: said, as: UTF8.self)
   }
 
   private static func list(_ tool: URL, _ argument: String) -> Set<String> {
+    // ffmpeg lists its muxers in a table: flags, then the name.
+    if argument == "-muxers" {
+      let rows = run(tool, ["-hide_banner", "-muxers"]).split(whereSeparator: \.isNewline)
+      return Set(rows.compactMap { row -> String? in
+        let fields = row.split(separator: " ", omittingEmptySubsequences: true)
+        guard fields.count >= 2, fields[0].contains("E"), !fields[0].contains("d") else { return nil }
+        return String(fields[1])
+      })
+    }
     let process = Process()
     process.executableURL = tool
     process.arguments = [argument]
@@ -320,6 +585,10 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
 
   func canProcess(_ file: ProcessableFile) -> Bool {
     ExternalBridge.canHandle(file.fileType)
+  }
+
+  func takes(_ file: ProcessableFile, to target: UTType) -> Bool {
+    ExternalBridge.couldPlan(from: file.url.pathExtension.lowercased(), to: Conversions.fileExtension(of: target))
   }
 
   func process(
@@ -382,6 +651,17 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
   /// film has no subtitles in it.
   static func explain(_ error: Error, about input: URL) -> Error {
     let said = error.localizedDescription
+
+    // ffmpeg could not read the file either. Its own account - "moov atom not
+    // found" - is true and means nothing to anybody who has not written a
+    // demuxer; what it means is that the file is not whole.
+    if said.contains("[in#") || said.contains("Error opening input")
+        || said.contains("Invalid data found when processing input") {
+      return ProcessingError.conversionFailed(
+        reason: "\(input.lastPathComponent) cannot be opened: it looks damaged or incomplete. "
+          + "If it is still being copied or downloaded, try again once it has arrived."
+      )
+    }
 
     if said.contains("matches no streams") {
       return ProcessingError.conversionFailed(

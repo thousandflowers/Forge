@@ -44,7 +44,7 @@ enum AppSection: String, CaseIterable, Identifiable {
 extension ProcessingStatus {
   var color: Color {
     switch self {
-    case .pending, .cancelled: return .secondary
+    case .pending, .cancelled, .skipped: return .secondary
     case .processing: return .orange
     case .completed: return .green
     case .failed: return .red
@@ -57,6 +57,7 @@ extension ProcessingStatus {
     case .processing: return "arrow.triangle.2.circlepath"
     case .completed: return "checkmark.circle.fill"
     case .cancelled: return "slash.circle"
+    case .skipped: return "arrow.uturn.right.circle"
     case .failed: return "xmark.circle.fill"
     }
   }

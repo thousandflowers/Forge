@@ -90,6 +90,11 @@ struct ProcessableFile: Identifiable, Hashable, Sendable {
     return type
   }
 
+  /// Whether the name alone says what the file is. Pictures are also known by
+  /// what is inside them, which is right for a file somebody chose and wrong
+  /// for one still arriving under a provisional name.
+  static func isNamedForWhatItIs(_ url: URL) -> Bool { namedType(of: url) != nil }
+
   private static func namedType(of url: URL) -> UTType? {
     guard let type = UTType(filenameExtension: url.pathExtension) else { return nil }
     guard type.isDynamic else { return type }
@@ -101,6 +106,11 @@ struct ProcessableFile: Identifiable, Hashable, Sendable {
     // WOFF2 has no type either, and is a font rather than text.
     if ExternalBridge.Fonts.handles(url.pathExtension) {
       return UTType(filenameExtension: url.pathExtension, conformingTo: .font)
+    }
+    // What pandoc reads and macOS has no name for - reStructuredText, Org,
+    // LaTeX, notebooks - is text to a tool that is installed.
+    if ExternalBridge.pandocIsKnownToRead(url.pathExtension) {
+      return UTType(filenameExtension: url.pathExtension, conformingTo: .text)
     }
     return nil
   }

@@ -13,6 +13,9 @@ enum ProcessingError: LocalizedError, Sendable {
   case unsupportedConversion(from: UTType, to: UTType)
   case conversionFailed(reason: String)
   case validationFailed(message: String)
+  /// The preset's "Only if" is not true of this file, so it was left as it
+  /// is - which is the preset doing its job, not a failure.
+  case leftAlone(reason: String)
 
   var errorDescription: String? {
     switch self {
@@ -21,14 +24,29 @@ enum ProcessingError: LocalizedError, Sendable {
     case .unknownType:
       return "The file type could not be determined."
     case .unreadableFormat(let type):
-      return "Forge cannot open \(Self.name(type)) files."
+      return "Forge cannot open \(Self.name(type)) files." + Self.whatWouldOpen(type)
     case .unsupportedConversion(let from, let to):
       return "Forge cannot convert \(Self.name(from)) to \(Self.name(to))."
     case .conversionFailed(let reason):
       return reason
     case .validationFailed(let message):
       return message
+    case .leftAlone(let reason):
+      return reason
     }
+  }
+
+  /// The tool that opens this format, where there is one and this Mac lacks
+  /// it. A refusal that stops at "cannot open" leaves out the one thing that
+  /// would change the answer.
+  private static func whatWouldOpen(_ type: UTType) -> String {
+    guard let ext = type.preferredFilenameExtension?.lowercased() else { return "" }
+    for capability in Capabilities.all where capability.evidence.contains(ext) {
+      if case .needsPack(let pack) = capability.status, pack.isWired, let tool = pack.tool, !tool.isInstalled {
+        return " \(tool.formula) can: \(tool.installCommand)"
+      }
+    }
+    return ""
   }
 
   private static func name(_ type: UTType) -> String {

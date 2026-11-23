@@ -27,6 +27,8 @@ final class Reporter: @unchecked Sendable {
       print(output?.path ?? name)
     case .cancelled:
       write(stderr: "cancelled  \(name)")
+    case .skipped:
+      write(stderr: "skipped    \(name): \(error ?? "")")
     default:
       write(stderr: "failed     \(name): \(error ?? "unknown error")")
     }
@@ -35,6 +37,7 @@ final class Reporter: @unchecked Sendable {
   static func summary(_ report: Batch.Report) -> String {
     var parts = ["\(report.converted) converted"]
     if report.failed > 0 { parts.append("\(report.failed) failed") }
+    if report.skipped > 0 { parts.append("\(report.skipped) skipped") }
     if report.cancelled > 0 { parts.append("\(report.cancelled) cancelled") }
     return parts.joined(separator: ", ") + "."
   }

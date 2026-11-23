@@ -283,8 +283,13 @@ final class AppModel: ObservableObject {
         limit: limit,
         coordinator: self.coordinator
       ) { event in
-        guard case .finished(_, _, _, let outputs, _) = event, !outputs.isEmpty else { return }
-        Task { @MainActor in outputs.forEach(self.remember) }
+        guard case .finished(_, let status, _, let outputs, let reason) = event else { return }
+        Task { @MainActor in
+          outputs.forEach(self.remember)
+          // A conversion started from the menu bar that fails has no row to
+          // turn red. It said nothing unless notifications were on.
+          if status == .failed, let reason { self.lastError = reason }
+        }
       }
 
       await self.refreshHistory()
@@ -306,7 +311,16 @@ final class AppModel: ObservableObject {
       return
     }
     preset.position = (presets.map(\.position).max() ?? 0) + 1
+    // A run that was not a saved preset - the command line, a batch set up by
+    // hand - has no name worth keeping: "command line (from history)". It is
+    // named after what it was done to.
+    if !presets.contains(where: { $0.id == entry.ruleId }) {
+      preset.name = "Like \(entry.fileURL.lastPathComponent)"
+    }
     savePreset(preset)
+    // And shown: nothing on the History screen changed, so there was no way
+    // to tell it had been saved.
+    section = .presets
   }
 
   func open(_ urls: [URL]) {
@@ -413,7 +427,10 @@ final class AppModel: ObservableObject {
     guard watchers[folder.id] == nil else { return }
     let watcher = MonitoredFolderWatcher()
     do {
-      try watcher.startWatching(folder: folder) { [weak self] url in
+      try watcher.startWatching(
+        folder: folder,
+        onGone: { [weak self] in Task { @MainActor in self?.stoppedWatching(folder) } }
+      ) { [weak self] url in
         await self?.processIncoming(url, folder: folder)
       }
       watchers[folder.id] = watcher
@@ -425,6 +442,16 @@ final class AppModel: ObservableObject {
         folders[index].isActive = false
       }
     }
+  }
+
+  /// The folder was moved or deleted. It went on showing as watched, and
+  /// nothing said that nothing would arrive in it again.
+  private func stoppedWatching(_ folder: MonitoredFolder) {
+    stopWatcher(folder)
+    if let index = folders.firstIndex(where: { $0.id == folder.id }) {
+      folders[index].isActive = false
+    }
+    lastError = "“\(folder.displayName)” was moved or deleted, so Forge has stopped watching it."
   }
 
   private func stopWatcher(_ folder: MonitoredFolder) {
@@ -460,7 +487,8 @@ final class AppModel: ObservableObject {
       entry.outputs.forEach(remember)
     } catch is CancellationError {
       // nothing to say
-    } catch ProcessingError.unreadableFormat, ProcessingError.unsupportedConversion, ProcessingError.unknownType {
+    } catch ProcessingError.unreadableFormat, ProcessingError.unsupportedConversion, ProcessingError.unknownType,
+            ProcessingError.leftAlone {
       // A watched folder receives whatever is dropped in it. Files the preset
       // cannot convert are recorded in history; interrupting the user for each
       // one is not useful.

@@ -38,6 +38,22 @@ struct OutputFormat: Identifiable, Hashable {
   /// anything with a soundtrack. One format, because both paths write text.
   static var text: [OutputFormat] { [OutputFormat(type: .plainText)] }
 
+  /// What the tools installed on this Mac write for this kind of file and the
+  /// system does not. Offered in a group of their own, so that it is clear
+  /// where they come from - and why they are gone if a tool is.
+  static func withTools(for kind: ConvertKind) -> [OutputFormat] {
+    let own = Set((audio + video + images + documents + data + subtitles + fonts + models).compactMap(\.type))
+    let fits: (UTType) -> Bool
+    switch kind {
+    case .video: fits = { $0.conforms(to: .audiovisualContent) || $0.conforms(to: .audio) }
+    case .audio: fits = { $0.conforms(to: .audio) && !$0.conforms(to: .movie) }
+    case .document: fits = { !$0.conforms(to: .audiovisualContent) && !$0.conforms(to: .image) }
+    default: return []
+    }
+    let found = ExternalBridge.formatsWrittenByTools(for: kind)
+    return sorted(Set(found.filter { fits($0) && !own.contains($0) }))
+  }
+
   /// The subtitle formats Forge writes. They are named by extension because
   /// macOS has no types for them - `.srt` is not in the type database at all.
   static var subtitles: [OutputFormat] {

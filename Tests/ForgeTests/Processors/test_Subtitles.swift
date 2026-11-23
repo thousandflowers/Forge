@@ -171,4 +171,36 @@ final class SubtitleTests: BaseTestCase {
     let source = try file("empty.srt", "just some words\nand some more\n")
     XCTAssertThrowsError(try Subtitles.read(source))
   }
+
+  // MARK: - What real files do
+
+  private func cues(_ text: String, named name: String = "talk.srt") throws -> [Subtitles.Cue] {
+    let url = path(name)
+    try Data(text.utf8).write(to: url)
+    return try Subtitles.read(url)
+  }
+
+  /// A separator line holding a space is still a separator: the two lines on
+  /// either side of it were read as one.
+  func test_aLineOfSpacesStillSeparatesTwoLines() throws {
+    let read = try cues("1\n00:00:01,000 --> 00:00:02,000\nFirst\n \n2\n00:00:03,000 --> 00:00:04,000\nSecond\n")
+    XCTAssertEqual(read.map(\.text), ["First", "Second"])
+  }
+
+  /// A blank line inside what somebody says ended the line there and threw
+  /// the rest away.
+  func test_aBlankLineInsideWhatIsSaidDoesNotCutItOff() throws {
+    let read = try cues("1\n00:00:01,000 --> 00:00:02,000\nFirst half\n\nsecond half\n\n2\n00:00:03,000 --> 00:00:04,000\nNext\n")
+    XCTAssertEqual(read.count, 2)
+    XCTAssertTrue(read[0].text.contains("First half") && read[0].text.contains("second half"), read[0].text)
+    XCTAssertEqual(read[1].text, "Next")
+  }
+
+  /// 1.9996 seconds was written as `00:00:01.1000`: the thousandths rounded
+  /// up to a thousand and the second did not move.
+  func test_aTimeThatRoundsUpCarriesIntoTheSecond() {
+    XCTAssertEqual(Subtitles.stamp(1.9996, separator: "."), "00:00:02.000")
+    XCTAssertEqual(Subtitles.stamp(59.9999, separator: ","), "00:01:00,000")
+    XCTAssertEqual(Subtitles.stamp(1.2344, separator: "."), "00:00:01.234")
+  }
 }

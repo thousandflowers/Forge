@@ -91,6 +91,9 @@ enum ProcessingStatus: String, Codable, Sendable, CaseIterable {
   case completed
   case failed
   case cancelled
+  /// Left as it was because the preset's "Only if" did not hold. Counted
+  /// apart from failures: nothing went wrong.
+  case skipped
 
   var displayName: String { rawValue.capitalized }
 }

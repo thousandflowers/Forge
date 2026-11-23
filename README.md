@@ -8,7 +8,7 @@
 
 <img src="docs/screens/demo.gif" alt="Forge: the Convert, Presets, Gallery and Capabilities screens" width="820">
 
-Drop in a folder of photos, a video, a stack of PDFs. Forge asks what they should become, in the terms of what they are, and converts them in parallel without loading them all into memory. It is one binary that is both a Mac app and a command line tool, it works with Core Image, AVFoundation, PDFKit and Vision, and it asks macOS what this particular machine can read and write — so it never offers a conversion it cannot finish.
+Drop in a folder of photos, a video, a stack of PDFs. Forge asks what they should become, in the terms of what they are, and converts them in parallel without loading them all into memory. It is one binary that is both a Mac app and a command line tool, it works with Core Image, AVFoundation, PDFKit and Vision, and it asks macOS what this particular machine can read and write — so each file is offered only what that file can become.
 
 [![Build and Test](https://github.com/thousandflowers/Forge/actions/workflows/build.yml/badge.svg)](https://github.com/thousandflowers/Forge/actions/workflows/build.yml)
 [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-orange.svg)](https://swift.org)
@@ -62,7 +62,7 @@ Some conversions are not settings, they are things Forge works out from what you
 | You do this | Forge does this |
 | --- | --- |
 | Rename a file `holiday_10MB.jpg` | Compresses it under ten megabytes, keeping the best quality that fits |
-| Convert a video to JPEG or PNG | Exports every frame, into a folder named after the clip |
+| Convert a video to JPEG or PNG | Exports its frames, twelve a second, into a folder named after the clip |
 | Convert a video to GIF | Turns the clip into an animated GIF, and a GIF back into video |
 | Convert a recording to `.txt`, `.rtf`, `.docx` or `.pdf` | Transcribes it on device, into that format |
 | Convert a scan or a photo to text | Reads it with Vision, on device |
@@ -188,7 +188,7 @@ forge formats              # what this Mac can read and write
 It reads the presets you save in the app, writes to the same history, and exits non zero if any file failed, so it drops straight into a script. Converted paths go to stdout, problems to stderr:
 
 ```bash
-forge convert *.heic --to jpeg --out ./web --quiet > converted.txt
+forge convert *.heic --to jpeg --out ./web > converted.txt
 ```
 
 Completions come from the tool itself: `forge --generate-completion-script zsh` (or `bash`, or `fish`).
