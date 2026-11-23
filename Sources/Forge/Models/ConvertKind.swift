@@ -225,6 +225,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
         // The track already inside the film, which ffmpeg pulls out.
         OutputGroup("Subtitles", ExternalTools.locate("ffmpeg") == nil ? [] : OutputFormat.subtitles),
         OutputGroup("Text", OutputFormat.text),
+        OutputGroup("With your tools", OutputFormat.withTools(for: .video)),
       ]
     case .subtitle:
       return [
@@ -238,6 +239,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
         OutputGroup("Audio", OutputFormat.audio),
         OutputGroup("Video container", OutputFormat.video),
         OutputGroup("Text", OutputFormat.text),
+        OutputGroup("With your tools", OutputFormat.withTools(for: .audio)),
       ]
     case .document:
       // Audio is not a mistake: SimpleDocProcessor speaks a document asked for
@@ -246,6 +248,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
         OutputGroup("Documents", OutputFormat.documents),
         OutputGroup("Images", OutputFormat.images),
         OutputGroup("Read aloud", OutputFormat.audio),
+        OutputGroup("With your tools", OutputFormat.withTools(for: .document)),
       ]
     case .data:
       return [OutputGroup("Data", OutputFormat.data)]

@@ -120,4 +120,21 @@ final class OfferTests: BaseTestCase {
       XCTAssertTrue(CGImageDestinationFinalize(destination), "\(type.identifier) is offered and cannot be written")
     }
   }
+
+  /// What an installed tool writes was reachable from the command line only:
+  /// the sheet offered what macOS writes and nothing else. It is offered now,
+  /// in a group of its own, for the files that can become it.
+  func test_whatAToolWritesIsOfferedInAGroupOfItsOwn() async throws {
+    try XCTSkipUnless(ExternalTools.locate("ffmpeg") != nil, "ffmpeg is not installed here")
+    _ = ExternalBridge.ffmpegWrites
+    _ = ExternalBridge.pandocFormats
+    let mkv = try XCTUnwrap(UTType(filenameExtension: "mkv"))
+    XCTAssertTrue(ExternalBridge.ffmpegWrites.contains("mkv"), "asked of ffmpeg, not written down here")
+
+    let film = try ProcessableFile(url: try await Fixture.video(at: path("clip.mov"), seconds: 1, withAudio: true))
+    let groups = ConvertKind.video.outputGroups(for: [film])
+    let tools = try XCTUnwrap(groups.first { $0.title == "With your tools" })
+    XCTAssertTrue(tools.formats.contains { $0.type == mkv })
+    XCTAssertFalse(tools.formats.contains { $0.type == .mpeg4Movie }, "what macOS writes stays where it was")
+  }
 }

@@ -87,13 +87,74 @@ enum ExternalBridge {
   /// Whether pandoc has been asked yet. Reading this never runs it.
   static var pandocHasAnswered: Bool { formats.peek() != nil }
 
-  /// Ask pandoc now, off the main thread, so the first question a window
+  /// Ask the tools now, off the main thread, so the first question a window
   /// asks already has its answer.
   static func warmUp() {
-    Task.detached(priority: .utility) { _ = pandocFormats }
+    Task.detached(priority: .userInitiated) { _ = ffmpegWrites }
+    Task.detached(priority: .userInitiated) { _ = pandocFormats }
   }
 
   private static let formats = FormatAnswers()
+  private static let ffmpegAnswers = FormatAnswers()
+
+  /// The file extensions ffmpeg writes, from ffmpeg itself: each muxer it has
+  /// says which extensions it is for. A question per muxer, nearly two hundred
+  /// of them, asked side by side, and the answer kept on disk against the
+  /// ffmpeg that gave it: asked one at a time in the background it took longer
+  /// than it takes to open the Convert sheet, which then offered none of them.
+  static var ffmpegWrites: Set<String> {
+    ffmpegAnswers.answer {
+      guard let ffmpeg = ExternalTools.locate("ffmpeg") else { return ([], []) }
+      let stamp = (try? ffmpeg.resolvingSymlinksInPath().resourceValues(forKeys: [.contentModificationDateKey]))?
+        .contentModificationDate?.timeIntervalSince1970 ?? 0
+      let key = "\(ffmpeg.resolvingSymlinksInPath().path)|\(Int(stamp))"
+      let kept = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+        .appendingPathComponent("Forge", isDirectory: true).appendingPathComponent("ffmpeg-writes.json")
+      if let kept, let data = try? Data(contentsOf: kept),
+         let saved = try? JSONDecoder().decode([String: [String]].self, from: data), let known = saved[key] {
+        return ([], Set(known))
+      }
+
+      let muxers = Array(list(ffmpeg, "-muxers"))
+      var found = [Set<String>](repeating: [], count: muxers.count)
+      found.withUnsafeMutableBufferPointer { slots in
+        let base = slots.baseAddress!
+        DispatchQueue.concurrentPerform(iterations: muxers.count) { index in
+          let help = run(ffmpeg, ["-hide_banner", "-h", "muxer=\(muxers[index])"])
+          guard let line = help.split(whereSeparator: \.isNewline).first(where: { $0.contains("Common extensions:") }) else { return }
+          let named = line.split(separator: ":", maxSplits: 1).last ?? ""
+          base[index] = Set(named.split(separator: ",").map {
+            $0.trimmingCharacters(in: .whitespaces.union(CharacterSet(charactersIn: "."))).lowercased()
+          })
+        }
+      }
+      let extensions = found.reduce(into: Set<String>()) { $0.formUnion($1) }
+
+      if let kept, !extensions.isEmpty {
+        try? FileManager.default.createDirectory(at: kept.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? JSONEncoder().encode([key: extensions.sorted()]).write(to: kept, options: .atomic)
+      }
+      return ([], extensions)
+    }.write
+  }
+
+  /// What ffmpeg has already said it writes, without asking it.
+  static var ffmpegWritesIfKnown: Set<String> { ffmpegAnswers.peek()?.write ?? [] }
+
+  /// The formats an installed tool writes and the system does not, as types
+  /// this Mac knows by name - so a muxer for a broadcast format nobody opens is
+  /// not offered. Only what the tools have already said: asked from a view.
+  static func formatsWrittenByTools() -> [UTType] {
+    var extensions = ffmpegWritesIfKnown
+    if let pandoc = formats.peek()?.write {
+      let byName = Dictionary(extensionNames.map { ($0.value, $0.key) }, uniquingKeysWith: { first, _ in first })
+      extensions.formUnion(pandoc.map { byName[$0] ?? $0 })
+    }
+    return extensions.compactMap { ext in
+      guard let type = UTType(filenameExtension: ext), !type.isDynamic else { return nil }
+      return type
+    }
+  }
 
   private final class FormatAnswers: @unchecked Sendable {
     private let lock = NSLock()
@@ -443,7 +504,29 @@ enum ExternalBridge {
     )
   }
 
+  private static func run(_ tool: URL, _ arguments: [String]) -> String {
+    let process = Process()
+    process.executableURL = tool
+    process.arguments = arguments
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = Pipe()
+    guard (try? process.run()) != nil else { return "" }
+    let said = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return String(decoding: said, as: UTF8.self)
+  }
+
   private static func list(_ tool: URL, _ argument: String) -> Set<String> {
+    // ffmpeg lists its muxers in a table: flags, then the name.
+    if argument == "-muxers" {
+      let rows = run(tool, ["-hide_banner", "-muxers"]).split(whereSeparator: \.isNewline)
+      return Set(rows.compactMap { row -> String? in
+        let fields = row.split(separator: " ", omittingEmptySubsequences: true)
+        guard fields.count >= 2, fields[0].contains("E"), !fields[0].contains("d") else { return nil }
+        return String(fields[1])
+      })
+    }
     let process = Process()
     process.executableURL = tool
     process.arguments = [argument]
