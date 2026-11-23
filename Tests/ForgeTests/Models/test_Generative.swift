@@ -342,6 +342,15 @@ final class SizeInNameTests: BaseTestCase {
     XCTAssertNil(SizeInName.ceiling(in: "10MB.jpg"), "the size is the subject here, not an instruction")
     XCTAssertNil(SizeInName.ceiling(in: "report_final.pdf"))
     XCTAssertNil(SizeInName.ceiling(in: "photo_0MB.jpg"))
+    // The short units are how wallpapers and renders are named, not orders:
+    // `wallpaper_4k.png` was shrunk to fit in four kilobytes.
+    XCTAssertNil(SizeInName.ceiling(in: "wallpaper_4k.png"))
+    XCTAssertNil(SizeInName.ceiling(in: "render_8K.png"))
+    XCTAssertNil(SizeInName.ceiling(in: "IMG_20k.png"))
+    XCTAssertNil(SizeInName.ceiling(in: "drive_2m.mov"))
+    XCTAssertNil(SizeInName.ceiling(in: "backup_1g.zip"))
+    XCTAssertEqual(SizeInName.ceiling(in: "wallpaper_4KB.png"), 4_000, "spelled out, it is an order")
+    XCTAssertEqual(SizeInName.ceiling(in: "archive_1GB.mov"), 1_000_000_000)
   }
 
   /// The name is the more specific answer, so it replaces a preset's ceiling.
