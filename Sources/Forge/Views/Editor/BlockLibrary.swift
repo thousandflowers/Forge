@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 struct LibraryEntry: Identifiable {
   enum Group: String, CaseIterable {
     case output = "Comes out"
-    case ask = "Asks"
+    case ask = "Asks each time"
     case transform = "Changes"
     case encode = "Encodes"
     case privacy = "Privacy"
@@ -38,8 +38,8 @@ struct LibraryEntry: Identifiable {
   let symbol: String
   let summary: String
 
-  /// Two blocks can share a title - "Quality" is both a question and a step -
-  /// so the group is part of the identity.
+  /// The group is part of the identity, so a block is never found by a title
+  /// alone.
   var id: String { "\(group.rawValue)/\(title)" }
 
   /// Everything the library offers for a kind of preset, in the order it is
@@ -51,7 +51,7 @@ struct LibraryEntry: Identifiable {
       LibraryEntry(kind: .template, group: .output, title: "Names files", symbol: "textformat", summary: "What the finished files are called"),
     ]
     entries += PresetParameter.Kind.allCases.map {
-      LibraryEntry(kind: .question($0), group: .ask, title: $0.title, symbol: "questionmark.circle", summary: "Asked every time the preset runs")
+      LibraryEntry(kind: .question($0), group: .ask, title: $0.blockTitle, symbol: "questionmark.circle", summary: "Asked every time the preset runs")
     }
     entries += ActionKind.allCases.filter { $0.suits(category) }.map {
       LibraryEntry(kind: .step($0), group: $0.libraryGroup, title: $0.title, symbol: $0.symbol, summary: $0.summary)
@@ -101,7 +101,7 @@ enum ActionKind: String, CaseIterable, Identifiable {
     case .crop: return "Crop"
     case .resize: return "Resize"
     case .quality: return "Quality"
-    case .limitSize: return "Fit within a size"
+    case .limitSize: return "Max file size"
     case .filter: return "Filter"
     case .recognizeText: return "Read the text"
     case .encode: return "Codec"

@@ -201,7 +201,7 @@ struct PresetCard: View {
       return (FormatCatalog.fileExtension(for: to) ?? "fmt").uppercased()
     case .resize(let width, let height, _):
       switch (width, height) {
-      case let (width?, height?): return "\(width)×\(height)"
+      case let (width?, height?): return "\(width) × \(height)"
       case let (width?, nil): return "\(width) wide"
       case let (nil, height?): return "\(height) tall"
       case (nil, nil): return "resize"

@@ -47,15 +47,14 @@ struct BatchProcessingView: View {
       } else {
         fileTable
       }
-      // Nothing sits under the list while it waits: the settings live in the
-      // sheet, and a bar of controls on an empty screen said nothing anybody
-      // could act on.
+      // The bar is there whenever there are files, with the button that
+      // converts them always in the same corner.
       if vm.isProcessing {
         Divider()
         processingBar
-      } else if let saving = vm.lastSaving {
+      } else if !vm.files.isEmpty {
         Divider()
-        resultBar(saving)
+        convertBar
       }
 
       if let skipped = vm.skipped {
@@ -113,33 +112,28 @@ struct BatchProcessingView: View {
     .navigationTitle("Convert")
     .toolbar {
       ToolbarItemGroup {
-        Button { addFiles() } label: { Label("Add Files", systemImage: "plus") }
-        // Nothing to clear is not a reason to show a disabled bin: it is a
-        // reason for there to be no bin.
-        if !vm.files.isEmpty {
-          Button(role: .destructive) { clear() } label: { Label("Clear", systemImage: "trash") }
-            .disabled(vm.isProcessing)
-          Button { openOptions() } label: { Label("Convert…", systemImage: "slider.horizontal.3") }
-            .disabled(vm.isProcessing)
+        // Behind the maker these would act on a list nobody can see.
+        if model.presetEditor == nil {
+          Button { addFiles() } label: { Label("Add Files", systemImage: "plus") }
+          // Nothing to clear is not a reason to show a disabled bin: it is a
+          // reason for there to be no bin.
+          if !vm.files.isEmpty {
+            Button(role: .destructive) { clear() } label: { Label("Clear", systemImage: "trash") }
+              .disabled(vm.isProcessing)
+          }
         }
       }
     }
     .sheet(isPresented: $showingOptions) {
-      ConvertOptionsSheet(
+      QuickConvertSheet(
         kinds: kinds,
         sources: vm.files,
-        fileCount: vm.files.count,
-        totalSize: totalSize,
         presets: offeredPresets,
-        defaultPrivacy: model.settings.privacy,
         choice: $choice,
         sameAsLast: LastConversions.offer(for: vm.files),
         onSameAsLast: sameAsLast,
-        onConvert: {
-          // Overwrite and Move both change what is already on disk, so they are
-          // worth a sentence before rather than an apology after.
-          if choice.destinationMode == .copyTo { start() } else { confirming = true }
-        }
+        onMore: openMaker,
+        onConvert: convert
       )
     }
     .sheet(item: $reviewing) { file in
@@ -214,21 +208,23 @@ struct BatchProcessingView: View {
         Text(f.dimensions.map { "\($0.width) × \($0.height)" } ?? "—").foregroundStyle(.secondary)
       }
       TableColumn("Status") { f in
-        let status = vm.statusMap[f.id] ?? .pending
+        // Nothing until there is something to say: a list that has not been
+        // converted is not a list of pending files.
+        let status = vm.statusMap[f.id]
         HStack(spacing: 6) {
           if status == .processing, let fraction = vm.fileProgress[f.id] {
             ProgressView(value: fraction).progressViewStyle(.linear).frame(maxWidth: 120)
-          } else if status == .failed || status == .skipped, let reason = vm.failures[f.id] {
+          } else if let status, status == .failed || status == .skipped, let reason = vm.failures[f.id] {
             HStack(spacing: 6) {
               status.label
               Text(reason).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
             }
             .help(reason)
-          } else {
+          } else if let status {
             status.label
           }
           // One file taking too long is a file, not a batch.
-          if vm.isProcessing, status == .processing || status == .pending {
+          if vm.isProcessing, status == .processing || status == nil {
             Button { vm.cancel(f, model: model) } label: {
               Image(systemName: "xmark.circle.fill")
             }
@@ -269,12 +265,17 @@ struct BatchProcessingView: View {
     .padding()
   }
 
-  /// What the batch cost, once it is known. Measured, not promised.
-  private func resultBar(_ saving: String) -> some View {
+  /// The button that converts, and beside it what the last batch cost once it
+  /// is known. Measured, not promised.
+  private var convertBar: some View {
     HStack(spacing: 14) {
-      Text(saving).font(.callout).foregroundStyle(.secondary)
+      if let saving = vm.lastSaving {
+        Text(saving).font(.callout).foregroundStyle(.secondary)
+      }
       Spacer()
-      Button("Convert Again…") { openOptions() }
+      Button(vm.convertTitle) { openOptions() }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
     }
     .padding()
   }
@@ -289,9 +290,6 @@ struct BatchProcessingView: View {
     vm.add(urls)
     guard !vm.files.isEmpty else { return }
     if wasEmpty {
-      // A batch starts from the general preference and can then disagree with
-      // it, which is what makes the preference a default rather than a law.
-      choice.fitMode = model.settings.defaultFitMode
       // A new batch starts from nothing but where its files go. The last
       // batch's choice is one press away, as "Same as Last", instead of
       // riding along where it may not fit - a film's MOV · 1280×720 · HEVC
@@ -311,7 +309,8 @@ struct BatchProcessingView: View {
     // Files dropped while a batch is running join the list and wait their turn.
     // Routing them would start a second batch over the same files, which is two
     // conversions writing the same output names at once.
-    guard !vm.isProcessing else { return }
+    // Nor while the maker is open over the list: they join what it converts.
+    guard !vm.isProcessing, model.presetEditor == nil else { return }
     // Nothing chosen yet: the sheet is the question. Asked before "Replace
     // these files?", which a new batch kept from the last one's Overwrite
     // asked about a conversion nobody had picked.
@@ -397,6 +396,33 @@ struct BatchProcessingView: View {
     adhoc = nil
     choice = choice.cleared()
     showingOptions = true
+  }
+
+  /// Overwrite and Move both change what is already on disk, so they are worth
+  /// a sentence before rather than an apology after.
+  private func convert() {
+    if choice.destinationMode == .copyTo { start() } else { confirming = true }
+  }
+
+  /// The maker with these files in it, and back here however it is left.
+  private func openMaker() {
+    model.presetEditor = PresetEditorRequest(
+      preset: choice.draftForMaker,
+      conversion: EditorConversion(
+        sources: vm.files,
+        fitMode: model.settings.defaultFitMode,
+        mode: choice.destinationMode,
+        destination: choice.destinationURL,
+        onBack: { take($0); showingOptions = true },
+        onConvert: { take($0); convert() }
+      )
+    )
+  }
+
+  private func take(_ outcome: EditorConversion.Outcome) {
+    choice = choice.edited(outcome.chain)
+    choice.destinationMode = outcome.mode
+    choice.destinationURL = outcome.destination
   }
 
   /// The last conversion of this kind, run on these files: the same chain and
@@ -506,6 +532,11 @@ final class BatchViewModel: ObservableObject {
   /// What the last batch actually cost, once it is known. Guessing beforehand
   /// would be a guess; this is measured.
   @Published var lastSaving: String?
+  /// Whether the files on screen have been through a batch.
+  @Published private var hasConverted = false
+
+  var convertTitle: String { hasConverted ? "Convert Again…" : "Convert…" }
+
   /// What was dropped and not taken, and why. Files Forge cannot open used to
   /// be discarded without a word: drop ten and see seven, with nothing to say
   /// which three were missing or what was wrong with them.
@@ -541,6 +572,7 @@ final class BatchViewModel: ObservableObject {
     }
 
     files.append(contentsOf: added)
+    if !added.isEmpty { hasConverted = false }
     loadVideoDimensions(for: added)
     skipped = Self.describe(unreadable)
     // Turned away, or taken in with nothing that can read it - an old Word
@@ -611,6 +643,7 @@ final class BatchViewModel: ObservableObject {
     fileProgress.removeAll()
     progress = 0
     lastSaving = nil
+    hasConverted = false
   }
 
   /// Stop starting new files. The ones already converting finish: a native
@@ -715,6 +748,7 @@ final class BatchViewModel: ObservableObject {
 
     watching.cancel()
     throttle = nil
+    hasConverted = true
     // Against the files that were converted. Counting the ones that were
     // stopped or failed as "before" made two finished films out of four read
     // as 94% smaller.

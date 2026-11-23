@@ -9,6 +9,8 @@ import ImageIO
 struct PreviewStrip: View {
   let preset: RulePreset
   let coordinator: ProcessingCoordinator
+  /// The file being converted, when the maker was opened with one.
+  var own: ProcessableFile? = nil
   /// Called with the original and the step clicked, for the big view.
   let open: (PreviewRunner.Step, PreviewRunner.Step) -> Void
 
@@ -54,6 +56,10 @@ struct PreviewStrip: View {
 
       if let failure {
         Label(failure, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.secondary).lineLimit(2)
+      } else if sample == nil, let own {
+        // A film or a song is converted whole to be previewed, at every
+        // change: that waits to be asked for.
+        Button("Preview \(own.fileName)") { use(own.url) }.controlSize(.small)
       } else if sample == nil {
         Text("Drop a file here, or choose one, to see what each step does to it.")
           .font(.callout).foregroundStyle(.secondary)
@@ -75,6 +81,10 @@ struct PreviewStrip: View {
       guard let url = urls.first else { return false }
       use(url)
       return true
+    }
+    .onAppear {
+      guard sample == nil, let own, ConvertKind(fileType: own.fileType)?.previewCost == .runIt else { return }
+      sample = own
     }
     .task(id: Key(sample: sample?.url, preset: preset)) { await refresh() }
     .onDisappear { try? FileManager.default.removeItem(at: root) }

@@ -452,28 +452,41 @@ final class PrivacyTests: BaseTestCase {
     )
   }
 
+  /// The block's "Keep everything", against a Mac set to remove everything:
+  /// the photograph still says where it was taken.
+  func test_keepEverythingInTheBlockBeatsSettings() async throws {
+    var settings = AppSettings()
+    settings.privacy = .stripAll
+    let source = try photograph(at: path("holiday.jpg"))
+
+    func hasLocation(after actions: [Forge.Operation], in name: String) async throws -> Bool {
+      let entry = try await coordinator(settings: settings).processFile(
+        try ProcessableFile(url: source),
+        with: RulePreset(name: "t", description: "", category: .image, actions: [.convertFormat(to: .jpeg)] + actions),
+        destinationMode: .copyTo, destinationURL: try folder(name)
+      ) { _ in }
+      return try Self.properties(of: XCTUnwrap(entry.outputURL))[kCGImagePropertyGPSDictionary] != nil
+    }
+
+    let without = try await hasLocation(after: [], in: "settings")
+    let with = try await hasLocation(after: [.stripMetadata(policy: .keepAll)], in: "block")
+    XCTAssertFalse(without, "Settings removes it when nothing is said")
+    XCTAssertTrue(with)
+    XCTAssertEqual(PrivacyPolicy.allCases.first?.blockTitle, "Keep everything")
+  }
+
   // MARK: - What the sheet shows
 
-  /// Picking a preset fills the fields in from it - and clears the ones it says
-  /// nothing about.
-  ///
-  /// Leaving the last preset's answer behind is not only a wrong-looking chip:
-  /// touching any other field lets the preset go, and then that stale answer is
-  /// what actually runs.
+  /// Picking a second preset leaves nothing of the first one behind.
   func test_choosingAPreset_clearsWhatTheLastOneSaid() {
     var thorough = RulePreset.make(format: .jpeg, category: .image)
     thorough.actions.append(.stripMetadata(policy: .stripAll))
     thorough.actions.append(.limitSize(bytes: 5_000_000))
-
-    let choice = ConvertChoice().adopting(thorough)
-    XCTAssertEqual(choice.privacy, .stripAll)
-    XCTAssertEqual(choice.maxBytes, 5_000_000)
-
     let plain = RulePreset.make(format: .png, category: .image)
-    let after = choice.adopting(plain)
 
-    XCTAssertNil(after.privacy, "this preset says nothing about metadata, so neither does the sheet")
-    XCTAssertNil(after.maxBytes, "and nothing about a size ceiling either")
+    let after = ConvertChoice().adopting(thorough).adopting(plain)
+
+    XCTAssertEqual(after.draft.actions, plain.actions)
     XCTAssertEqual(after.presetID, plain.id)
   }
 

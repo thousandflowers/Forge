@@ -37,15 +37,15 @@ struct MonitoredFolder: Identifiable, Codable, Hashable, Sendable {
 }
 
 enum DestinationMode: String, Codable, CaseIterable, Sendable {
-  case overwrite = "overwrite"
   case copyTo = "copy_to"
   case moveTo = "move_to"
+  case overwrite = "overwrite"
 
   var displayName: String {
     switch self {
-    case .overwrite: return "Overwrite Original"
-    case .copyTo: return "Copy To..."
-    case .moveTo: return "Move To..."
+    case .overwrite: return "Replace the original"
+    case .copyTo: return "Copy to…"
+    case .moveTo: return "Move to…"
     }
   }
 }

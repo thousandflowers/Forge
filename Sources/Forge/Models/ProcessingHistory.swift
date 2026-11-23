@@ -68,10 +68,26 @@ extension ProcessingHistory {
     )
   }
 
+  /// What a chain does, as a name: what came in, what it became, then the
+  /// rest in the order it runs.
+  static func describedName(for source: URL, actions: [Operation]) -> String {
+    // Through the type, so .jpg and .JPG both read JPEG.
+    let from = UTType(filenameExtension: source.pathExtension)
+      .map { OutputFormat(type: $0).label } ?? source.pathExtension.uppercased()
+    let formats = actions.compactMap { if case .convertFormat(let to) = $0 { return OutputFormat(type: to).label } else { return nil } }
+    let others = actions
+      .filter { !$0.isFormat }
+      .map(PresetCard.chip)
+
+    let into = formats.isEmpty ? "" : "→ " + formats.joined(separator: " + ")
+    let head = [from, into].filter { !$0.isEmpty }.joined(separator: " ")
+    return ([head] + others).filter { !$0.isEmpty }.joined(separator: ", ")
+  }
+
   /// The preset to keep: a one-off conversion, graduated.
   var savedPreset: RulePreset? {
     preset(
-      named: presetName.map { "\($0) (from history)" } ?? "Run of \(fileURL.lastPathComponent)",
+      named: presetName.map { "\($0) (from history)" } ?? Self.describedName(for: fileURL, actions: actions ?? []),
       description: "Saved from a conversion run on "
         + timestamp.formatted(date: .abbreviated, time: .shortened) + "."
     )

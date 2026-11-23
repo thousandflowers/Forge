@@ -71,10 +71,10 @@ struct ActionRow: View {
         Slider(
           value: Binding(
             get: { Double(level) },
-            set: { action.operation = .quality(level: Int($0)) }
+            set: { action.operation = .quality(level: Int($0.rounded())) }
           ),
-          in: 1...100,
-          step: 1
+          // No step: on macOS a step draws a tick for every one of the hundred.
+          in: 1...100
         )
         .frame(maxWidth: 160)
         .accessibilityLabel(Text("Quality"))
@@ -109,9 +109,8 @@ struct ActionRow: View {
         get: { policy },
         set: { action.operation = .stripMetadata(policy: $0) }
       )) {
-        ForEach(PrivacyPolicy.allCases.filter(\.removesSomething), id: \.self) {
-          Text($0.title).tag($0)
-        }
+        // Keeping is a choice too: it overrules a general preference to remove.
+        ForEach(PrivacyPolicy.allCases, id: \.self) { Text($0.blockTitle).tag($0) }
       }
       .labelsHidden()
       .frame(maxWidth: 260, alignment: .leading)
