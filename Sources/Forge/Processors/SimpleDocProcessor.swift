@@ -359,7 +359,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
 
     // A scanned PDF has no text layer, so it is read the same way as for .txt.
     let text = inputType.conforms(to: .pdf)
-      ? try pdfPages(from: input, operations: operations) { progress($0 * 0.3) }
+      ? try await pagesAside(from: input, operations: operations) { progress($0 * 0.3) }
         .joined(separator: Self.paragraphBreak)
       : try DocumentText.read(input, as: inputType).string
 
@@ -402,11 +402,19 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
     let start = Date()
-    let text = try pdfPages(from: input, operations: operations) { progress($0 * 0.9) }
+    let text = try await pagesAside(from: input, operations: operations) { progress($0 * 0.9) }
       .joined(separator: Self.paragraphBreak)
     try DocumentText.write(NSAttributedString(string: text), to: output, as: outputType)
     progress(1.0)
     return try Self.result(output, since: start)
+  }
+
+  /// The same, away from the main thread: a scan takes seconds a page to read, and
+  /// the first of all a good deal longer. Read there, it froze the whole app.
+  private nonisolated func pagesAside(
+    from input: URL, operations: [Operation], progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> [String] {
+    try pdfPages(from: input, operations: operations, progress: progress)
   }
 
   /// Text from a PDF, page by page: what is embedded, and OCR for the pages
