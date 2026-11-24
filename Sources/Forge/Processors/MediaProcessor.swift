@@ -111,6 +111,17 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no sound to turn into words")
     }
 
+    // Settings macOS has no way to honour are ffmpeg's. Written here they would
+    // be dropped, and the film come out looking as if nothing had been said.
+    if !videoTracks.isEmpty, operations.film != nil, wanted.conforms(to: .movie) || wanted.conforms(to: .video) {
+      guard ExternalTools.locate("ffmpeg") != nil else {
+        throw ProcessingError.conversionFailed(reason: "Film settings need ffmpeg: brew install ffmpeg")
+      }
+      throw ProcessingError.unsupportedConversion(
+        from: UTType(filenameExtension: input.pathExtension) ?? .movie, to: wanted
+      )
+    }
+
     if videoTracks.isEmpty {
       // Audio asked for a movie container is wrapped rather than converted:
       // the export writes the track into the container as it stands.

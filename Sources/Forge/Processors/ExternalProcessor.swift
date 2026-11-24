@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 import UniformTypeIdentifiers
 
@@ -368,7 +369,9 @@ enum ExternalBridge {
     } ?? false
 
     if !wantsSomethingStill, sourceIsTimeBased, let ffmpeg = ExternalTools.locate("ffmpeg") {
-      var arguments = ["-hide_banner", "-loglevel", "error", "-y", "-i", input.path]
+      // Only where the film itself is what is written.
+      let film = wantsTheSubtitles || (targetType.map(MediaProcessor.isSoundOnly) ?? false) ? nil : operations.film
+      var arguments = ["-hide_banner", "-loglevel", "error", "-y"] + (film?.inputArguments ?? []) + ["-i", input.path]
       if wantsTheSubtitles {
         // The first subtitle track, and nothing else: without a map, ffmpeg
         // would try to carry the picture and the sound into a .srt.
@@ -382,13 +385,15 @@ enum ExternalBridge {
         // Every picture, every soundtrack and every subtitle, not ffmpeg's
         // choice of one of each. The question marks let a film without one
         // through.
-        arguments += ["-map", "0:v?", "-map", "0:a?"]
+        // A capital V leaves out a cover, which no encoder of films takes.
+        arguments += ["-map", film == nil ? "0:v?" : "0:V?", "-map", "0:a?"]
         // Subtitles only where the container has a way to hold them: an MP4 or
         // a MOV as mov_text, Matroska and WebM as text of their own. Mapped into
         // anything else - an MXF, an AVI - ffmpeg stopped looking for an encoder.
-        if ["mp4", "m4v", "mov"].contains(target) { arguments += ["-map", "0:s?", "-c:s", "mov_text"] }
-        if target == "mkv" { arguments += ["-map", "0:s?", "-c:s", "srt"] }
-        if target == "webm" { arguments += ["-map", "0:s?", "-c:s", "webvtt"] }
+        let keepsSubtitles = film?.keepsSubtitles ?? true
+        if keepsSubtitles, ["mp4", "m4v", "mov"].contains(target) { arguments += ["-map", "0:s?", "-c:s", "mov_text"] }
+        if keepsSubtitles, target == "mkv" { arguments += ["-map", "0:s?", "-c:s", "srt"] }
+        if keepsSubtitles, target == "webm" { arguments += ["-map", "0:s?", "-c:s", "webvtt"] }
       }
       // An Ogg file holds Opus unless something else was asked for. Left to
       // itself, an ffmpeg built without Vorbis puts FLAC in it - which is what
@@ -399,10 +404,15 @@ enum ExternalBridge {
       // MXF takes sound at 48 kHz and nothing else; a film recorded at 44.1
       // failed with ffmpeg's "only 48khz is implemented".
       if target == "mxf" { arguments += ["-ar", "48000"] }
-      if let filter = Self.scaling(in: operations) { arguments += ["-vf", filter] }
+      if let film {
+        let bars = film.crop == .blackBars ? Self.blackBars(of: input, ffmpeg: ffmpeg) : nil
+        arguments += film.outputArguments(for: target, size: Self.scaling(in: operations), bars: bars)
+      } else if let filter = Self.scaling(in: operations) {
+        arguments += ["-vf", filter]
+      }
       // The encoder that was asked for, and how hard to squeeze: both were
       // dropped on this path, so a codec chosen for an MKV made no difference.
-      for operation in operations {
+      for operation in operations where film == nil {
         switch operation {
         case .encode(let codec):
           if let name = Self.ffmpegName[codec] { arguments += [codec.isVideo ? "-c:v" : "-c:a", name] }
@@ -454,6 +464,36 @@ enum ExternalBridge {
 
     return nil
   }
+
+  /// What ffmpeg can encode with, from ffmpeg itself. Runs it: not for a view
+  /// body.
+  static var ffmpegEncoders: Set<String> {
+    guard let ffmpeg = ExternalTools.locate("ffmpeg") else { return [] }
+    return Set(run(ffmpeg, ["-hide_banner", "-encoders"]).split(separator: "\n").compactMap { line in
+      let words = line.split(separator: " ")
+      return words.count > 1 ? String(words[1]) : nil
+    })
+  }
+
+  /// The crop that takes off what is black from beginning to end, or nothing.
+  ///
+  /// Key frames only: it is a look at the film, not a reading of it.
+  static func blackBars(of input: URL, ffmpeg: URL) -> String? {
+    let said = run(ffmpeg, [
+      "-hide_banner", "-loglevel", "error", "-skip_frame", "nokey", "-i", input.path, "-map", "0:V:0",
+      "-vf", "cropdetect=24:2:0,metadata=mode=print:file=-", "-an", "-f", "null", "-",
+    ])
+    let lines = said.split(separator: "\n")
+    func last(_ key: String) -> Int? {
+      lines.last { $0.contains("lavfi.cropdetect.\(key)=") }.flatMap { $0.split(separator: "=").last }.flatMap { Int($0) }
+    }
+    guard let width = last("w"), let height = last("h"), let x = last("x"), let y = last("y"),
+          width >= smallestPicture, height >= smallestPicture else { return nil }
+    return "crop=\(width):\(height):\(x):\(y)"
+  }
+
+  /// Less than this is a dark film, and not a small one with bars round it.
+  private static let smallestPicture = 64
 
   /// What ffmpeg calls each encoder.
   private static let ffmpegName: [Codec: String] = [
@@ -604,6 +644,10 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
     let inputType = UTType(filenameExtension: input.pathExtension) ?? .data
     let outputType = UTType(filenameExtension: output.pathExtension) ?? .data
 
+    if let refusal = operations.film?.refusal(for: output.pathExtension.lowercased()), outputType.conforms(to: .audiovisualContent), !MediaProcessor.isSoundOnly(outputType) {
+      throw ProcessingError.conversionFailed(reason: refusal)
+    }
+
     guard let plan = ExternalBridge.plan(from: input, to: output, operations: operations) else {
       throw ProcessingError.unsupportedConversion(from: inputType, to: outputType)
     }
@@ -621,7 +665,14 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
     }
 
     do {
-      try ExternalTools.run(plan.tool, plan.arguments)
+      if let film = operations.film, plan.toolName == "ffmpeg" {
+        let length = (try? await AVURLAsset(url: input).load(.duration).seconds) ?? 0
+        let follower = FilmProgress(length: film.kept(of: length), report: progress)
+        defer { follower.finish() }
+        try ExternalTools.run(plan.tool, follower.arguments + plan.arguments)
+      } else {
+        try ExternalTools.run(plan.tool, plan.arguments)
+      }
     } catch {
       throw Self.explain(error, about: input)
     }

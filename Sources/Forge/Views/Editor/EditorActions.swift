@@ -161,6 +161,7 @@ extension Action {
     case .filter: return .filter
     case .recognizeText: return .recognizeText
     case .encode: return .encode
+    case .film: return .film
     case .limitSize: return .limitSize
     case .stripMetadata: return .privacy
     case .when: return .when
@@ -175,7 +176,7 @@ extension Action {
     switch operation {
     case .convertFormat: return LibraryEntry.Group.output.color
     case .resize, .filter, .recognizeText: return LibraryEntry.Group.transform.color
-    case .quality, .limitSize, .encode: return LibraryEntry.Group.encode.color
+    case .quality, .limitSize, .encode, .film: return LibraryEntry.Group.encode.color
     case .stripMetadata: return LibraryEntry.Group.privacy.color
     case .when, .split, .join, .merge: return LibraryEntry.Group.logic.color
     }

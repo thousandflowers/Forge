@@ -101,6 +101,9 @@ struct ActionRow: View {
       .labelsHidden()
       .frame(maxWidth: 200, alignment: .leading)
 
+    case .film(let settings):
+      FilmSettingsView(settings: Binding(get: { settings }, set: { action.operation = .film($0) }))
+
     case .when, .split:
       EmptyView()
 

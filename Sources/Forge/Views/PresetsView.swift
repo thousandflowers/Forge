@@ -228,6 +228,8 @@ struct PresetCard: View {
       return languages.isEmpty ? "OCR" : "OCR \(languages.joined(separator: "/"))"
     case .encode(let codec):
       return codec.title
+    case .film(let settings):
+      return settings.encoder.title
     case .limitSize(let bytes):
       return "≤\(Int64(bytes).formatted(.byteCount(style: .file)))"
     }

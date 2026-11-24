@@ -173,6 +173,8 @@ struct Presets: AsyncParsableCommand {
         return languages.isEmpty ? "read text" : "read text (\(languages.joined(separator: ", ")))"
       case .encode(let codec):
         return codec.title
+      case .film(let settings):
+        return settings.summary
       case .limitSize(let bytes):
         return "under \(Int64(bytes).formatted(.byteCount(style: .file)))"
       case .when(let condition, _, _):

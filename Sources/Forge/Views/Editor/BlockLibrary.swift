@@ -64,7 +64,7 @@ extension ActionKind {
   var libraryGroup: LibraryEntry.Group {
     switch self {
     case .crop, .resize, .filter, .recognizeText: return .transform
-    case .quality, .limitSize, .encode: return .encode
+    case .quality, .limitSize, .encode, .film: return .encode
     case .privacy: return .privacy
     case .when, .split, .join, .merge: return .logic
     }
@@ -79,6 +79,7 @@ extension ActionKind {
     case .filter: return "Grayscale, sepia, blur, sharpen, invert"
     case .recognizeText: return "Read the words in it into text"
     case .encode: return "Which codec writes the file"
+    case .film: return "Encoder, quality, filters, sound: everything"
     case .privacy: return "What the file stops saying about you"
     case .when: return "One path if the file passes a test, another if not"
     case .split: return "Several copies, each down its own path"
@@ -93,7 +94,7 @@ extension ActionKind {
 /// branches as trees of the same, so every step everywhere can be dragged.
 
 enum ActionKind: String, CaseIterable, Identifiable {
-  case crop, resize, quality, limitSize, filter, recognizeText, encode, privacy, when, split, join, merge
+  case crop, resize, quality, limitSize, filter, recognizeText, encode, film, privacy, when, split, join, merge
   var id: String { rawValue }
 
   var title: String {
@@ -105,6 +106,7 @@ enum ActionKind: String, CaseIterable, Identifiable {
     case .filter: return "Filter"
     case .recognizeText: return "Read the text"
     case .encode: return "Codec"
+    case .film: return "Film settings"
     case .privacy: return "Remove metadata"
     case .when: return "If…"
     case .split: return "Split into copies"
@@ -122,6 +124,7 @@ enum ActionKind: String, CaseIterable, Identifiable {
     case .filter: return "camera.filters"
     case .recognizeText: return "text.viewfinder"
     case .encode: return "cpu"
+    case .film: return "film"
     case .privacy: return "eye.slash"
     case .when: return "arrow.triangle.branch"
     case .split: return "square.split.2x1"
@@ -143,6 +146,7 @@ enum ActionKind: String, CaseIterable, Identifiable {
     case .encode:
       let codecs = category == .audio ? Codec.audioCodecs : Codec.videoCodecs
       return .encode(codec: codecs.first ?? .h264)
+    case .film: return .film(FilmSettings())
     case .privacy: return .stripMetadata(policy: .stripAll)
     case .when: return .when(Condition(), then: [], otherwise: [])
     case .split: return .split([Branch(name: "Copy 1"), Branch(name: "Copy 2")])
@@ -166,6 +170,8 @@ enum ActionKind: String, CaseIterable, Identifiable {
       return [.image, .video, .document, .custom].contains(category)
     case .encode:
       return [.video, .audio, .custom].contains(category)
+    case .film:
+      return [.video, .custom].contains(category)
     case .privacy:
       // Every kind of file carries something about who made it.
       return true

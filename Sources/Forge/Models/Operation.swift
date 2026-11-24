@@ -13,6 +13,8 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
   case recognizeText(languages: [String])
   /// Encode with a specific codec, where the container allows more than one.
   case encode(codec: Codec)
+  /// How a film is written, down to the last setting. ffmpeg's work.
+  case film(FilmSettings)
   /// Come out no larger than this many bytes, whatever it takes.
   ///
   /// Unlike quality, this is a promise about the result rather than a setting
@@ -51,6 +53,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .filter: return "Filter"
     case .recognizeText: return "Read the text"
     case .encode: return "Codec"
+    case .film: return "Film settings"
     case .limitSize: return "Max file size"
     case .stripMetadata: return "Remove metadata"
     }
@@ -64,6 +67,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .filter: return "camera.filters"
     case .recognizeText: return "text.viewfinder"
     case .encode: return "cpu"
+    case .film: return "film"
     case .limitSize: return "arrow.down.right.and.arrow.up.left"
     case .stripMetadata(let policy): return policy.symbol
     case .when: return "arrow.triangle.branch"
@@ -81,6 +85,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .filter: return "filter"
     case .recognizeText: return "ocr"
     case .encode: return "codec"
+    case .film: return "film"
     case .limitSize: return "limitSize"
     case .stripMetadata: return "privacy"
     case .when: return "when"
@@ -369,12 +374,12 @@ private extension String {
 
 extension Operation {
   private enum CodingKeys: String, CodingKey {
-    case kind, format, width, height, fitMode, level, filter, languages, codec, bytes, privacy
+    case kind, format, width, height, fitMode, level, filter, languages, codec, bytes, privacy, film
     case condition, then, otherwise, branches, mergeKind
   }
 
   private enum Kind: String, Codable {
-    case convertFormat, resize, quality, filter, recognizeText, encode, limitSize, stripMetadata
+    case convertFormat, resize, quality, filter, recognizeText, encode, film, limitSize, stripMetadata
     case when, split, join, merge
   }
 
@@ -397,6 +402,8 @@ extension Operation {
       self = .recognizeText(languages: try container.decodeIfPresent([String].self, forKey: .languages) ?? [])
     case .encode:
       self = .encode(codec: try container.decode(Codec.self, forKey: .codec))
+    case .film:
+      self = .film(try container.decode(FilmSettings.self, forKey: .film))
     case .limitSize:
       self = .limitSize(bytes: try container.decode(Int.self, forKey: .bytes))
     case .stripMetadata:
@@ -439,6 +446,9 @@ extension Operation {
     case .encode(let codec):
       try container.encode(Kind.encode, forKey: .kind)
       try container.encode(codec, forKey: .codec)
+    case .film(let settings):
+      try container.encode(Kind.film, forKey: .kind)
+      try container.encode(settings, forKey: .film)
     case .limitSize(let bytes):
       try container.encode(Kind.limitSize, forKey: .kind)
       try container.encode(bytes, forKey: .bytes)
