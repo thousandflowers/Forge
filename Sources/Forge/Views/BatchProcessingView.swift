@@ -191,6 +191,7 @@ struct BatchProcessingView: View {
             if FormatCatalog.isReadableImage(f.fileType) {
               Button("Review for Redaction…") { reviewing = f }
             }
+            if CutModel(file: f) != nil { Button("Cut…") { model.cut(f) } }
           }
       }
       TableColumn("Type", value: \.kindName) { f in

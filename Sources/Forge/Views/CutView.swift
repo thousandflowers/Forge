@@ -35,6 +35,7 @@ struct CutView: View {
     .task {
       await model.load()
       player.part = model.from...max(model.from, model.to)
+      player.begin()
     }
     .onChange(of: model.from) { player.part = $0...max($0, model.to); player.show($0) }
     .onChange(of: model.to) { player.part = model.from...max(model.from, $0); player.show($0) }
@@ -96,8 +97,8 @@ struct CutView: View {
         .help("Play the part")
         .accessibilityLabel(Text(player.isPlaying ? "Pause" : "Play"))
       Timeline(model: model, player: player)
-      TimeField(label: "From", value: model.from) { model.setFrom($0) }
-      TimeField(label: "To", value: model.to) { model.setTo($0) }
+      TimeField(label: "From", value: model.from) { model.setFrom($0); return model.from }
+      TimeField(label: "To", value: model.to) { model.setTo($0); return model.to }
     }
     .disabled(!isEditing || !model.isReady)
     .background {
@@ -322,11 +323,13 @@ private struct Timeline: View {
 private struct TimeField: View {
   let label: String
   let value: Double
-  let set: (Double) -> Void
+  /// Says what it came to. Asked of the field itself, that is what it was before.
+  let set: (Double) -> Double
   @State private var typed = ""
   @FocusState private var isFocused: Bool
 
-  private var shown: String { Tool.clock((value * 100).rounded() / 100) }
+  private var shown: String { Self.text(value) }
+  private static func text(_ value: Double) -> String { Tool.clock((value * 100).rounded() / 100) }
 
   var body: some View {
     TextField(label, text: $typed)
@@ -334,15 +337,20 @@ private struct TimeField: View {
       .multilineTextAlignment(.trailing).monospacedDigit()
       .frame(width: 74)
       .onAppear { typed = shown }
-      .onChange(of: value) { _ in if !isFocused { typed = shown } }
+      .onChange(of: value) { typed = Self.text($0) }
       .onSubmit(commit)
       .onChange(of: isFocused) { if !$0 { commit() } }
       .accessibilityLabel(Text(label))
   }
 
   private func commit() {
-    if typed != shown { if let seconds = Tool.seconds(typed.trimmingCharacters(in: .whitespaces)) { set(seconds) } else { NSSound.beep() } }
-    typed = shown
+    guard typed != shown else { return }
+    guard let seconds = Tool.seconds(typed.trimmingCharacters(in: .whitespaces)) else {
+      NSSound.beep()
+      typed = shown
+      return
+    }
+    typed = Self.text(set(seconds))
   }
 }
 
@@ -358,6 +366,7 @@ final class CutPlayer: ObservableObject {
   var speed = 1.0 { didSet { if isPlaying { player.rate = Float(speed) } } }
   var isMuted = false { didSet { player.isMuted = isMuted } }
   private var observer: Any?
+  private var hasBegun = false
 
   init(url: URL, plays: Bool) {
     player = plays ? AVPlayer(url: url) : AVPlayer()
@@ -386,8 +395,12 @@ final class CutPlayer: ObservableObject {
     player.pause()
   }
 
+  /// From here on it follows what is being cut. Loaded, the end is moved to the
+  /// end, and that is nothing to look at.
+  func begin() { hasBegun = true }
+
   func show(_ seconds: Double) {
-    guard !isPlaying else { return }
+    guard hasBegun, !isPlaying else { return }
     seek(seconds)
   }
 

@@ -121,7 +121,7 @@ private struct TypedField: View {
       .focused($isFocused)
       .frame(width: width)
       .onAppear { typed = text }
-      .onChange(of: text) { if !isFocused { typed = $0 } }
+      .onChange(of: text) { typed = $0 }
       .onSubmit(commit)
       .onChange(of: isFocused) { if !$0 { commit() } }
       .accessibilityLabel(Text(label))
