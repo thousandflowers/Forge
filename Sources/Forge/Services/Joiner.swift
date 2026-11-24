@@ -9,7 +9,9 @@ enum Joiner {
   enum Kind: String, CaseIterable, Sendable {
     case pdf, film, sound
     /// A film with another file's sound, or with its subtitles.
-    case dubbed, subtitled
+    case dubbed, subtitled, burned
+    /// Pictures side by side.
+    case collage
 
     var title: String {
       switch self {
@@ -18,6 +20,8 @@ enum Joiner {
       case .sound: return "One recording"
       case .dubbed: return "Film with this sound"
       case .subtitled: return "Film with these subtitles"
+      case .burned: return "Subtitles in the picture"
+      case .collage: return "One picture"
       }
     }
   }
@@ -31,11 +35,11 @@ enum Joiner {
     guard files.count > 1 else { return [] }
     let kinds = Set(files.compactMap { ConvertKind(fileType: $0.fileType) })
     let arePages = files.allSatisfy { $0.fileType.conforms(to: .pdf) || ConvertKind(fileType: $0.fileType) == .image }
-    if arePages { return kinds == [.image] ? [.pdf, .film] : [.pdf] }
+    if arePages { return kinds == [.image] ? [.pdf, .film, .collage] : [.pdf] }
     if kinds == [.video] { return [.film, .sound] }
     if kinds == [.audio] { return [.sound] }
     if files.count == 2, kinds == [.video, .audio] { return [.dubbed] }
-    if files.count == 2, kinds == [.video, .subtitle] { return [.subtitled] }
+    if files.count == 2, kinds == [.video, .subtitle] { return [.subtitled, .burned] }
     return []
   }
 
@@ -44,7 +48,8 @@ enum Joiner {
   static func type(of kind: Kind, from first: UTType) -> UTType {
     switch kind {
     case .pdf: return .pdf
-    case .film, .dubbed: return first == .quickTimeMovie ? .quickTimeMovie : .mpeg4Movie
+    case .collage: return .jpeg
+    case .film, .dubbed, .burned: return first == .quickTimeMovie ? .quickTimeMovie : .mpeg4Movie
     case .subtitled: return first == .quickTimeMovie || first.preferredFilenameExtension == "mkv" ? first : .mpeg4Movie
     case .sound: return FormatCatalog.audioFormatID(for: first) != nil ? first : UTType("com.apple.m4a-audio") ?? .mpeg4Audio
     }
@@ -62,9 +67,63 @@ enum Joiner {
       try await isPictures ? slides(files, to: output) : film(files, to: output)
     case .sound: try await sound(files, to: output)
     case .dubbed: try await dub(files[0].url, with: files[1].url, to: output, privacy: privacy)
+    case .collage: try collage(files, to: output)
+    case .burned: try await BurnedSubtitles.write(try Subtitles.read(files[1].url), over: files[0].url, to: output, privacy: privacy)
     case .subtitled: try subtitle(files[0], with: files[1], to: output, privacy: privacy)
     }
     try PrivacyFilter.applyAfterWriting(privacy, to: [output])
+  }
+
+  private static let collageSide: CGFloat = 3200
+  private static let collageGap: CGFloat = 24
+
+  /// As near to square as they go, each filling its place.
+  private static func collage(_ files: [ProcessableFile], to output: URL) throws {
+    let columns = Int(Double(files.count).squareRoot().rounded(.up)), rows = (files.count + columns - 1) / columns
+    let cell = ((collageSide - collageGap * CGFloat(columns + 1)) / CGFloat(columns)).rounded(.down)
+    guard cell >= 16 else { throw ProcessingError.conversionFailed(reason: "\(files.count) pictures are too many for one.") }
+    let size = CGSize(width: collageSide, height: collageGap + (cell + collageGap) * CGFloat(rows))
+    guard let context = CGContext(
+      data: nil, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8, bytesPerRow: 0,
+      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+    ) else { throw ProcessingError.conversionFailed(reason: "Cannot draw a picture") }
+    context.setFillColor(CGColor(gray: 1, alpha: 1))
+    context.fill(CGRect(origin: .zero, size: size))
+    context.interpolationQuality = .high
+    for (index, file) in files.enumerated() {
+      try Task.checkCancellation()
+      try autoreleasepool {
+        let picture = try thumbnail(of: file, side: cell * 2)
+        let place = CGRect(
+          x: collageGap + (cell + collageGap) * CGFloat(index % columns),
+          y: size.height - (cell + collageGap) * CGFloat(index / columns + 1), width: cell, height: cell
+        )
+        let scale = max(cell / CGFloat(picture.width), cell / CGFloat(picture.height))
+        let drawn = CGSize(width: CGFloat(picture.width) * scale, height: CGFloat(picture.height) * scale)
+        context.saveGState()
+        context.clip(to: place)
+        context.draw(picture, in: CGRect(x: place.midX - drawn.width / 2, y: place.midY - drawn.height / 2, width: drawn.width, height: drawn.height))
+        context.restoreGState()
+      }
+    }
+    guard let image = context.makeImage(),
+          let destination = CGImageDestinationCreateWithURL(output as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else {
+      throw ProcessingError.conversionFailed(reason: "Cannot draw a picture")
+    }
+    CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary)
+    guard CGImageDestinationFinalize(destination) else { throw ProcessingError.conversionFailed(reason: "Cannot write the picture") }
+  }
+
+  private static func thumbnail(of file: ProcessableFile, side: CGFloat) throws -> CGImage {
+    let options: [CFString: Any] = [
+      kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
+      kCGImageSourceThumbnailMaxPixelSize: side, kCGImageSourceShouldCache: false,
+    ]
+    guard let source = CGImageSourceCreateWithURL(file.url as CFURL, nil),
+          let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+      throw ProcessingError.conversionFailed(reason: "Cannot read \(file.fileName)")
+    }
+    return image
   }
 
   // MARK: - A film and something else
@@ -120,17 +179,6 @@ enum Joiner {
 
   private static func slides(_ files: [ProcessableFile], to output: URL) async throws {
     // One at a time: a hundred photographs at once are sixteen gigabytes.
-    func picture(_ file: ProcessableFile) throws -> CGImage {
-      let options: [CFString: Any] = [
-        kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
-        kCGImageSourceThumbnailMaxPixelSize: largestSide, kCGImageSourceShouldCache: false,
-      ]
-      guard let source = CGImageSourceCreateWithURL(file.url as CFURL, nil),
-            let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
-        throw ProcessingError.conversionFailed(reason: "Cannot read \(file.fileName)")
-      }
-      return image
-    }
     /// As it is seen, and no larger than it will be drawn.
     func seen(_ file: ProcessableFile) -> CGSize {
       let source = CGImageSourceCreateWithURL(file.url as CFURL, nil)
@@ -152,7 +200,7 @@ enum Joiner {
     let type = UTType(filenameExtension: output.pathExtension) ?? .mpeg4Movie
     try await MovieWriter.write(files.count, of: size, to: output, as: type, frame: { index in
       try autoreleasepool {
-        let drawn = try picture(files[index])
+        let drawn = try thumbnail(of: files[index], side: largestSide)
         context.setFillColor(CGColor(gray: 0, alpha: 1))
         context.fill(CGRect(origin: .zero, size: size))
         context.draw(drawn, in: AVMakeRect(aspectRatio: CGSize(width: drawn.width, height: drawn.height), insideRect: CGRect(origin: .zero, size: size)))
@@ -287,7 +335,7 @@ enum Joiner {
     }
   }
 
-  private static func export(_ session: AVAssetExportSession) async throws {
+  static func export(_ session: AVAssetExportSession) async throws {
     let box = SessionBox(session)
     await withTaskCancellationHandler { await box.session.export() } onCancel: { box.session.cancelExport() }
     if session.status == .cancelled { throw CancellationError() }
@@ -307,7 +355,7 @@ extension ProcessingCoordinator {
   /// sight and put where it goes once it is whole, as everything else is.
   func join(_ given: [ProcessableFile], as kind: Joiner.Kind, into folder: URL? = nil, named name: String? = nil) async throws -> URL {
     // The film first, whichever of the two was picked up first.
-    let files = kind == .dubbed || kind == .subtitled
+    let files = [.dubbed, .subtitled, .burned].contains(kind)
       ? given.sorted { ConvertKind(fileType: $0.fileType) == .video && ConvertKind(fileType: $1.fileType) != .video } : given
     guard let first = files.first, Joiner.kinds(for: files).contains(kind) else {
       throw ProcessingError.conversionFailed(reason: "These files cannot be made into \(kind.title.lowercased()) together.")

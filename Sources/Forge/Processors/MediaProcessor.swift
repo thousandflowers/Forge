@@ -149,8 +149,27 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       )
     }
 
+    // Drawn by ffmpeg, from the sound as it has been changed.
+    if operations.tools.contains(.wave) {
+      guard let ffmpeg = ExternalTools.locate("ffmpeg") else {
+        throw ProcessingError.conversionFailed(reason: "Drawing the sound needs ffmpeg: brew install ffmpeg")
+      }
+      try ExternalTools.run(ffmpeg, [
+        "-hide_banner", "-loglevel", "error", "-y", "-i", try await heard(input).path,
+        "-filter_complex", "[0:a:0]showwaves=s=1280x720:mode=cline:rate=30:colors=white,format=yuv420p[v]",
+        "-map", "[v]", "-map", "0:a:0", "-c:v", "libx264", "-crf", "20", "-c:a", "aac", "-b:a", "192k", "-shortest", "-map_metadata", "-1",
+        "-movflags", "+faststart", output.path,
+      ])
+      progress(1)
+      return ProcessingResult(outputURL: output, outputSize: try Self.fileSize(output), outputDimensions: (1280, 720), duration: Date().timeIntervalSince(start))
+    }
+
     if edit.isEvened, audioTracks.isEmpty {
       throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no sound to even out")
+    }
+
+    if videoTracks.isEmpty, operations.film != nil, FormatCatalog.isWritableVideo(wanted), !Self.isSoundOnly(wanted) {
+      throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no picture, and Film settings are for films.")
     }
 
     if videoTracks.isEmpty {

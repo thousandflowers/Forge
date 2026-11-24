@@ -78,7 +78,7 @@ struct ToolRow: View {
       }
       .labelsHidden().frame(maxWidth: 120, alignment: .leading)
       .accessibilityLabel(Text("Fingerprint"))
-    case .mute, .normalize, .reverse, .removeBackground, .lighter:
+    case .mute, .normalize, .reverse, .removeBackground, .lighter, .wave:
       Text(tool.kind.summary).font(.callout).foregroundStyle(.secondary)
     }
   }

@@ -19,6 +19,7 @@ final class AppModel: ObservableObject {
   private let cuts = CutCenter()
   let dropZone = DropZone()
   private var inHand: Set<String> = []
+  private var watchedPlaces: [Automatic.Place: URL] = [:]
   private var automatic: [Automatic.Place: MonitoredFolderWatcher] = [:]
 
   /// Brings the window back, once there has been one.
@@ -70,6 +71,7 @@ final class AppModel: ObservableObject {
 
   /// Load persisted state on launch; seed default presets on first run.
   func bootstrap() async {
+    Claims.sweep(root: persistence.root)
     do {
       let loadedPresets = try await persistence.loadAllPresets()
       if loadedPresets.isEmpty {
@@ -498,6 +500,7 @@ final class AppModel: ObservableObject {
   private func startDragMenu() {
     dragMenu.suggest = { [weak self] in self?.suggestions(for: $0) ?? [] }
     asks.suggest = dragMenu.suggest
+    ResultHand.more = { [weak self] in self?.dragMenu.present($0) }
     dropZone.take = { [weak self] in self?.dragMenu.present($0) }
     dragMenu.keys = settings.dragMenuKeys
     dragMenu.ignored = Set(settings.dragMenuIgnored)
@@ -545,7 +548,7 @@ final class AppModel: ObservableObject {
   // MARK: - Without being asked
 
   /// Start what is allowed and stop what is not.
-  private func startAutomatic() {
+  func startAutomatic() {
     if settings.lighterClipboard {
       clipboard.start { [weak self] made in
         self?.results.show(ResultCard(
@@ -563,7 +566,10 @@ final class AppModel: ObservableObject {
         automatic.removeValue(forKey: place)?.stop()
         continue
       }
+      // Where captures go can be changed while Forge is open.
+      if watchedPlaces[place] != place.folder { automatic.removeValue(forKey: place)?.stop() }
       guard automatic[place] == nil else { continue }
+      watchedPlaces[place] = place.folder
       let watcher = MonitoredFolderWatcher()
       let folder = MonitoredFolder(url: place.folder, ruleId: UUID(), destinationMode: .copyTo)
       do {

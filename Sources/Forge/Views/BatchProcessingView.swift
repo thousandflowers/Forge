@@ -533,6 +533,8 @@ final class BatchViewModel: ObservableObject {
   @Published var failures: [UUID: String] = [:]
   @Published var fileProgress: [UUID: Double] = [:]
   @Published var isProcessing = false
+  /// When to begin, where that is not now.
+  @Published var startsAt: Date?
   @Published var progress: Double = 0
   /// What the last batch actually cost, once it is known. Guessing beforehand
   /// would be a guess; this is measured.
@@ -701,6 +703,12 @@ final class BatchViewModel: ObservableObject {
     lastSaving = nil
     defer { isProcessing = false }
 
+    // Not yet, where it was asked for later. Stopped in the meantime it is not
+    // begun at all.
+    while let startsAt, startsAt > Date(), !cancellation.withLock({ $0 }) { try? await Task.sleep(nanoseconds: 500_000_000) }
+    self.startsAt = nil
+    guard !cancellation.withLock({ $0 }) else { return }
+
     let total = files.count
     let coordinator = model.coordinator
     let limit = await coordinator.maxConcurrentNative
@@ -723,8 +731,14 @@ final class BatchViewModel: ObservableObject {
     }
     defer { watching.cancel() }
 
-    _ = await Batch.run(
-      files,
+    // What is added while it works is worked on as well, the same way.
+    var begun: Set<UUID> = []
+    while !cancellation.withLock({ $0 }) {
+      let next = files.filter { !begun.contains($0.id) }
+      guard !next.isEmpty else { break }
+      begun.formUnion(next.map(\.id))
+      _ = await Batch.run(
+      next,
       preset: preset,
       mode: mode,
       destination: destination,
@@ -748,7 +762,8 @@ final class BatchViewModel: ObservableObject {
       if case .finished(_, _, _, let written, _) = event, !written.isEmpty {
         outputs.withLock { $0.append(contentsOf: written) }
       }
-      Task { @MainActor [weak self] in self?.apply(event, of: total, in: model) }
+      Task { @MainActor [weak self] in self?.apply(event, of: max(total, self?.files.count ?? total), in: model) }
+    }
     }
 
     watching.cancel()

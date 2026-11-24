@@ -30,6 +30,9 @@ struct FilmSettings: Codable, Hashable, Sendable {
   var isTwoPass = false
   /// A .cube file: how every colour is to look.
   var lut: String?
+  /// ffmpeg's own words, after everything else. Never from somebody else's
+  /// preset: a filter can open files.
+  var filters: String?
   /// Seconds in; nil for the beginning and the end.
   var from: Int?
   var to: Int?
@@ -254,6 +257,7 @@ struct FilmSettings: Codable, Hashable, Sendable {
     if noise != .leave { parts.append("less noise") }
     if crop != .none { parts.append("crop") }
     if lut != nil { parts.append("LUT") }
+    if filters != nil { parts.append("filters") }
     if passes > 1 { parts.append("two passes") }
     if from != nil || to != nil { parts.append("part") }
     return parts.joined(separator: " · ")
@@ -331,7 +335,7 @@ struct FilmSettings: Codable, Hashable, Sendable {
     }
     filters += picture
     if let lut { filters.append("lut3d=file=\(lut)") }
-    filters += [turn.filter, sharpness.filter, isGrey ? "hue=s=0" : nil, isRec709 ? "colorspace=all=bt709:iall=bt601-6-625" : nil].compactMap { $0 }
+    filters += [turn.filter, sharpness.filter, isGrey ? "hue=s=0" : nil, isRec709 ? "colorspace=all=bt709:iall=bt601-6-625" : nil, self.filters].compactMap { $0 }.filter { !$0.isEmpty }
     // Encoders want even sides, and a crop or a turn may leave them odd.
     if !filters.isEmpty { filters.append("crop=trunc(iw/2)*2:trunc(ih/2)*2") }
     // Deep or not, and nothing with more colour than QuickTime takes.
@@ -406,6 +410,7 @@ extension FilmSettings {
     keepsSubtitles = try value(.keepsSubtitles, fresh.keepsSubtitles)
     track = try values.decodeIfPresent(Int.self, forKey: .track)
     isTwoPass = try value(.isTwoPass, fresh.isTwoPass)
+    filters = try values.decodeIfPresent(String.self, forKey: .filters)
     lut = try values.decodeIfPresent(String.self, forKey: .lut)
     from = try values.decodeIfPresent(Int.self, forKey: .from)
     to = try values.decodeIfPresent(Int.self, forKey: .to)
@@ -415,6 +420,16 @@ extension FilmSettings {
 extension [Operation] {
   /// What was said about the film, if anything was.
   var film: FilmSettings? {
-    compactMap { if case .film(let settings) = $0 { return settings } else { return nil } }.first
+    guard let place = firstIndex(where: { $0.id == "film" }), case .film(var settings) = self[place] else { return nil }
+    // What is said after it is said of it.
+    for operation in self[(place + 1)...] {
+      switch operation {
+      case .quality(let level): settings.rate = .quality(level)
+      case .encode(.h264): settings.encoder = .h264
+      case .encode(.hevc): settings.encoder = .hevc
+      default: break
+      }
+    }
+    return settings
   }
 }

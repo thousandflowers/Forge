@@ -53,6 +53,30 @@ enum NameTokens {
     return pieces.joined(separator: "_")
   }
 
+  /// Every width asked for, in the order it is written. Only those at the end:
+  /// anywhere else a number of pixels is part of the name.
+  static func widths(_ fileName: String) -> [Int] {
+    let pieces = (fileName as NSString).deletingPathExtension.split(separator: "_").map(String.init)
+    let instructions = parse(fileName).pieces
+    guard instructions > 0 else { return [] }
+    var seen: [Int] = []
+    for width in pieces.suffix(instructions).compactMap(width) where !seen.contains(width) { seen.append(width) }
+    return seen
+  }
+
+  /// Where one name asks for several, each is called by its own.
+  static func withoutWidths(_ stem: String) -> String {
+    guard widths(stem + ".x").count > 1 else { return stem }
+    let pieces = stem.split(separator: "_").map(String.init)
+    return pieces.enumerated().filter { $0.offset == 0 || width(of: $0.element) == nil }.map(\.element).joined(separator: "_")
+  }
+
+  private static func width(of piece: String) -> Int? {
+    let token = piece.lowercased()
+    guard token.hasSuffix("px"), let width = Int(token.dropLast(2)), width > 0 else { return nil }
+    return width
+  }
+
   /// A word that means nothing for that kind of file is part of its name.
   private static func tool(_ piece: String, for type: UTType?) -> Tool? {
     guard let tool = Tool(word: piece), let type, tool.suits(type) else { return nil }
@@ -108,9 +132,10 @@ enum NameTokens {
   /// They beat what the preset says, because they were typed onto that one file
   /// for this one conversion.
   /// - Parameter tools: whether the tools in it are orders too.
-  static func applying(to operations: [Operation], from fileName: String, tools: Bool = true) -> [Operation] {
+  static func applying(to operations: [Operation], from fileName: String, tools: Bool = true, width takesWidth: Bool = true) -> [Operation] {
     var read = read(fileName)
     if !tools { read.tools = [] }
+    if !takesWidth { read.width = nil }
     guard !read.isEmpty else { return operations }
 
     var result = operations

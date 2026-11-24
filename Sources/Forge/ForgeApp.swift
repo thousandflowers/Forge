@@ -20,7 +20,7 @@ struct ForgeApp: App {
     .handlesExternalEvents(matching: [])
     .commands {
       SidebarCommands()
-      ForgeCommands(model: model)
+      ForgeCommands(model: model, batch: batch)
     }
 
     // A conversion is usually a small errand, and going to the window for it
@@ -49,6 +49,7 @@ private struct MenuBarLabel: View {
         model.showWindow = { openWindow(id: MenuBarView.windowID) }
         delegate.inbox.deliver = { model.open($0) }
         delegate.service.cut = { model.cut($0) }
+        delegate.becameActive = { model.startAutomatic() }
       }
   }
 }
@@ -70,6 +71,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     service.convert = { [inbox] in inbox.receive($0) }
     NSApplication.shared.servicesProvider = service
   }
+
+  var becameActive: () -> Void = {}
+  func applicationDidBecomeActive(_ notification: Notification) { becameActive() }
 
   func application(_ application: NSApplication, open urls: [URL]) {
     inbox.receive(urls)
@@ -102,6 +106,7 @@ final class OpenedFiles {
 /// The menu bar's own commands: each one does what the window's button does.
 struct ForgeCommands: Commands {
   @ObservedObject var model: AppModel
+  @ObservedObject var batch: BatchViewModel
 
   var body: some Commands {
     CommandGroup(replacing: .newItem) {
@@ -110,6 +115,15 @@ struct ForgeCommands: Commands {
         .disabled(model.presetEditor != nil)
       Button("Add Files…") { addFiles() }
         .keyboardShortcut("o")
+      Menu("Start Next Conversion") {
+        Button(batch.startsAt == nil ? "✓ Now" : "Now") { batch.startsAt = nil }
+        ForEach([15, 60, 180, 480], id: \.self) { minutes in
+          Button(minutes < 60 ? "In \(minutes) minutes" : "In \(minutes / 60) \(minutes == 60 ? "hour" : "hours")") {
+            batch.startsAt = Date().addingTimeInterval(Double(minutes) * 60)
+          }
+        }
+        if let startsAt = batch.startsAt { Text("At \(startsAt.formatted(date: .omitted, time: .shortened))") }
+      }
       Button("Cut…") { cut() }
         .keyboardShortcut("t")
     }

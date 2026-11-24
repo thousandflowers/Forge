@@ -35,6 +35,8 @@ enum Tool: Hashable, Sendable {
   /// Words in the corner.
   case mark(String)
   case digest(Digest)
+  /// A film of what the sound looks like.
+  case wave
 
   enum Adjustment: String, CaseIterable, Sendable {
     case brightness, contrast, saturation, blur
@@ -129,7 +131,7 @@ extension Tool {
   /// Each takes the words it knows. In no particular order: no two take the
   /// same one.
   private static let readers: [@Sendable (String) -> Tool?] = [
-    { ["mute": .mute, "normalize": .normalize, "reverse": .reverse, "lighter": .lighter, "nobg": .removeBackground, "splitchapters": .divide(.chapters), "splitpages": .divide(.pages(1))][$0] },
+    { ["mute": .mute, "normalize": .normalize, "reverse": .reverse, "lighter": .lighter, "wave": .wave, "nobg": .removeBackground, "splitchapters": .divide(.chapters), "splitpages": .divide(.pages(1))][$0] },
     { (Turn(rawValue: $0) ?? ["rotateright": .right, "rotateleft": .left][$0]).map(Tool.turn) },
     { $0.wholeMatch(of: #/speed(.+)x/#).flatMap { number($0.1) }.flatMap { speeds.contains($0) ? .speed($0) : nil } },
     { $0.wholeMatch(of: #/loop(\d{1,3})/#).flatMap { Int($0.1) }.flatMap { loops.contains($0) ? .loop($0) : nil } },
@@ -209,6 +211,7 @@ extension Tool {
     case .border(let width, let isBlack): return "border\(width)\(isBlack ? "black" : "")"
     case .mark(let text): return "mark(\(text))"
     case .digest(let digest): return digest.rawValue
+    case .wave: return "wave"
     }
   }
 
@@ -250,7 +253,7 @@ extension Tool {
     case crop, turn, removeBackground
     case pages, dropPages
     case lighter
-    case sync, adjust, border, mark, digest
+    case sync, adjust, border, mark, digest, wave
 
     var title: String {
       switch self {
@@ -273,6 +276,7 @@ extension Tool {
       case .border: return "Border"
       case .mark: return "Watermark"
       case .digest: return "Fingerprint"
+      case .wave: return "Draw the sound"
       }
     }
 
@@ -297,6 +301,7 @@ extension Tool {
       case .border: return "square.dashed"
       case .mark: return "signature"
       case .digest: return "number"
+      case .wave: return "waveform"
       }
     }
 
@@ -321,6 +326,7 @@ extension Tool {
       case .border: return "A frame round it, in white or black"
       case .mark: return "Words in the corner"
       case .digest: return "SHA-256 or Base64, as text"
+      case .wave: return "A film of its waveform, to post where only films go"
       }
     }
 
@@ -346,6 +352,7 @@ extension Tool {
       case .border: return .border(40)
       case .mark: return .mark("©")
       case .digest: return .digest(.sha256)
+      case .wave: return .wave
       }
     }
 
@@ -362,6 +369,7 @@ extension Tool {
       case .sync: return [.video]
       case .adjust, .border, .mark: return [.image]
       case .digest: return Set(ConvertKind.allCases)
+      case .wave: return [.audio]
       }
     }
   }
@@ -387,6 +395,7 @@ extension Tool {
     case .border: return .border
     case .mark: return .mark
     case .digest: return .digest
+    case .wave: return .wave
     }
   }
 
@@ -402,7 +411,7 @@ extension Tool {
   }
 
   /// What it makes is about the file, and not the file.
-  var leavesTheOriginal: Bool { kind == .digest || kind == .frames }
+  var leavesTheOriginal: Bool { [.digest, .frames, .wave].contains(kind) }
 
   /// As it would be read back: a preset keeps the word, and a word nothing reads
   /// takes the preset with it.
@@ -449,7 +458,7 @@ extension Tool {
     case .border(let width, let isBlack): return "\(isBlack ? "Black" : "White") border, \(width) px"
     case .mark(let text): return "Watermark “\(text)”"
     case .digest(let digest): return digest == .sha256 ? "SHA-256" : "Base64"
-    case .mute, .normalize, .reverse, .removeBackground, .lighter: return kind.title
+    case .mute, .normalize, .reverse, .removeBackground, .lighter, .wave: return kind.title
     }
   }
 
@@ -496,6 +505,8 @@ extension [Operation] {
       wanted = (.jpeg, FormatCatalog.isWritableImage)
     } else if tools.contains(where: { $0.kind == .digest }) {
       wanted = (.plainText, { $0 == .plainText })
+    } else if tools.contains(.wave) {
+      wanted = (.mpeg4Movie, { $0 == .mpeg4Movie || $0 == .quickTimeMovie })
     } else {
       return self
     }

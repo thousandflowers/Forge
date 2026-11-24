@@ -20,7 +20,10 @@ actor ProcessingCoordinator {
   ) {
     self.settings = settings
     self.persistence = persistence
+    claims = Claims(root: persistence.root)
   }
+
+  private let claims: Claims
 
   /// Settings are pushed in rather than snapshotted at init, so changing the
   /// concurrency limit takes effect without relaunching the app.
@@ -179,8 +182,16 @@ actor ProcessingCoordinator {
     // What is written into the file's own name beats the preset, because
     // somebody typed it onto that file for this conversion.
     var chains: [(branch: String?, actions: [Operation])] = []
-    for chain in resolution.chains {
-      var actions = NameTokens.applying(to: chain.actions, from: file.fileName, tools: preset.readsTools).settlingFormat()
+    // `_800px_1600px`: one of each.
+    let widths = NameTokens.widths(file.fileName)
+    let wanted: [(branch: String?, actions: [Operation])] = widths.count < 2 ? resolution.chains : resolution.chains.flatMap { chain in
+      widths.map { width in
+        ([chain.branch, "\(width)px"].compactMap { $0 }.joined(separator: "-"),
+         chain.actions.filter { $0.id != "resize" } + [.resize(width: width, height: nil, fitMode: .proportional)])
+      }
+    }
+    for chain in wanted {
+      var actions = NameTokens.applying(to: chain.actions, from: file.fileName, tools: preset.readsTools, width: widths.count < 2).settlingFormat()
       if actions.tools.contains(.lighter) {
         preset.onlyIfLighter = true
         actions = try Lighter.settled(actions, for: file)
@@ -451,6 +462,9 @@ actor ProcessingCoordinator {
     // Anything written before the conversion succeeds is scratch, and must not
     // survive a failure or a cancellation.
     var succeeded = false
+    let claimed = [plan.workURL] + [plan.reservationURL].compactMap { $0 }
+    claimed.forEach(claims.add)
+    defer { claimed.forEach(claims.remove) }
     defer {
       if !succeeded {
         try? FileManager.default.removeItem(at: plan.workURL)
@@ -825,7 +839,7 @@ actor ProcessingCoordinator {
     }.first
 
     return NameTemplate.Static(
-      name: preset.untriggered(stem: preset.readsTools ? NameTokens.spent(file.fileName) : (file.fileName as NSString).deletingPathExtension),
+      name: NameTokens.withoutWidths(preset.untriggered(stem: preset.readsTools ? NameTokens.spent(file.fileName) : (file.fileName as NSString).deletingPathExtension)),
       parent: file.url.deletingLastPathComponent().lastPathComponent,
       // The file's own date where the filesystem knows one, since a template
       // asking for a date is asking about the photograph, not about now.

@@ -17,7 +17,7 @@ final class JoinerTests: ToolTestCase {
     let pdf = path("c.pdf")
     try Fixture.pdf(at: pdf, pages: 2)
     let wav = try Fixture.audio(at: path("d.wav"), seconds: 0.2)
-    XCTAssertEqual(Joiner.kinds(for: try files([a, b])), [.pdf, .film])
+    XCTAssertEqual(Joiner.kinds(for: try files([a, b])), [.pdf, .film, .collage])
     XCTAssertEqual(Joiner.kinds(for: try files([a, pdf])), [.pdf])
     XCTAssertEqual(Joiner.kinds(for: try files([wav, wav])), [.sound])
     XCTAssertEqual(Joiner.kinds(for: try files([a, wav])), [])

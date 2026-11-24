@@ -13,6 +13,7 @@ extension RulePreset {
       switch operation {
       case .film(var film):
         film.lut = nil
+        film.filters = nil
         return .film(film)
       case .when(let condition, let then, let otherwise): return .when(condition, then: then.map(clean), otherwise: otherwise.map(clean))
       case .split(let branches): return .split(branches.map { Branch(name: $0.name, actions: $0.actions.map(clean)) })

@@ -224,7 +224,7 @@ final class FilmAndSomethingTests: ToolTestCase {
     let words = path("film.srt")
     try "1\n00:00:00,200 --> 00:00:01,000\nHonk\n".write(to: words, atomically: true, encoding: .utf8)
     let files = [try ProcessableFile(url: film), try ProcessableFile(url: words)]
-    XCTAssertEqual(Joiner.kinds(for: files), [.subtitled])
+    XCTAssertEqual(Joiner.kinds(for: files), [.subtitled, .burned])
     let made = try await coordinator().join(files, as: .subtitled, into: path("out"))
     let found = try await AVURLAsset(url: made).loadTracks(withMediaType: .subtitle)
     XCTAssertEqual(found.count, 1)

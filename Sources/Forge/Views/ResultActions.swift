@@ -8,12 +8,14 @@ struct ResultActions: View {
   var body: some View {
     Menu {
       Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+      if let more = ResultHand.more { Button("Do More with It…") { more(urls) } }
       Button("Open") { urls.forEach { NSWorkspace.shared.open($0) } }
       Divider()
       Button(urls.count == 1 ? "Copy" : "Copy \(urls.count) Files") { ResultHand.copy(urls) }
       Button(urls.count == 1 ? "Copy Path" : "Copy Paths") { ResultHand.copyPaths(urls) }
       Button("AirDrop…") { ResultHand.airDrop(urls) }
       Divider()
+      if let first = urls.first { Button("Open Terminal Here") { ResultHand.terminal(at: first) } }
       Button("Copy To…") { ResultHand.put(urls, moving: false) }
       Button("Move To…") { ResultHand.put(urls, moving: true) }
     } label: {
@@ -30,6 +32,15 @@ struct ResultActions: View {
 
 @MainActor
 enum ResultHand {
+  /// The menu again, over what has just been made: smaller still, another
+  /// format, under a size.
+  static var more: (([URL]) -> Void)?
+
+  static func terminal(at url: URL) {
+    guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else { return }
+    NSWorkspace.shared.open([url.deletingLastPathComponent()], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+  }
+
   static func copy(_ urls: [URL], to pasteboard: NSPasteboard = .general) {
     pasteboard.clearContents()
     pasteboard.writeObjects(urls as [NSURL])

@@ -107,6 +107,12 @@ struct FilmSettingsView: View {
         }
         Button("Choose a LUT…", action: chooseLUT).controlSize(.small)
       }
+      line("Filters") {
+        TextField("ffmpeg, e.g. vignette,eq=gamma=1.1", text: Binding(
+          get: { settings.filters ?? "" }, set: { settings.filters = $0.isEmpty ? nil : $0 }
+        ))
+        .accessibilityLabel(Text("ffmpeg filters"))
+      }
       line("Also") {
         Toggle("Smooth blocks", isOn: $settings.smoothsBlocks)
         Toggle("Grey", isOn: $settings.isGrey)

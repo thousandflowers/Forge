@@ -63,6 +63,10 @@ enum DocumentText {
       return try rendered(markdown: try text(in: url))
     }
 
+    if let email = Email.type, type.conforms(to: email) {
+      return NSAttributedString(string: try Email.text(of: url))
+    }
+
     guard let documentType = readable.first(where: { type.conforms(to: $0.key) })?.value else {
       throw ProcessingError.unreadableFormat(type)
     }
