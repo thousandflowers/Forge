@@ -49,6 +49,8 @@ final class AppModel: ObservableObject {
   private var memories: [UUID: RenameMemory] = [:]
   private let turns = Turns()
   private let handRenames = HandRenames()
+  /// What was put back, and from what: done again, it is meant.
+  private var putBack: [UInt64: String] = [:]
 
   /// Files Forge has just written. A watched folder that also receives the
   /// output would otherwise convert its own results forever.
@@ -597,7 +599,14 @@ final class AppModel: ObservableObject {
       let parent = url.deletingLastPathComponent().standardizedFileURL.path, root = folder.url.standardizedFileURL.path
       return parent == root || folder.includeSubfolders && parent.hasPrefix(root + "/")
     }
-    guard !isWatched, let job = await Task.detached(operation: { Retype.wanted(of: url, before: before) }).value else { return }
+    guard let meaning = await Task.detached(operation: { Retype.meant(by: url, before: before) }).value else { return }
+    let job: Retype
+    switch meaning {
+    case .stay(let stay): return keep(url, as: stay)
+    // Spelt right, it is the folder's; a slip the folder would not have known.
+    case .become(let become) where isWatched && become.to.lowercased() == url.pathExtension.lowercased(): return
+    case .become(let become): job = become
+    }
     do {
       let entry = try await turns.take(of: settings.maxConcurrentNative) { [weak self] in try await self?.becomes(url, job) }
       await refreshHistory()
@@ -611,6 +620,26 @@ final class AppModel: ObservableObject {
     } catch {
       report(error, doing: "converting “\(url.lastPathComponent)”")
       await refreshHistory()
+    }
+  }
+
+  /// Nothing that name could mean: the file is given back the one that was true.
+  /// Whoever insists is left to it.
+  private func keep(_ url: URL, as job: Retype) {
+    let number = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.systemFileNumber] as? UInt64
+    if let number, putBack[number] == job.to.lowercased() { return }
+    do {
+      let file = try job.putBack(url)
+      if let number { putBack[number] = job.to.lowercased() }
+      memories.values.forEach { $0.know(file) }
+      remember(file)
+      NSSound.beep()
+      let size = ((try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? Int64) ?? 0
+      results.show(ResultCard(title: file.lastPathComponent, file: file, before: 0, after: size, undo: {
+        (try? FileManager.default.moveItem(at: file, to: url)) != nil
+      }))
+    } catch {
+      report(error, doing: "converting “\(url.lastPathComponent)”")
     }
   }
 

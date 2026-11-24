@@ -57,6 +57,13 @@ struct Signature {
     return type
   }
 
+  /// Whether such a file says what it is.
+  static func knows(_ ext: String) -> Bool {
+    let ext = ext.lowercased()
+    if let type = UTType(filenameExtension: ext), type.conforms(to: .image), !type.conforms(to: .rawImage), !type.conforms(to: .svg) { return true }
+    return known.contains { $0.ext == ext || $0.also.contains(ext) }
+  }
+
   /// Whether it is what this extension says. Nil where nothing in such a file
   /// would tell: text, and what cameras write.
   static func fits(_ url: URL, _ ext: String) -> Bool? {

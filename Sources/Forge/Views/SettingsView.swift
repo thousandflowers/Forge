@@ -39,6 +39,11 @@ struct SettingsView: View {
         Toggle("Make copied pictures lighter", isOn: $model.settings.lighterClipboard)
         Toggle("Make screen recordings lighter", isOn: $model.settings.lighterRecordings)
         Toggle("Turn HEIC, WebP and AVIF downloads into JPEGs", isOn: $model.settings.friendlyDownloads)
+        Toggle("Convert files I rename to another extension", isOn: $model.settings.convertsRenames)
+        Text("On the Desktop, and in Downloads, Documents and Pictures, when you rename in the Finder: photo.pdf becomes a real photo.jpg. "
+          + (model.settings.createBackupBeforeOverwrite ? "The original is kept in Backups." : "The original stays beside it."))
+          .font(.caption)
+          .foregroundStyle(.secondary)
         Text(model.settings.createBackupBeforeOverwrite
           ? "A card in the corner says what was done and undoes it. Originals are kept in Backups; a result that would not be lighter is not used."
           : "A card in the corner says what was done and undoes it. Backups are off, so nothing is replaced: the lighter copy is put beside it.")

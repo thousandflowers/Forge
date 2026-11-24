@@ -35,7 +35,7 @@ final class HandRenamesTests: BaseTestCase {
   func test_onlyAnotherKind_andOnlyWhereItIs() throws {
     XCTAssertEqual(try heard(to: "y.pdf"), [])
     XCTAssertEqual(try heard(to: "x.PDF"), [])
-    XCTAssertEqual(try heard(to: "x"), [])
+    XCTAssertEqual(try heard(to: "x,jpg"), ["x.pdf>x,jpg"], "a comma for the dot")
     XCTAssertEqual(try heard(from: "x"), [])
     XCTAssertEqual(try heard(to: "sub/x.jpg"), [], "put away")
     XCTAssertEqual(try heard(from: "x.part", to: "x.jpg"), ["x.part>x.jpg"], "what is in it is for others to say")
@@ -94,5 +94,77 @@ final class HandRenamesTests: BaseTestCase {
     await model.renamedByHand(jpg, before: "foto.pdf")
     XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: home.path), ["foto.jpg"])
     XCTAssertNil(model.lastError)
+  }
+
+  // MARK: - Slips of the finger
+
+  private func meaning(_ name: String, was before: String = "foto.pdf", _ make: (URL) throws -> URL = { try Fixture.pdf(at: $0, pages: 1) }) throws -> String {
+    let home = try folder("slips-\(UUID().uuidString)"), first = try make(home.appendingPathComponent(before)), after = home.appendingPathComponent(name)
+    try FileManager.default.moveItem(at: first, to: after)
+    switch Retype.meant(by: after, before: before) {
+    case .become(let job): return "\(job.stem).\(job.to)"
+    case .stay(let job): return "= \(job.stem).\(job.from)"
+    case nil: return "left"
+    }
+  }
+
+  func test_aSlipIsSeenThrough() throws {
+    for typed in ["jpgg", "jgp", "jpag", "jpe", "jpg ", "JPGG", "jpeeg"] {
+      let meant = try meaning("foto.\(typed)").lowercased()
+      XCTAssertTrue(["foto.jpg", "foto.jpeg", "foto.jpe"].contains(meant), "\(typed): \(meant)")
+    }
+    for (typed, meant) in [("foto.pgn", "foto.png"), ("foto.pnng", "foto.png"), ("foto.gfi", "foto.gif"), ("foto.heoc", "foto.heic"), ("foto,png", "foto.png"), ("foto.png.", "foto.png"), ("foto..png", "foto.png"), ("le mie foto.2024.pnng", "le mie foto.2024.png")] {
+      XCTAssertEqual(try meaning(typed), meant, typed)
+    }
+  }
+
+  func test_whatCannotBeToldIsUndone() throws {
+    for typed in ["foto.xyzq", "foto.p", "foto.qqq", "foto.jpgpng"] { XCTAssertEqual(try meaning(typed), "= foto.pdf", typed) }
+    // Two things a letter away: neither.
+    let sound = { (url: URL) in try Fixture.audio(at: url, seconds: 1) }
+    XCTAssertEqual(try meaning("a.xif", was: "a.png") { try Fixture.image(at: $0) }, "= a.png", "GIF or TIF")
+    // Its own extension, badly spelt, is only a slip.
+    XCTAssertEqual(try meaning("foto.pdff"), "= foto.pdf")
+    // Known, and nothing it could be made into.
+    XCTAssertEqual(try meaning("a.jpg", was: "a.wav", sound), "= a.wav")
+  }
+
+  func test_whatIsMeantIsLeftAlone() throws {
+    XCTAssertEqual(try meaning("foto.pdf.bak"), "left")
+    XCTAssertEqual(try meaning("foto"), "left")
+    XCTAssertEqual(try meaning("altra.pdf"), "left")
+    XCTAssertEqual(try meaning("foto.png"), "foto.png", "spelt right")
+    // Words can be written under any name: that is not making them into it.
+    let words = { (url: URL) -> URL in try Data("print(1)".utf8).write(to: url); return url }
+    for name in ["notes.py", "notes.swift", "notes.log", "notes.js"] { XCTAssertEqual(try meaning(name, was: "notes.txt", words), "left", name) }
+    XCTAssertEqual(try meaning("foto.swift"), "= foto.pdf", "a PDF is not one, whatever it is called")
+  }
+
+  func test_oneSlip() {
+    for (a, b) in [("jpg", "jpgg"), ("jpg", "jp"), ("jpg", "jgp"), ("jpg", "jpf"), ("jpg", "kpg"), ("jpg", "pjg"), ("webp", "wepb")] { XCTAssertTrue(Retype.isOneSlip(a, b), "\(a) \(b)") }
+    for (a, b) in [("jpg", "jpg"), ("jpg", "png"), ("jpg", "gpj"), ("jpg", "jpggg"), ("", "ab"), ("abcd", "badc")] { XCTAssertFalse(Retype.isOneSlip(a, b), "\(a) \(b)") }
+  }
+
+  /// Put back once; done again, it was meant.
+  func test_whoeverInsistsIsLeftToIt() async throws {
+    let model = AppModel(persistence: store)
+    let home = try folder("home"), pdf = try Fixture.pdf(at: home.appendingPathComponent("foto.pdf"), pages: 1), odd = home.appendingPathComponent("foto.xyzq")
+    let whole = try Data(contentsOf: pdf)
+    try FileManager.default.moveItem(at: pdf, to: odd)
+    await model.renamedByHand(odd, before: "foto.pdf")
+    XCTAssertEqual(try Data(contentsOf: pdf), whole)
+    XCTAssertFalse(exists(odd))
+    try FileManager.default.moveItem(at: pdf, to: odd)
+    await model.renamedByHand(odd, before: "foto.pdf")
+    XCTAssertEqual(try Data(contentsOf: odd), whole)
+  }
+
+  func test_aSlipBecomesTheRealThing() async throws {
+    let model = AppModel(persistence: store)
+    let home = try folder("home"), pdf = try Fixture.pdf(at: home.appendingPathComponent("foto.pdf"), pages: 1), slip = home.appendingPathComponent("foto_.pnng")
+    try FileManager.default.moveItem(at: pdf, to: slip)
+    await model.renamedByHand(slip, before: "foto.pdf")
+    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: home.path), ["foto_.png"])
+    XCTAssertEqual(Signature.fits(home.appendingPathComponent("foto_.png"), "png"), true)
   }
 }

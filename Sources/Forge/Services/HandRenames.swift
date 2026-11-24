@@ -112,7 +112,7 @@ final class HandRenames {
   static func changesKind(from before: String, to after: String) -> Bool {
     let old = URL(fileURLWithPath: before), new = URL(fileURLWithPath: after)
     return old.deletingLastPathComponent() == new.deletingLastPathComponent()
-      && !old.pathExtension.isEmpty && !new.pathExtension.isEmpty
+      && !old.pathExtension.isEmpty
       && old.pathExtension.lowercased() != new.pathExtension.lowercased()
   }
 
