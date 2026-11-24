@@ -190,7 +190,7 @@ struct AskView: View {
     if tiles.isLive, !questions.isEmpty {
       Text("Drop it on a choice, or anywhere here to choose with a click.").font(.callout).foregroundStyle(.secondary)
     }
-    ForEach(Array(questions.enumerated()), id: \.element) { index, question in
+    ForEach(questions, id: \.self) { question in
       if question == .privacy {
         Toggle(question.title, isOn: Binding(
           get: { session.answers[question] == .flag(true) },
@@ -201,7 +201,7 @@ struct AskView: View {
       } else if question != .cut || !questions.contains(.tool) {
         VStack(alignment: .leading, spacing: 8) {
           Text(question.title).font(.callout.weight(.semibold)).foregroundStyle(.secondary)
-          grid(question, numbered: index == 0)
+          grid(question, numbered: question == numbered)
         }
       }
     }
@@ -215,6 +215,10 @@ struct AskView: View {
       }
     }
   }
+
+  /// The numbers go to what stays where it is: what is suggested moves about,
+  /// and a key that does something else tomorrow is worse than none.
+  private var numbered: AskRequest.Question? { session.questions.first { $0 != .forYou && $0 != .join } }
 
   private func grid(_ question: AskRequest.Question, numbered: Bool) -> some View {
     let choices = session.choices(for: question)

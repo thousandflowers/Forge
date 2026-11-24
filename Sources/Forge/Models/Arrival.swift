@@ -54,6 +54,8 @@ struct AskRequest: Equatable {
     case format, size, width, quality, privacy
     /// Something done to it, and several made into one.
     case tool, join
+    /// Make it lighter, or one of the user's own presets.
+    case forYou
     /// By hand, in a window.
     case cut
     /// What is spoken in it.
@@ -68,7 +70,7 @@ struct AskRequest: Equatable {
       case .width: return .width
       case .quality: return .quality
       case .parameter(let parameter): return parameter.kind
-      case .format, .privacy, .tool, .join, .cut, .language: return nil
+      case .format, .privacy, .tool, .join, .cut, .language, .forYou: return nil
       }
     }
 
@@ -77,6 +79,7 @@ struct AskRequest: Equatable {
       case .format: return "Comes out as"
       case .tool, .cut: return "Do this to it"
       case .join: return "All of them together"
+      case .forYou: return "For you"
       case .language: return "What is spoken in it"
       case .privacy: return "Remove location and camera details"
       case .parameter(let parameter) where !parameter.label.isEmpty: return parameter.label
@@ -99,6 +102,7 @@ struct AskRequest: Equatable {
     case join(Joiner.Kind)
     case cut
     case language(String)
+    case preset(RulePreset)
   }
 
   var preset: RulePreset
@@ -121,7 +125,7 @@ struct AskRequest: Equatable {
     base.nameTrigger = word.rawValue
     preset = base
     switch word {
-    case .everything: questions = [.join, .format, .language, .tool, .cut, .size, .privacy]
+    case .everything: questions = [.forYou, .join, .format, .language, .tool, .cut, .size, .privacy]
     case .format: questions = [.format]
     case .size: questions = [.size]
     case .width: questions = [.width]
@@ -140,7 +144,10 @@ struct AskRequest: Equatable {
         run.actions.insert(.convertFormat(to: type), at: 0)
       case (.language, .language(let tag)):
         run = run.replacing(.recognizeText(languages: [tag]))
-      case (.tool, .tool(let tool)):
+      case (.forYou, .preset(let chosen)):
+        // Its own identity, so that using it is remembered as using it.
+        return chosen.settled
+      case (.forYou, .tool(let tool)), (.tool, .tool(let tool)):
         run.actions = run.actions.adding(tool)
       case (.privacy, .flag(true)):
         run = run.replacing(.stripMetadata(policy: .stripAll))
@@ -214,6 +221,9 @@ enum AskOptions {
       return [Choice(label: kind == .image ? "Crop…" : "Cut…", value: .cut)]
     case .join:
       return []
+    case .forYou:
+      let canBeLighter = files.allSatisfy { Tool.lighter.suits($0.fileType) }
+      return canBeLighter ? [Choice(label: Tool.lighter.title, value: .tool(.lighter))] : []
     case .size, .width, .quality, .parameter:
       switch question.kind {
       case .maxFileSize:

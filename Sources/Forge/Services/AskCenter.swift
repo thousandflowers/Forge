@@ -17,6 +17,7 @@ final class AskCenter: ObservableObject {
   private let shows: Bool
   private var panel: AskPanel?
   var preview: Preview?
+  var suggest: (([ProcessableFile]) -> [RulePreset])?
   var cut: (@MainActor (ProcessableFile) -> Void)?
 
   var waiting: Int { queue.count }
@@ -33,6 +34,7 @@ final class AskCenter: ObservableObject {
     }
     let session = AskSession(request: request, scope: scope, file: file, convert: convert, preview: preview)
     session.cut = cut
+    session.suggest = suggest
     session.onClose = { [weak self, weak session] in
       guard let self, self.current === session else { return }
       self.dismiss()
@@ -71,7 +73,7 @@ final class AskSession: ObservableObject {
 
   let request: AskRequest
   private let scope: UUID?
-  @Published var files: [ProcessableFile]
+  @Published var files: [ProcessableFile] { didSet { lookUp() } }
   @Published private(set) var answers: [AskRequest.Question: AskRequest.Answer] = [:]
   @Published private(set) var state: State = .asking
   /// What each choice would really come out as, measured on the first file.
@@ -82,6 +84,10 @@ final class AskSession: ObservableObject {
   private let preview: AskCenter.Preview?
   /// Nil where files come one at a time, and are never all of them together.
   var join: AskCenter.Join?
+  /// The user's own presets for these files. Nil where they are not offered.
+  var suggest: (([ProcessableFile]) -> [RulePreset])? { didSet { lookUp() } }
+  /// Kept, rather than asked for every time the panel is drawn.
+  private var suggested: [RulePreset] = []
   /// Nil where there is no window to cut in.
   var cut: (@MainActor (ProcessableFile) -> Void)?
   private var measuring: Task<Void, Never>?
@@ -107,12 +113,16 @@ final class AskSession: ObservableObject {
   var isWorking: Bool { if case .working = state { return true } else { return false } }
 
   func choices(for question: AskRequest.Question) -> [AskOptions.Choice] {
-    AskOptions.choices(for: question, files: files)
+    let found = AskOptions.choices(for: question, files: files)
+    guard question == .forYou else { return found }
+    return found + suggested.map { AskOptions.Choice(label: $0.name, value: .preset($0)) }
   }
+
+  private func lookUp() { suggested = suggest?(files) ?? [] }
 
   /// The questions these files can really be asked.
   var questions: [AskRequest.Question] {
-    request.questions.filter { ($0 != .join || join != nil) && ($0 != .cut || cut != nil) && ($0 != .language || asksLanguage) && !choices(for: $0).isEmpty }
+    request.questions.filter { ($0 != .join || join != nil) && ($0 != .forYou || suggest != nil) && ($0 != .cut || cut != nil) && ($0 != .language || asksLanguage) && !choices(for: $0).isEmpty }
   }
 
   /// Once what is said is what is wanted, and there is more than one to choose
@@ -134,8 +144,11 @@ final class AskSession: ObservableObject {
     if answer == .cut { return openTheCutter() }
     answers[question] = answer
     // Made into one they are not made into anything else as well.
+    // And a preset is the whole recipe.
     if question == .join, answer != nil { answers = answers.filter { $0.key == .join } }
     if question != .join, answer != nil { answers[.join] = nil }
+    if case .preset? = answer { answers = answers.filter { $0.key == question } }
+    if question != .forYou, answer != nil, case .preset? = answers[.forYou] { answers[.forYou] = nil }
     // What the other choices come to has just changed.
     if questions.count > 1 { measure() }
   }

@@ -65,6 +65,7 @@ struct SettingsView: View {
         }
         .disabled(!model.settings.dragMenu)
         IgnoredApps(identifiers: $model.settings.dragMenuIgnored).disabled(!model.settings.dragMenu)
+        MenuPresets(chosen: $model.settings.menuPresets, presets: model.usablePresets).disabled(!model.settings.dragMenu)
         Text("Drag a file from anywhere, hold \(model.settings.dragMenuKeys.symbols), and drop it on what it should become. The result goes beside the original, which stays.")
           .font(.caption)
           .foregroundStyle(.secondary)
@@ -114,6 +115,33 @@ struct SettingsView: View {
     .formStyle(.grouped)
     .navigationTitle("Settings")
     .onChange(of: model.settings) { _ in model.saveSettings() }
+  }
+}
+
+/// Which presets the menu offers: what is used, or what is chosen.
+private struct MenuPresets: View {
+  @Binding var chosen: [UUID]
+  let presets: [RulePreset]
+
+  var body: some View {
+    LabeledContent("Presets in the menu") {
+      Menu(chosen.isEmpty ? "What I use most" : "\(chosen.count) I chose") {
+        Button("What I use most") { chosen = [] }
+        Divider()
+        ForEach(presets) { preset in
+          Toggle(preset.name, isOn: Binding(
+            get: { chosen.contains(preset.id) },
+            set: { chosen = $0 ? chosen + [preset.id] : chosen.filter { $0 != preset.id } }
+          ))
+        }
+      }
+      .fixedSize()
+    }
+    Text(chosen.isEmpty
+      ? "The ones you use on files like the one in your hand come first. It is learnt from History, on this Mac."
+      : "In the order you chose them, and only where they suit the file. Up to \(Suggestions.most) are shown.")
+      .font(.caption)
+      .foregroundStyle(.secondary)
   }
 }
 

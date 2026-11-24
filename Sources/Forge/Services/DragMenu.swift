@@ -26,6 +26,7 @@ final class DragMenu {
   var convert: AskCenter.Convert = { _, _ in [] }
   var preview: AskCenter.Preview?
   var join: AskCenter.Join?
+  var suggest: (([ProcessableFile]) -> [RulePreset])?
   var cut: (@MainActor (ProcessableFile) -> Void)?
 
   /// The menu this drag brought up, until the drag is over.
@@ -147,6 +148,7 @@ final class DragMenu {
     )
     session.files = files
     session.join = join
+    session.suggest = suggest
     session.cut = cut
     session.onClose = { [weak self, weak session] in
       if let session { self?.close(session) }
@@ -179,6 +181,7 @@ final class DragMenu {
       let session = AskSession(request: AskRequest(word: .everything, over: nil), file: files[0], convert: convert, preview: preview)
       session.files = files
       session.join = join
+      session.suggest = suggest
       session.cut = cut
       session.onClose = { [weak self, weak session] in if let session { self?.close(session) } }
       guard shows else { return open.append((session, nil)) }

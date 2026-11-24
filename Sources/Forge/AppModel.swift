@@ -496,6 +496,8 @@ final class AppModel: ObservableObject {
   // MARK: - In hand
 
   private func startDragMenu() {
+    dragMenu.suggest = { [weak self] in self?.suggestions(for: $0) ?? [] }
+    asks.suggest = dragMenu.suggest
     dropZone.take = { [weak self] in self?.dragMenu.present($0) }
     dragMenu.keys = settings.dragMenuKeys
     dragMenu.ignored = Set(settings.dragMenuIgnored)
@@ -509,6 +511,10 @@ final class AppModel: ObservableObject {
       return made
     }
     settings.dragMenu ? dragMenu.start() : dragMenu.stop()
+  }
+
+  func suggestions(for files: [ProcessableFile]) -> [RulePreset] {
+    Suggestions.presets(for: files, from: presets, chosen: settings.menuPresets, history: history)
   }
 
   /// Open a window to cut this file in.

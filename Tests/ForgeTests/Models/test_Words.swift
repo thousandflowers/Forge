@@ -68,7 +68,7 @@ final class ArrivalTests: XCTestCase {
   func test_theBuiltInWordsAsk() throws {
     let expected: [String: [AskRequest.Question]] = [
       "goose_asksize.heic": [.size], "goose_askwidth.heic": [.width], "goose_askquality.heic": [.quality],
-      "goose_askformat.heic": [.format], "goose_ask.heic": [.join, .format, .language, .tool, .cut, .size, .privacy],
+      "goose_askformat.heic": [.format], "goose_ask.heic": [.forYou, .join, .format, .language, .tool, .cut, .size, .privacy],
     ]
     for (name, questions) in expected {
       guard case .ask(let request) = arrival(name, renamedOnly: true) else { XCTFail(name); continue }

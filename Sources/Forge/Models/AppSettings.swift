@@ -50,6 +50,9 @@ struct AppSettings: Codable, Sendable, Equatable {
   var dragMenuKeys: HoldKeys = .usual
   /// Apps the menu keeps out of, by bundle identifier.
   var dragMenuIgnored: [String] = []
+  /// The presets in the menu, where they were chosen. None, and the menu goes by
+  /// what is used.
+  var menuPresets: [UUID] = []
 
   // MARK: - What everything starts from
   //
@@ -143,7 +146,7 @@ extension AppSettings {
     case maxConcurrentNative, createBackupBeforeOverwrite, notifyWhenFinished, whenFinished
     case defaultFitMode, defaultQuality, privacy, nameTemplate, appearance
     case lighterClipboard, lighterRecordings, friendlyDownloads
-    case dragMenu, dragMenuKeys, dragMenuIgnored, spokenLanguage
+    case dragMenu, dragMenuKeys, dragMenuIgnored, menuPresets, spokenLanguage
   }
 
   /// Every key is optional on the way in. A setting added in a later version
@@ -167,6 +170,7 @@ extension AppSettings {
     dragMenu = try c.decodeIfPresent(Bool.self, forKey: .dragMenu) ?? fresh.dragMenu
     dragMenuKeys = try c.decodeIfPresent(HoldKeys.self, forKey: .dragMenuKeys) ?? fresh.dragMenuKeys
     dragMenuIgnored = try c.decodeIfPresent([String].self, forKey: .dragMenuIgnored) ?? fresh.dragMenuIgnored
+    menuPresets = try c.decodeIfPresent([UUID].self, forKey: .menuPresets) ?? fresh.menuPresets
     spokenLanguage = try c.decodeIfPresent(String.self, forKey: .spokenLanguage) ?? fresh.spokenLanguage
   }
 }
