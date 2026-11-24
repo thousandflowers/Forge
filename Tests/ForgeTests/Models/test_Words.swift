@@ -242,6 +242,70 @@ final class AskCenterTests: BaseTestCase {
     XCTAssertTrue(tried.contains { $0.contains(.convertFormat(to: .jpeg)) && $0.contains(.resize(width: 800, height: nil, fitMode: .proportional)) })
   }
 
+  /// One slow format used to hold back every weight after it.
+  func test_aSlowChoiceDoesNotHoldBackTheOthers() async throws {
+    let center = AskCenter(shows: false)
+    var first: [Forge.Operation]?
+    center.preview = { file, preset, _ in
+      if first == nil { first = preset.actions }
+      if preset.actions == first { try await Task.sleep(nanoseconds: 5_000_000_000) }
+      return ProcessingResult(outputURL: file.url, outputSize: 1, outputDimensions: nil, duration: 0)
+    }
+    let session = try measuring(with: center)
+    let choices = session.choices(for: .format)
+    for _ in 0..<100 where session.measured.count < choices.count - 1 { try await Task.sleep(nanoseconds: 20_000_000) }
+    XCTAssertEqual(session.measured.count, choices.count - 1, "all but the slow one")
+    XCTAssertNil(session.measured[choices[0].value])
+    session.stop()
+  }
+
+  /// Several at once, and never all of them: each one holds the whole picture.
+  func test_onlySomeChoicesAreMeasuredAtOnce() async throws {
+    let center = AskCenter(shows: false)
+    var running = 0, most = 0, done = 0
+    center.preview = { file, _, _ in
+      running += 1
+      most = max(most, running)
+      try? await Task.sleep(nanoseconds: 20_000_000)
+      running -= 1
+      done += 1
+      return ProcessingResult(outputURL: file.url, outputSize: 1, outputDimensions: nil, duration: 0)
+    }
+    let session = try measuring(with: center)
+    let count = session.choices(for: .format).count
+    for _ in 0..<100 where session.measured.count < count { try await Task.sleep(nanoseconds: 20_000_000) }
+    XCTAssertEqual(done, count, "each one once")
+    XCTAssertGreaterThan(most, 1)
+    XCTAssertLessThanOrEqual(most, AskSession.atOnce)
+  }
+
+  /// What was being measured for the answers before is not said of the new ones.
+  func test_aWeightMeasuredForAnotherAnswerIsDropped() async throws {
+    let center = AskCenter(shows: false)
+    center.preview = { file, preset, _ in
+      let isWide = !preset.actions.contains { $0.id == "resize" }
+      // Deaf to being cancelled, as an encoder is.
+      await withCheckedContinuation { continuation in
+        DispatchQueue.main.asyncAfter(deadline: .now() + (isWide ? 0.3 : 0.01)) { continuation.resume() }
+      }
+      return ProcessingResult(outputURL: file.url, outputSize: isWide ? 999 : 1, outputDimensions: nil, duration: 0)
+    }
+    let session = try measuring(with: center, [.format, .width])
+    try await Task.sleep(nanoseconds: 50_000_000)
+    session.choose(.number(800), for: .width)
+    try await Task.sleep(nanoseconds: 700_000_000)
+    let jpeg = try XCTUnwrap(session.choices(for: .format).first).value
+    XCTAssertEqual(session.measured[jpeg]?.contains("999"), false)
+  }
+
+  private func measuring(with center: AskCenter, _ questions: [AskRequest.Question] = [.format]) throws -> AskSession {
+    let source = try ProcessableFile(url: Fixture.image(at: path("weighed.png"), width: 1200, height: 800))
+    center.ask(AskRequest(preset: request.preset, questions: questions), about: source) { _, _ in [] }
+    let session = try XCTUnwrap(center.current)
+    session.measure()
+    return session
+  }
+
   func test_anotherQuestionWaitsItsTurn() throws {
     let center = AskCenter(shows: false)
     center.ask(request, about: try file("a.png")) { _, _ in [] }

@@ -92,7 +92,10 @@ final class AskSession: ObservableObject {
   private var suggested: [RulePreset] = []
   /// Nil where there is no window to cut in.
   var cut: (@MainActor (ProcessableFile) -> Void)?
-  private var measuring: Task<Void, Never>?
+  private var measuring: [Task<Void, Never>] = []
+  /// Each one being measured holds the whole picture, so not all of them at once.
+  static let atOnce = 4
+  private var toMeasure: [(question: AskRequest.Question, answer: AskRequest.Answer)] = []
   private var working: Task<Void, Never>?
   private let scratch = FileManager.default.temporaryDirectory
     .appendingPathComponent("ForgeAsk-\(UUID().uuidString)", isDirectory: true)
@@ -224,8 +227,9 @@ final class AskSession: ObservableObject {
   }
 
   private func stopMeasuring() {
-    measuring?.cancel()
-    measuring = nil
+    measuring.forEach { $0.cancel() }
+    measuring = []
+    toMeasure = []
     try? FileManager.default.removeItem(at: scratch)
   }
 
@@ -235,26 +239,39 @@ final class AskSession: ObservableObject {
   /// - Parameter again: what is known already is no longer so.
   func measure(again: Bool = true) {
     guard let preview, let file = files.first, ConvertKind(fileType: file.fileType) == .image else { return }
-    measuring?.cancel()
+    measuring.forEach { $0.cancel() }
     if again { measured = [:] }
-    let asked = shownQuestions.filter { $0 != .privacy && $0 != .join && $0 != .cut && $0 != .language }
+    var seen: Set<AskRequest.Answer> = []
+    toMeasure = shownQuestions
+      .filter { $0 != .privacy && $0 != .join && $0 != .cut && $0 != .language }
+      .flatMap { question in choices(for: question).map { (question, $0.value) } }
+      .filter { measured[$0.1] == nil && seen.insert($0.1).inserted }
     let given = answers
-    measuring = Task { [weak self] in
-      for question in asked {
-        guard let self else { return }
-        for choice in self.choices(for: question) {
+    measuring = (0..<Self.atOnce).map { _ in
+      Task { [weak self] in
+        while !Task.isCancelled, let self, let next = self.nextToMeasure() {
+          let says = await self.weigh(next.answer, for: next.question, of: file, given: given, by: preview)
           guard !Task.isCancelled else { return }
-          if self.measured[choice.value] != nil { continue }
-          let folder = self.scratch.appendingPathComponent(UUID().uuidString, isDirectory: true)
-          try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-          let tried = given.merging([question: choice.value]) { _, new in new }
-          let result = try? await preview(file, self.request.answered(with: tried), folder)
-          try? FileManager.default.removeItem(at: folder)
-          guard !Task.isCancelled else { return }
-          self.measured[choice.value] = result.map(Self.describe) ?? "cannot"
+          self.measured[next.answer] = says
         }
       }
     }
+  }
+
+  private func nextToMeasure() -> (question: AskRequest.Question, answer: AskRequest.Answer)? {
+    toMeasure.isEmpty ? nil : toMeasure.removeFirst()
+  }
+
+  private func weigh(
+    _ answer: AskRequest.Answer, for question: AskRequest.Question, of file: ProcessableFile,
+    given: [AskRequest.Question: AskRequest.Answer], by preview: AskCenter.Preview
+  ) async -> String {
+    let folder = scratch.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let tried = given.merging([question: answer]) { _, new in new }
+    let result = try? await preview(file, request.answered(with: tried), folder)
+    return result.map(Self.describe) ?? "cannot"
   }
 
   private static func describe(_ result: ProcessingResult) -> String {
