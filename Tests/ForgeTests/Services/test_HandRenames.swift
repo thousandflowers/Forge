@@ -167,4 +167,17 @@ final class HandRenamesTests: BaseTestCase {
     XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: home.path), ["foto_.png"])
     XCTAssertEqual(Signature.fits(home.appendingPathComponent("foto_.png"), "png"), true)
   }
+
+  func test_itSaysWhyNot() throws {
+    let home = try folder("home"), pdf = try Fixture.pdf(at: home.appendingPathComponent("a.pdf"), pages: 1)
+    func why(_ name: String) throws -> String? {
+      let after = home.appendingPathComponent(name)
+      try FileManager.default.moveItem(at: pdf, to: after)
+      defer { try? FileManager.default.moveItem(at: after, to: pdf) }
+      guard case .stay(let job)? = Retype.meant(by: after, before: "a.pdf") else { return nil }
+      return job.whyNot
+    }
+    XCTAssertEqual(try why("a.xyzq"), "“.xyzq” is not a format Forge knows.")
+    XCTAssertEqual(try why("a.mkv"), "It cannot become MKV.")
+  }
 }

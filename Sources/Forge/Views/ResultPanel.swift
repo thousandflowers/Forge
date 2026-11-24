@@ -70,13 +70,17 @@ private struct ResultCardView: View {
         .help("Drag it anywhere")
       VStack(alignment: .leading, spacing: 2) {
         Text(card.title).font(.callout.weight(.semibold)).lineLimit(1).truncationMode(.middle)
-        HStack(spacing: 6) {
-          Text("\(size(card.before)) → \(size(card.after))").foregroundStyle(.secondary)
-          if let percent = ResultCard.percent(from: card.before, to: card.after) {
-            Text(percent).fontWeight(.semibold).foregroundStyle(.green)
+        if let note = card.note {
+          Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        } else {
+          HStack(spacing: 6) {
+            Text("\(size(card.before)) → \(size(card.after))").foregroundStyle(.secondary)
+            if let percent = ResultCard.percent(from: card.before, to: card.after) {
+              Text(percent).fontWeight(.semibold).foregroundStyle(.green)
+            }
           }
+          .font(.callout).monospacedDigit()
         }
-        .font(.callout).monospacedDigit()
       }
       Spacer(minLength: 4)
       ResultActions(urls: [card.file])

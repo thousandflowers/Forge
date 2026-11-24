@@ -117,6 +117,11 @@ struct Retype {
     return x.count > 1 && x[0] == y[1] && x[1] == y[0] && Array(x.dropFirst(2)) == Array(y.dropFirst(2))
   }
 
+  /// Why it is what it was.
+  var whyNot: String {
+    FormatCatalog.type(named: to) == nil ? "“.\(to)” is not a format Forge knows." : "It cannot become \(to.uppercased())."
+  }
+
   /// Give it back the extension of what it is.
   func putBack(_ url: URL) throws -> URL {
     let folder = url.deletingLastPathComponent()

@@ -607,12 +607,12 @@ final class AppModel: ObservableObject {
     case .become(let become) where isWatched && become.to.lowercased() == url.pathExtension.lowercased(): return
     case .become(let become): job = become
     }
+    let before = Self.size(of: url)
     do {
       let entry = try await turns.take(of: settings.maxConcurrentNative) { [weak self] in try await self?.becomes(url, job) }
       await refreshHistory()
       guard let entry, let output = entry.outputURL else { return }
-      let size = { (file: URL) in ((try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? Int64) ?? 0 }
-      results.show(ResultCard(title: output.lastPathComponent, file: output, before: 0, after: size(output), undo: { [weak self] in
+      results.show(ResultCard(title: output.lastPathComponent, file: output, before: before, after: Self.size(of: output), undo: { [weak self] in
         self?.undo(entry) ?? false
       }))
     } catch is CancellationError {
@@ -621,6 +621,10 @@ final class AppModel: ObservableObject {
       report(error, doing: "converting “\(url.lastPathComponent)”")
       await refreshHistory()
     }
+  }
+
+  private static func size(of file: URL) -> Int64 {
+    ((try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? Int64) ?? 0
   }
 
   /// Nothing that name could mean: the file is given back the one that was true.
@@ -634,10 +638,10 @@ final class AppModel: ObservableObject {
       memories.values.forEach { $0.know(file) }
       remember(file)
       NSSound.beep()
-      let size = ((try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? Int64) ?? 0
-      results.show(ResultCard(title: file.lastPathComponent, file: file, before: 0, after: size, undo: {
-        (try? FileManager.default.moveItem(at: file, to: url)) != nil
-      }))
+      results.show(ResultCard(
+        title: "Kept as \(file.lastPathComponent).", file: file, before: 0, after: 0, note: job.whyNot,
+        undo: { (try? FileManager.default.moveItem(at: file, to: url)) != nil }
+      ))
     } catch {
       report(error, doing: "converting “\(url.lastPathComponent)”")
     }

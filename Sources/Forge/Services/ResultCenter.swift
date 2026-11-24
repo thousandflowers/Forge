@@ -8,6 +8,8 @@ struct ResultCard: Identifiable {
   let file: URL
   let before: Int64
   let after: Int64
+  /// Said where nothing was made, in place of what it weighs.
+  var note: String?
   /// Whether it could be put back.
   let undo: @MainActor () -> Bool
   /// When the card has gone, whichever way it went.
