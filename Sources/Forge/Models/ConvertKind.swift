@@ -222,8 +222,8 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
         // the sound and not the film in an MPEG-4 box.
         OutputGroup("Sound", OutputFormat.audio.filter { $0.type.map(MediaProcessor.isSoundOnly) ?? false }),
         OutputGroup("Frames", OutputFormat.images),
-        // The track already inside the film, which ffmpeg pulls out.
-        OutputGroup("Subtitles", ExternalTools.locate("ffmpeg") == nil ? [] : OutputFormat.subtitles),
+        // The track inside the film, or what is said in it.
+        OutputGroup("Subtitles", OutputFormat.subtitles),
         OutputGroup("Text", OutputFormat.text),
         OutputGroup("With your tools", OutputFormat.withTools(for: .video)),
       ]
@@ -239,6 +239,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
         OutputGroup("Audio", OutputFormat.audio),
         OutputGroup("Video container", OutputFormat.video),
         OutputGroup("Text", OutputFormat.text),
+        OutputGroup("Subtitles", OutputFormat.subtitles),
         OutputGroup("With your tools", OutputFormat.withTools(for: .audio)),
       ]
     case .document:
@@ -307,8 +308,8 @@ extension ConvertKind {
   private var common: [String] {
     switch self {
     case .image: return ["JPEG", "PNG", "HEIC", "WEBP", "TIFF", "PDF", "GIF", "AVIF"]
-    case .video: return ["MP4", "MOV", "M4V", "GIF", "M4A", "JPEG", "PNG", "TXT"]
-    case .audio: return ["M4A", "MP3", "WAV", "AIFF", "FLAC", "TXT"]
+    case .video: return ["MP4", "MOV", "GIF", "MP3", "M4A", "SRT", "TXT", "JPEG"]
+    case .audio: return ["M4A", "MP3", "WAV", "FLAC", "TXT", "SRT"]
     case .document: return ["PDF", "DOCX", "RTF", "HTML", "TXT", "JPEG", "PNG", "M4A"]
     case .data, .model, .subtitle, .font: return []
     }

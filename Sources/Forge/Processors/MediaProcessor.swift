@@ -24,8 +24,10 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   }
 
   func takes(_ file: ProcessableFile, to target: UTType) -> Bool {
-    // A subtitle is the track inside the film, which only the tools reach.
-    if Subtitles.carriesCues(Conversions.fileExtension(of: target)) { return false }
+    // A subtitle is the track inside the film where there is one, and what is
+    // said in it where there is not.
+    let name = Conversions.fileExtension(of: target)
+    if Subtitles.carriesCues(name) { return Subtitles.writes(name) }
     // Words are a transcript; sound and film containers are what this writes.
     if Self.isWords(target) { return true }
     if FormatCatalog.audioFormatID(for: target) != nil || FormatCatalog.isWritableVideo(target) { return true }
@@ -73,15 +75,29 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // Anything with a soundtrack asked for words becomes words. Which words
     // file it becomes is up to the extension: a recording renamed .rtf comes
     // out as RTF, .docx as DOCX, .pdf as a PDF of the transcript.
-    // A subtitle asked of a video is the track that is already in it, not the
-    // soundtrack typed out: the file says so by asking for .srt rather than
-    // .txt. AVFoundation exposes no reader for subtitle samples, so this goes
-    // to the tools, which is what declining it here arranges.
+    // A subtitle asked of a video is the track that is already in it. Nothing
+    // here reads subtitle samples, so that goes to the tools, which is what
+    // declining it arranges. With no track in it - a recording, a clip straight
+    // from the phone - it is what is said, with the times it was said at.
     if Subtitles.carriesCues(output.pathExtension) {
-      throw ProcessingError.unsupportedConversion(
-        from: UTType(filenameExtension: input.pathExtension) ?? .movie,
-        to: wanted
-      )
+      let hasATrack = try await Self.carriesSubtitles(asset)
+      // Its own subtitles are what was asked for. Somebody else's hearing of
+      // it, in their place and under the same name, is not.
+      if hasATrack, ExternalTools.locate("ffmpeg") == nil {
+        throw ProcessingError.conversionFailed(
+          reason: "\(input.lastPathComponent) has subtitles in it, and taking them out needs ffmpeg.\(Self.whatWouldRead)"
+        )
+      }
+      guard !hasATrack, Subtitles.writes(output.pathExtension) else {
+        throw ProcessingError.unsupportedConversion(
+          from: UTType(filenameExtension: input.pathExtension) ?? .movie,
+          to: wanted
+        )
+      }
+      guard !audioTracks.isEmpty else {
+        throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no sound to turn into subtitles")
+      }
+      return try await transcribeCues(input, to: output, operations: operations, start: start, progress: progress)
     }
 
     if Self.isWords(wanted), !audioTracks.isEmpty {
@@ -308,6 +324,52 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     type.conforms(to: .plainText) || DocumentText.canWrite(type)
   }
 
+  /// Whether there are subtitles in it already.
+  private static func carriesSubtitles(_ asset: AVURLAsset) async throws -> Bool {
+    // Not `.text`: that is where chapter titles live.
+    for type in [AVMediaType.subtitle, .closedCaption] where !(try await asset.loadTracks(withMediaType: type)).isEmpty {
+      return true
+    }
+    return false
+  }
+
+  /// The language to listen for: recognition's and transcription's are one
+  /// question, which language is this in.
+  private static func spoken(in operations: [Operation]) -> String? {
+    operations.compactMap { operation -> String? in
+      guard case .recognizeText(let languages) = operation else { return nil }
+      return languages.first
+    }.first
+  }
+
+  private func transcribeCues(
+    _ input: URL,
+    to output: URL,
+    operations: [Operation],
+    start: Date,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> ProcessingResult {
+    let silent = ProcessingError.conversionFailed(
+      reason: "There are no subtitles in \(input.lastPathComponent), and nothing is said in it to make them from"
+    )
+    let heard: Transcription.Heard
+    do {
+      heard = try await Transcription.hear(input, locale: Self.spoken(in: operations), progress: progress)
+    } catch where Transcription.isSilence(error) {
+      throw silent
+    }
+    let cues = Subtitles.cues(from: heard.words)
+    guard !cues.isEmpty else { throw silent }
+    try Subtitles.write(cues, to: output)
+    progress(1)
+    return ProcessingResult(
+      outputURL: output,
+      outputSize: (try FileManager.default.attributesOfItem(atPath: output.path)[.size] as? Int64) ?? 0,
+      outputDimensions: nil,
+      duration: Date().timeIntervalSince(start)
+    )
+  }
+
   private func transcribe(
     _ input: URL,
     to output: URL,
@@ -316,14 +378,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     start: Date,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
-    // The recognition language doubles as the transcription one: both answer
-    // "which language is this in".
-    let locale = operations.compactMap { operation -> String? in
-      guard case .recognizeText(let languages) = operation else { return nil }
-      return languages.first
-    }.first
-
-    let text = try await Transcription.text(of: input, locale: locale, progress: progress)
+    let text = try await Transcription.text(of: input, locale: Self.spoken(in: operations), progress: progress)
 
     if wanted.conforms(to: .plainText) {
       try text.write(to: output, atomically: true, encoding: .utf8)

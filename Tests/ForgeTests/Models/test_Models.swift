@@ -1213,16 +1213,12 @@ final class ConvertKindOfferingTests: XCTestCase {
     }
   }
 
-  /// The track inside a film is reachable from the window, not only from the
-  /// command line - where there is an ffmpeg to pull it out with.
-  func test_aFilmOffersItsSubtitlesWhenTheToolIsHere() throws {
+  /// Subtitles are offered with no tool at all: where there is no track to
+  /// take out, they are written from what is said.
+  func test_aFilmOffersSubtitles() throws {
     let kind = try kind(of: "mp4")
     XCTAssertEqual(kind, .video)
-    XCTAssertEqual(
-      offered(kind).contains("srt"),
-      ExternalTools.locate("ffmpeg") != nil,
-      "\(offered(kind))"
-    )
+    XCTAssertTrue(offered(kind).contains("srt"), "\(offered(kind))")
   }
 
   /// The formats that were already right, kept that way.
