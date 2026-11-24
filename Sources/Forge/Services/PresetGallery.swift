@@ -6,6 +6,25 @@ import Foundation
 /// closed set the app already knows how to run. Installing one cannot make
 /// Forge do anything it could not already do, which is what makes a gallery
 /// reasonable where a downloadable binary would not be.
+extension RulePreset {
+  /// The same, naming no file on the Mac it was made on.
+  var withoutFilesOfItsOwn: RulePreset {
+    func clean(_ operation: Operation) -> Operation {
+      switch operation {
+      case .film(var film):
+        film.lut = nil
+        return .film(film)
+      case .when(let condition, let then, let otherwise): return .when(condition, then: then.map(clean), otherwise: otherwise.map(clean))
+      case .split(let branches): return .split(branches.map { Branch(name: $0.name, actions: $0.actions.map(clean)) })
+      default: return operation
+      }
+    }
+    var copy = self
+    copy.actions = actions.map(clean)
+    return copy
+  }
+}
+
 actor PresetGallery {
 
   /// Where the published list lives. Contributions are pull requests against
@@ -61,6 +80,8 @@ actor PresetGallery {
   /// gallery entry that targets a format this Mac cannot write is not worth
   /// offering; it would only fail later.
   static func isRunnable(_ preset: RulePreset) -> Bool {
+    // Somebody else's preset has no business naming a file on this Mac.
+    guard preset.withoutFilesOfItsOwn == preset else { return false }
     guard let format = preset.targetFormat else { return true }
     return FormatCatalog.isWritableImage(format)
       || FormatCatalog.audioFormatID(for: format) != nil

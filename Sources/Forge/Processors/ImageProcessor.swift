@@ -30,7 +30,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     // Text is a reading job; WebP is written by cwebp where it is installed.
     if target.conforms(to: .plainText) { return true }
     if Self.isWebP(target), ExternalTools.locate("cwebp") != nil { return true }
-    if target == .svg, ExternalTools.locate("potrace") != nil { return true }
+    if target == .svg, file.fileType != .svg, ExternalTools.locate("potrace") != nil { return true }
     return FormatCatalog.isWritableImage(target) || FormatCatalog.isWritableVideo(target)
   }
 
@@ -118,7 +118,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     for (index, frame) in frames.enumerated() {
       try Task.checkCancellation()
       rendered.append(ImageFrame(
-        image: try transform(frame.image, with: operations, orientation: orientation, onWhite: FormatCatalog.isSolid(outputUTI)),
+        image: try transform(frame.image, with: operations, orientation: orientation, onWhite: FormatCatalog.isSolid(outputUTI), isAlone: frames.count == 1),
         duration: frame.duration
       ))
       progress(Double(index + 1) / Double(frames.count) * 0.9)
@@ -211,7 +211,8 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     _ image: CGImage,
     with operations: [Operation],
     orientation: CGImagePropertyOrientation = .up,
-    onWhite: Bool = false
+    onWhite: Bool = false,
+    isAlone: Bool = true
   ) throws -> CGImage {
     var ciImage = CIImage(cgImage: image)
     if orientation != .up {
@@ -221,7 +222,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       ))
     }
     for operation in operations {
-      ciImage = try applyOperation(operation, to: ciImage)
+      ciImage = try applyOperation(operation, to: ciImage, isAlone: isAlone)
     }
     if onWhite, operations.tools.contains(.removeBackground) { ciImage = PictureTools.onWhite(ciImage) }
 
@@ -488,7 +489,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
 
   // MARK: - Operations
 
-  private func applyOperation(_ operation: Operation, to image: CIImage) throws -> CIImage {
+  private func applyOperation(_ operation: Operation, to image: CIImage, isAlone: Bool) throws -> CIImage {
     switch operation {
     case .convertFormat, .quality, .recognizeText, .encode, .film, .limitSize, .stripMetadata, .when, .split, .join, .merge:
       return image // settled when the file is written, or decided before it is read
@@ -497,7 +498,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     case .filter(let type):
       return applyFilter(image, type: type)
     case .tool(let tool):
-      return try PictureTools.apply(tool, to: image)
+      return try PictureTools.apply(tool, to: image, isAlone: isAlone)
     }
   }
 

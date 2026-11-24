@@ -64,6 +64,9 @@ enum Division {
     guard let kept = (edit.part ?? Span()).clamped(to: try await length(of: file.url)) else {
       throw ProcessingError.conversionFailed(reason: "There is nothing in the part of \(file.fileName) asked for.")
     }
+    if case .every(let seconds) = division, (kept.upperBound - kept.lowerBound) / seconds > Double(most) {
+      throw ProcessingError.conversionFailed(reason: "That would make more than \(most) files of \(file.fileName).")
+    }
     var cuts: [Double]
     switch division {
     case .every(let seconds): cuts = Array(stride(from: kept.lowerBound + seconds, to: kept.upperBound - shortest, by: seconds))

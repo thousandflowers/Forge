@@ -34,6 +34,7 @@ actor WatchRunner {
 
   func run(folder: MonitoredFolder) async throws {
     let watcher = MonitoredFolderWatcher()
+    memory.remember(folder.url, subfolders: folder.includeSubfolders)
     try watcher.startWatching(
       folder: folder,
       onGone: { [weak self] in Task { await self?.folderWentAway() } }
@@ -63,6 +64,8 @@ actor WatchRunner {
     }
   }
 
+  private let memory = RenameMemory()
+
   private func folderWentAway() { folderIsGone = true }
 
   private func handle(_ url: URL) async {
@@ -75,10 +78,11 @@ actor WatchRunner {
 
   private func convert(_ url: URL) async {
     let path = url.standardizedFileURL.path
+    let renamed = memory.wasRenamed(url)
     guard !produced.contains(path) else { return }
 
     let preset: RulePreset
-    switch Arrival.of(url, folderPreset: self.preset, presets: others, onlyWhenRenamed: onlyWhenRenamed) {
+    switch Arrival.of(url, folderPreset: self.preset, presets: others, onlyWhenRenamed: onlyWhenRenamed, renamed: renamed) {
     case .leave: return
     case .run(let chosen): preset = chosen
     case .ask(let request):

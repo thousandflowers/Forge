@@ -88,6 +88,9 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // Media asked for text is transcribed, whether the words are in a
     // recording or in the soundtrack of a video.
     let wanted = Self.outputType(for: output, operations: operations, fallback: .mpeg4Movie)
+    if edit.isMuted, Self.isSoundOnly(wanted) || Self.isWords(wanted) || Subtitles.carriesCues(output.pathExtension) {
+      throw ProcessingError.conversionFailed(reason: Self.nothingLeft(of: input))
+    }
     // Anything with a soundtrack asked for words becomes words. Which words
     // file it becomes is up to the extension: a recording renamed .rtf comes
     // out as RTF, .docx as DOCX, .pdf as a PDF of the transcript.
@@ -103,6 +106,14 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
         throw ProcessingError.conversionFailed(
           reason: "\(input.lastPathComponent) has subtitles in it, and taking them out needs ffmpeg.\(Self.whatWouldRead)"
         )
+      }
+      // ffmpeg takes the track out, and writes fewer kinds of subtitle than Forge.
+      if hasATrack, Subtitles.writes(output.pathExtension), let ffmpeg = ExternalTools.locate("ffmpeg"),
+         !ExternalBridge.couldPlan(from: input.pathExtension.lowercased(), to: output.pathExtension.lowercased()) {
+        let words = FileManager.default.temporaryDirectory.appendingPathComponent("forge-\(UUID().uuidString).srt")
+        defer { try? FileManager.default.removeItem(at: words) }
+        try ExternalTools.run(ffmpeg, ["-hide_banner", "-loglevel", "error", "-y"] + MediaEdit(operations).ffmpegInput + ["-i", input.path, "-map", "0:s:0", words.path])
+        return try await SubtitleProcessor().process(words, to: output, with: operations, progress: progress)
       }
       guard !hasATrack, Subtitles.writes(output.pathExtension) else {
         throw ProcessingError.unsupportedConversion(
@@ -328,6 +339,8 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     ExternalTools.locate("ffmpeg") == nil ? " ffmpeg reads most of what macOS does not: brew install ffmpeg" : ""
   }
 
+  static func nothingLeft(of input: URL) -> String { "\(input.lastPathComponent) without its sound has nothing left to write." }
+
   /// Audio that is not also a movie: `.m4a`, `.wav`, `.flac`, not `.mp4`.
   static func isSoundOnly(_ type: UTType) -> Bool {
     type.conforms(to: .audio) && !type.conforms(to: .movie)
@@ -459,6 +472,9 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // animation ran four per cent fast. Sampling at what will be written keeps
     // it in time.
     let step = Self.interval(in: operations) ?? (100 / Self.framesPerSecond).rounded() / 100
+    guard Self.interval(in: operations) == nil || duration / step <= Self.mostPictures else {
+      throw ProcessingError.conversionFailed(reason: "That would make more than \(Int(Self.mostPictures)) pictures.")
+    }
     let times = stride(from: 0, to: duration, by: step).map {
       CMTime(seconds: $0, preferredTimescale: 600)
     }
@@ -537,6 +553,8 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   }
 
   /// How far apart the pictures were asked to be.
+  private static let mostPictures = 10_000.0
+
   private static func interval(in operations: [Operation]) -> Double? {
     operations.tools.compactMap { if case .frames(let seconds) = $0 { return seconds } else { return nil } }.first
   }

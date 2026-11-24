@@ -1,5 +1,6 @@
 import XCTest
 import AVFoundation
+import ImageIO
 import UniformTypeIdentifiers
 @testable import Forge
 
@@ -173,5 +174,204 @@ final class AskSessionReviewTests: ToolTestCase {
     held = session
     await session.run()
     XCTAssertEqual(seen, [0.5])
+  }
+}
+
+final class NamesAreNamesTests: ToolTestCase {
+  /// A photograph of a mirror, a loop of drums, page three of a scan.
+  func test_anOrdinaryConversionReadsNoTools() async throws {
+    let mirror = path("bathroom_mirror.png")
+    try Quarters.image(at: mirror)
+    let made = try await run([], on: mirror, to: .png, readsName: false)[0]
+    XCTAssertEqual(made.lastPathComponent, "bathroom_mirror.png")
+    XCTAssertEqual(try Quarters.read(made), [.red, .green, .blue, .white])
+    let drums = try Fixture.audio(at: path("drums_loop4.wav"), seconds: 1)
+    let sound = try await run([], on: drums, to: .wav, readsName: false)[0]
+    let length = try await seconds(sound)
+    XCTAssertEqual(length, 1, accuracy: 0.05)
+  }
+
+  func test_onlyWhatIsRenamedHereIsTold() throws {
+    let home = try folder("watched")
+    let before = home.appendingPathComponent("clip.mp4"), came = home.appendingPathComponent("bathroom_mirror.png")
+    try Data("x".utf8).write(to: before)
+    let memory = RenameMemory()
+    memory.remember(home, subfolders: false)
+    try Data("y".utf8).write(to: came)
+    XCTAssertFalse(memory.wasRenamed(came), "it came with that name")
+    XCTAssertFalse(memory.wasRenamed(came), "and is still called it")
+    let after = home.appendingPathComponent("clip_mute.mp4")
+    try FileManager.default.moveItem(at: before, to: after)
+    XCTAssertTrue(memory.wasRenamed(after))
+    XCTAssertFalse(memory.wasRenamed(after), "once")
+  }
+
+  func test_capitalsAreKept() {
+    XCTAssertEqual(NameTokens.read("a_mark(Hello).png").tools, [.mark("Hello")])
+  }
+}
+
+final class OriginalsStayTests: ToolTestCase {
+  func test_aFingerprintTakesNothingsPlace() async throws {
+    for (mode, word) in [(DestinationMode.moveTo, "sha256"), (.overwrite, "base64")] {
+      let source = path("\(word).png")
+      try Quarters.image(at: source)
+      let made = try await run([word], on: source, mode: mode)
+      XCTAssertTrue(exists(source), "\(mode) took the original")
+      XCTAssertTrue(exists(made[0]))
+    }
+    let film = try await Fixture.video(at: path("film.mp4"), seconds: 2)
+    let made = try await run(["frames1s"], on: film, mode: .overwrite)
+    XCTAssertTrue(exists(film))
+    XCTAssertEqual(made.count, 2)
+  }
+
+  func test_whateverFormatIsAsked() async throws {
+    let source = path("a.png")
+    try Quarters.image(at: source)
+    let made = try await run(["sha256"], on: source, to: .pdf)[0]
+    XCTAssertEqual(made.pathExtension, "txt")
+    let film = try await Fixture.video(at: path("film.mp4"), seconds: 2)
+    let frames = try await run(["frames1s"], on: film, to: .mpeg4Movie)
+    XCTAssertEqual(Set(frames.map(\.pathExtension)), ["jpeg"])
+  }
+
+  /// The second of two cannot be written, and the first does not stay behind.
+  func test_halfOfItIsNotLeft() async throws {
+    let source = try await Fixture.video(at: path("a.mp4"), seconds: 2)
+    let out = try folder("out")
+    let preset = RulePreset(name: "t", description: "", category: .custom, actions: [
+      .split([Branch(name: "ok", actions: [.convertFormat(to: .mpeg4Movie)]), Branch(name: "no", actions: [.convertFormat(to: .json)])]),
+    ])
+    do {
+      _ = try await coordinator().processFile(try ProcessableFile(url: source), with: preset, destinationMode: .copyTo, destinationURL: out) { _ in }
+      XCTFail("it went through")
+    } catch {}
+    XCTAssertEqual(contents(of: out), [])
+    XCTAssertTrue(exists(source))
+  }
+}
+
+final class ToolReviewTests: ToolTestCase {
+  func test_pagesAfterTheLast() {
+    XCTAssertEqual(PageList("7-")?.indices(of: 5), [])
+    XCTAssertEqual(PageList("2,9-")?.indices(of: 5), [1])
+    XCTAssertEqual(PageList("5-")?.indices(of: 5), [4])
+  }
+
+  /// A word nothing reads back takes the whole preset with it.
+  func test_whatAnEditorCanSayIsReadable() {
+    XCTAssertNil(Tool.trim(Span(from: 50, to: 30)).readable)
+    XCTAssertNil(Tool.trim(Span()).readable)
+    XCTAssertNil(Tool.frames(every: 0.0004).readable)
+    XCTAssertEqual(Tool.trim(Span(from: 1.23456, to: nil)).readable, .trim(Span(from: 1.235, to: nil)))
+  }
+
+  func test_aDrawingIsNotTraced() async throws {
+    try XCTSkipIf(!VectorProcessor.canDraw, "this Mac draws no SVG")
+    let source = path("a.svg")
+    try ##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#3178c6"/></svg>"##.write(to: source, atomically: true, encoding: .utf8)
+    let said = await reason { _ = try await self.run(["rotate90"], on: source) }
+    XCTAssertTrue(said.contains("is a drawing"), said)
+  }
+
+  func test_nothingIsLeftOfSoundWithoutSound() async throws {
+    let source = try await Fixture.video(at: path("a.mp4"), seconds: 1)
+    let said = await reason { _ = try await self.run(["mute"], on: source, to: .m4a) }
+    XCTAssertTrue(said.contains("nothing left"), said)
+  }
+
+  func test_moreFilesThanAnybodyWants() async throws {
+    let source = try Fixture.audio(at: path("a.wav"), seconds: 2)
+    let said = await reason { _ = try await self.run([], on: source, more: [.tool(.divide(.every(0.0000001)))]) }
+    XCTAssertTrue(said.contains("more than 2000"), said)
+    let film = try await Fixture.video(at: path("a.mp4"), seconds: 2)
+    let frames = await reason { _ = try await self.run([], on: film, more: [.tool(.frames(every: 0.0001))]) }
+    XCTAssertTrue(frames.contains("10000"), frames)
+  }
+
+  func test_somebodyElsesPresetNamesNoFile() {
+    var film = FilmSettings()
+    film.lut = "/etc/hosts"
+    let preset = RulePreset(name: "x", description: "", category: .video, actions: [.when(Condition(), then: [.film(film)], otherwise: [])])
+    XCTAssertFalse(PresetGallery.isRunnable(preset))
+    let left = preset.withoutFilesOfItsOwn.actions.flatMap(\.leaves).film
+    XCTAssertNotNil(left)
+    XCTAssertNil(left?.lut)
+    XCTAssertEqual(film.refusal(for: "mp4"), "A LUT is a .cube file.")
+  }
+
+  /// Joined, a film says no more about who made it than it would converted.
+  func test_aJoinKeepsThePrivacyAskedFor() async throws {
+    let film = path("film.mov")
+    let place = AVMutableMetadataItem()
+    place.identifier = .quickTimeMetadataLocationISO6709
+    place.value = "+45.4371+012.3326/" as NSString
+    place.dataType = kCMMetadataBaseDataType_UTF8 as String
+    try await Fixture.writePictureTrack(to: film, seconds: 1, size: CGSize(width: 320, height: 200), metadata: [place])
+    let sound = try Fixture.audio(at: path("v.wav"), seconds: 1)
+    let words = path("w.srt")
+    try "1\n00:00:00,100 --> 00:00:00,800\nHonk\n".write(to: words, atomically: true, encoding: .utf8)
+    func saysWhere(_ kind: Joiner.Kind, with other: URL, _ policy: PrivacyPolicy) async throws -> Bool {
+      var settings = AppSettings()
+      settings.privacy = policy
+      let files = [try ProcessableFile(url: film), try ProcessableFile(url: other)]
+      let made = try await coordinator(settings: settings).join(files, as: kind, into: path("o-\(UUID().uuidString)"))
+      return try Data(contentsOf: made).range(of: Data("45.4371".utf8)) != nil
+    }
+    let kept = try await saysWhere(.dubbed, with: sound, .keepAll)
+    XCTAssertTrue(kept, "or the rest proves nothing")
+    for policy in [PrivacyPolicy.stripLocation, .stripAll] {
+      let dubbed = try await saysWhere(.dubbed, with: sound, policy)
+      XCTAssertFalse(dubbed, "\(policy)")
+      guard ExternalTools.locate("ffmpeg") != nil else { continue }
+      let subtitled = try await saysWhere(.subtitled, with: words, policy)
+      XCTAssertFalse(subtitled, "\(policy)")
+    }
+  }
+
+  func test_anAnimationIsCroppedInOnePlace() async throws {
+    let frames = (0..<6).map { index -> ImageFrame in
+      let context = CGContext(
+        data: nil, width: 400, height: 100, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+      )!
+      context.setFillColor(CGColor(gray: 0, alpha: 1))
+      context.fill(CGRect(x: 0, y: 0, width: 400, height: 100))
+      context.setFillColor(CGColor(gray: 1, alpha: 1))
+      context.fill(CGRect(x: 150 + index * 10, y: 35, width: 30, height: 30))
+      return ImageFrame(image: context.makeImage()!, duration: 0.1)
+    }
+    let source = path("a.gif")
+    try ImageFrames.write(frames, to: source, as: .gif, frameOptions: [:])
+    let made = try await run(["crop1x1"], on: source)[0]
+    let read = try XCTUnwrap(CGImageSourceCreateWithURL(made as CFURL, nil))
+    let places = (0..<CGImageSourceGetCount(read)).compactMap { index -> Int? in
+      guard let image = CGImageSourceCreateImageAtIndex(read, index, nil) else { return nil }
+      var bytes = [UInt8](repeating: 0, count: image.width * image.height)
+      let context = CGContext(
+        data: &bytes, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width,
+        space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue
+      )!
+      context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+      return bytes[(50 * image.width)..<(51 * image.width)].firstIndex { $0 > 128 }.map { $0 - 50 * image.width }
+    }
+    XCTAssertEqual(places, [0, 10, 20, 30, 40, 50], "it moves as it moved")
+  }
+}
+
+@MainActor
+final class CutReviewTests: ToolTestCase {
+  /// To the right is to the right, in a mirror too.
+  func test_turningWhatIsMirrored() async throws {
+    let source = path("a.png")
+    try Quarters.image(at: source)
+    let model = try XCTUnwrap(CutModel(file: try ProcessableFile(url: source)))
+    await model.load()
+    model.mirror()
+    model.turn()
+    let made = try await run([], on: source, more: model.preset.actions)[0]
+    // Mirrored: green red over white blue. Then to the right: white green over blue red.
+    XCTAssertEqual(try Quarters.read(made), [.white, .green, .blue, .red])
   }
 }

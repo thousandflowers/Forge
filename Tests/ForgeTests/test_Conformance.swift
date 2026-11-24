@@ -163,6 +163,11 @@ final class ConformanceTests: BaseTestCase {
       return (PDFDocument(url: output)?.pageCount ?? 0) > 0
         ? (.ok, output.path) : (.unreadable, "\(output.lastPathComponent): no pages")
     }
+    // ImageIO does not draw a drawing.
+    if type == .svg {
+      return XMLParser(data: (try? Data(contentsOf: output)) ?? Data()).parse()
+        ? (.ok, output.path) : (.unreadable, "\(output.lastPathComponent): not XML")
+    }
     if type.conforms(to: .image) {
       guard let source = CGImageSourceCreateWithURL(output as CFURL, nil),
             CGImageSourceGetCount(source) > 0,

@@ -104,7 +104,10 @@ struct PageList: Hashable, Sendable {
   /// are not there.
   func indices(of count: Int) -> [Int] {
     runs.flatMap { run -> [Int] in
-      let from = run.from ?? 1, to = run.to ?? count
+      let from = run.from ?? 1
+      let to = run.to ?? max(count, from)
+      // From a page that is not there, on to the end, is no page.
+      if run.to == nil, from > count { return [] }
       // Page ninety-nine thousand of five is nothing to count up to.
       let inside = { (page: Int) in min(max(page, 0), count + 1) }
       let pages = from <= to ? Array(inside(from)...max(inside(from), inside(to))) : Array((inside(to)...inside(from)).reversed())
@@ -171,7 +174,7 @@ extension Tool {
 
   init?(word: String) {
     // What is written on it is written as it was written.
-    if let mark = word.wholeMatch(of: #/(?i)mark\((.+)\)/#) {
+    if let mark = word.wholeMatch(of: #/(?i)mark\((.{1,200})\)/#) {
       self = .mark(String(mark.1))
       return
     }
@@ -398,6 +401,13 @@ extension Tool {
     return (words[kind] ?? []).compactMap(Tool.init(word:))
   }
 
+  /// What it makes is about the file, and not the file.
+  var leavesTheOriginal: Bool { kind == .digest || kind == .frames }
+
+  /// As it would be read back: a preset keeps the word, and a word nothing reads
+  /// takes the preset with it.
+  var readable: Tool? { Tool(word: word) }
+
   /// What another step of takes its place: a turn one way is instead of a turn
   /// another way, and not instead of a mirror.
   var slot: String {
@@ -491,7 +501,9 @@ extension [Operation] {
     }
     let formats = compactMap { if case .convertFormat(let to) = $0 { return to } else { return nil } }
     guard !formats.isEmpty else { return [.convertFormat(to: wanted.type)] + self }
-    guard overriding else { return self }
+    // These two are never what was asked by another name: a film is not a
+    // picture of itself, and a fingerprint is not a PDF.
+    guard overriding || tools.contains(where: \.leavesTheOriginal) else { return self }
     return map { operation in
       guard case .convertFormat(let to) = operation, !wanted.takes(to) else { return operation }
       return .convertFormat(to: wanted.type)

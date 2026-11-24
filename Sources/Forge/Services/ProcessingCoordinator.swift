@@ -180,7 +180,7 @@ actor ProcessingCoordinator {
     // somebody typed it onto that file for this conversion.
     var chains: [(branch: String?, actions: [Operation])] = []
     for chain in resolution.chains {
-      var actions = NameTokens.applying(to: chain.actions, from: file.fileName).settlingFormat()
+      var actions = NameTokens.applying(to: chain.actions, from: file.fileName, tools: preset.readsTools).settlingFormat()
       if actions.tools.contains(.lighter) {
         preset.onlyIfLighter = true
         actions = try Lighter.settled(actions, for: file)
@@ -191,6 +191,13 @@ actor ProcessingCoordinator {
         continue
       }
       chains += parts.map { ([chain.branch, $0.label].compactMap { $0 }.joined(separator: "-"), $0.actions) }
+    }
+    // A fingerprint, or pictures of a film, are not the file in another form:
+    // nothing takes the original's place.
+    var destinationMode = destinationMode, destinationURL = destinationURL
+    if destinationMode != .copyTo, chains.contains(where: { $0.actions.tools.contains(where: \.leavesTheOriginal) }) {
+      destinationURL = destinationMode == .overwrite ? file.url.deletingLastPathComponent() : destinationURL
+      destinationMode = .copyTo
     }
     guard chains.count > 1 || chains.first?.branch != nil || resolution.merge != nil else {
       var flat = preset
@@ -226,16 +233,21 @@ actor ProcessingCoordinator {
         copy.nameTemplate = Self.template(preset.nameTemplate ?? settings.nameTemplate, branch: branch)
       }
       let step = 1.0 / Double(chains.count)
-      results.append(
-        try await runFormats(
-          file: file,
-          preset: copy,
-          destinationMode: scratch == nil && !movesAfterAll ? destinationMode : .copyTo,
-          destinationURL: scratch ?? destinationURL,
-          counter: counter,
-          progress: { fraction in progress(Double(index) * step + fraction * step) }
+      do {
+        results.append(
+          try await runFormats(
+            file: file,
+            preset: copy,
+            destinationMode: scratch == nil && !movesAfterAll ? destinationMode : .copyTo,
+            destinationURL: scratch ?? destinationURL,
+            counter: counter,
+            progress: { fraction in progress(Double(index) * step + fraction * step) }
+          )
         )
-      )
+      } catch {
+        Self.discard(results)
+        throw error
+      }
     }
     let combined = try Self.merge(results)
     if movesAfterAll { try removeSource(of: file, unlessAmong: [combined.outputURL] + combined.additionalOutputs) }
@@ -293,6 +305,12 @@ actor ProcessingCoordinator {
     template.contains("{branch}")
       ? template.replacingOccurrences(of: "{branch}", with: branch)
       : template + "_" + branch
+  }
+
+  /// Some of what was wanted is not what was wanted, and nothing would say whose
+  /// it was.
+  private static func discard(_ results: [ProcessingResult]) {
+    for url in results.flatMap({ [$0.outputURL] + $0.additionalOutputs }) { try? FileManager.default.removeItem(at: url) }
   }
 
   /// Several outputs of one input, reported as one result.
@@ -355,16 +373,21 @@ actor ProcessingCoordinator {
     for (index, format) in formats.enumerated() {
       try Task.checkCancellation()
       let step = 1.0 / Double(formats.count)
-      results.append(
-        try await executeProcessing(
-          file: file,
-          preset: Self.preset(preset, writingOnly: format),
-          destinationMode: moves ? .copyTo : destinationMode,
-          destinationURL: destinationURL,
-          counter: counter,
-          progress: { fraction in progress(Double(index) * step + fraction * step) }
+      do {
+        results.append(
+          try await executeProcessing(
+            file: file,
+            preset: Self.preset(preset, writingOnly: format),
+            destinationMode: moves ? .copyTo : destinationMode,
+            destinationURL: destinationURL,
+            counter: counter,
+            progress: { fraction in progress(Double(index) * step + fraction * step) }
+          )
         )
-      )
+      } catch {
+        Self.discard(results)
+        throw error
+      }
     }
 
     let combined = try Self.merge(results)
@@ -739,6 +762,8 @@ actor ProcessingCoordinator {
     return candidate
   }
 
+  var privacyPolicy: PrivacyPolicy { settings.privacy }
+
   func claim(_ desired: URL) throws -> URL { try reserveUniqueURL(desired) }
 
   func record(_ entry: ProcessingHistory) async {
@@ -800,7 +825,7 @@ actor ProcessingCoordinator {
     }.first
 
     return NameTemplate.Static(
-      name: preset.untriggered(stem: NameTokens.spent(file.fileName)),
+      name: preset.untriggered(stem: preset.readsTools ? NameTokens.spent(file.fileName) : (file.fileName as NSString).deletingPathExtension),
       parent: file.url.deletingLastPathComponent().lastPathComponent,
       // The file's own date where the filesystem knows one, since a template
       // asking for a date is asking about the photograph, not about now.

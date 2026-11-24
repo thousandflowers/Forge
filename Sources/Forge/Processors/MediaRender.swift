@@ -189,6 +189,7 @@ enum MediaRender {
     let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: pixels)
     writer.add(input)
     guard writer.startWriting() else { throw writer.error ?? ProcessingError.conversionFailed(reason: "Cannot write the film backwards") }
+    defer { if writer.status == .writing { writer.cancelWriting() } }
     writer.startSession(atSourceTime: .zero)
 
     let second = CMTime(value: 1, timescale: 1)

@@ -50,7 +50,7 @@ enum Joiner {
     }
   }
 
-  static func join(_ files: [ProcessableFile], as kind: Kind, to output: URL) async throws {
+  static func join(_ files: [ProcessableFile], as kind: Kind, to output: URL, privacy: PrivacyPolicy = .keepAll) async throws {
     switch kind {
     case .pdf:
       for file in files {
@@ -61,15 +61,16 @@ enum Joiner {
       let isPictures = files.allSatisfy { ConvertKind(fileType: $0.fileType) == .image }
       try await isPictures ? slides(files, to: output) : film(files, to: output)
     case .sound: try await sound(files, to: output)
-    case .dubbed: try await dub(files[0].url, with: files[1].url, to: output)
-    case .subtitled: try subtitle(files[0], with: files[1], to: output)
+    case .dubbed: try await dub(files[0].url, with: files[1].url, to: output, privacy: privacy)
+    case .subtitled: try subtitle(files[0], with: files[1], to: output, privacy: privacy)
     }
+    try PrivacyFilter.applyAfterWriting(privacy, to: [output])
   }
 
   // MARK: - A film and something else
 
   /// The film's picture as it is, and the other's sound for as long as it lasts.
-  private static func dub(_ film: URL, with sound: URL, to output: URL) async throws {
+  private static func dub(_ film: URL, with sound: URL, to output: URL, privacy: PrivacyPolicy) async throws {
     let picture = AVURLAsset(url: film), heard = AVURLAsset(url: sound)
     let composition = AVMutableComposition()
     guard let shown = try? await picture.loadTracks(withMediaType: .video).first,
@@ -90,12 +91,13 @@ enum Joiner {
     }
     session.outputURL = output
     session.outputFileType = AVFileType((UTType(filenameExtension: output.pathExtension) ?? .mpeg4Movie).identifier)
-    session.metadata = (try? await picture.load(.metadata)) ?? []
+    session.metadata = PrivacyFilter.metadata((try? await picture.load(.metadata)) ?? [], to: privacy)
+    if let filter = PrivacyFilter.filter(for: privacy) { session.metadataItemFilter = filter }
     try await export(session)
   }
 
   /// A track that can be turned on and off, in a film otherwise as it is.
-  private static func subtitle(_ film: ProcessableFile, with words: ProcessableFile, to output: URL) throws {
+  private static func subtitle(_ film: ProcessableFile, with words: ProcessableFile, to output: URL, privacy: PrivacyPolicy) throws {
     guard let ffmpeg = ExternalTools.locate("ffmpeg") else {
       throw ProcessingError.conversionFailed(reason: "Subtitles are put into a film by ffmpeg: brew install ffmpeg")
     }
@@ -103,8 +105,8 @@ enum Joiner {
     do {
       try ExternalTools.run(ffmpeg, [
         "-hide_banner", "-loglevel", "error", "-y", "-i", film.url.path, "-i", words.url.path,
-        "-map", "0:v", "-map", "0:a?", "-map", "1:s:0", "-c", "copy", "-c:s", codec, "-movflags", "+faststart", output.path,
-      ])
+        "-map", "0:v", "-map", "0:a?", "-map", "1:s:0", "-c", "copy", "-c:s", codec, "-movflags", "+faststart",
+      ] + ExternalBridge.privacyArguments(privacy) + [output.path])
     } catch is CancellationError {
       throw CancellationError()
     } catch {
@@ -117,10 +119,11 @@ enum Joiner {
   // MARK: - Pictures
 
   private static func slides(_ files: [ProcessableFile], to output: URL) async throws {
-    let pictures = try files.map { file -> CGImage in
+    // One at a time: a hundred photographs at once are sixteen gigabytes.
+    func picture(_ file: ProcessableFile) throws -> CGImage {
       let options: [CFString: Any] = [
         kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
-        kCGImageSourceThumbnailMaxPixelSize: largestSide,
+        kCGImageSourceThumbnailMaxPixelSize: largestSide, kCGImageSourceShouldCache: false,
       ]
       guard let source = CGImageSourceCreateWithURL(file.url as CFURL, nil),
             let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
@@ -128,24 +131,35 @@ enum Joiner {
       }
       return image
     }
-    // Room for the largest of them, and none of them stretched.
-    let size = CGSize(
-      width: (pictures.map(\.width).max() ?? 0) / 2 * 2, height: (pictures.map(\.height).max() ?? 0) / 2 * 2
-    )
-    let frames = try pictures.map { picture -> ImageFrame in
-      guard let context = CGContext(
-        data: nil, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8, bytesPerRow: 0,
-        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-      ) else { throw ProcessingError.conversionFailed(reason: "Cannot draw a picture") }
-      context.setFillColor(CGColor(gray: 0, alpha: 1))
-      context.fill(CGRect(origin: .zero, size: size))
-      context.interpolationQuality = .high
-      context.draw(picture, in: AVMakeRect(aspectRatio: CGSize(width: picture.width, height: picture.height), insideRect: CGRect(origin: .zero, size: size)))
-      guard let drawn = context.makeImage() else { throw ProcessingError.conversionFailed(reason: "Cannot draw a picture") }
-      return ImageFrame(image: drawn, duration: secondsAPicture)
+    /// As it is seen, and no larger than it will be drawn.
+    func seen(_ file: ProcessableFile) -> CGSize {
+      let source = CGImageSourceCreateWithURL(file.url as CFURL, nil)
+      let isOnItsSide = source.map { ImageProcessor.orientation(of: $0).rawValue >= 5 } ?? false
+      let width = CGFloat(file.dimensions?.width ?? 0), height = CGFloat(file.dimensions?.height ?? 0)
+      let scale = min(1, largestSide / max(width, height, 1))
+      return isOnItsSide ? CGSize(width: height * scale, height: width * scale) : CGSize(width: width * scale, height: height * scale)
     }
+    // Room for the largest of them, and none of them stretched.
+    let sizes = files.map(seen)
+    let size = CGSize(
+      width: CGFloat(Int(sizes.map(\.width).max() ?? 0) / 2 * 2), height: CGFloat(Int(sizes.map(\.height).max() ?? 0) / 2 * 2)
+    )
+    guard let context = CGContext(
+      data: nil, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8, bytesPerRow: 0,
+      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else { throw ProcessingError.conversionFailed(reason: "Cannot draw a picture") }
+    context.interpolationQuality = .high
     let type = UTType(filenameExtension: output.pathExtension) ?? .mpeg4Movie
-    try await MovieWriter.write(frames, to: output, as: type) { _ in }
+    try await MovieWriter.write(files.count, of: size, to: output, as: type, frame: { index in
+      try autoreleasepool {
+        let drawn = try picture(files[index])
+        context.setFillColor(CGColor(gray: 0, alpha: 1))
+        context.fill(CGRect(origin: .zero, size: size))
+        context.draw(drawn, in: AVMakeRect(aspectRatio: CGSize(width: drawn.width, height: drawn.height), insideRect: CGRect(origin: .zero, size: size)))
+        guard let made = context.makeImage() else { throw ProcessingError.conversionFailed(reason: "Cannot draw a picture") }
+        return ImageFrame(image: made, duration: secondsAPicture)
+      }
+    }) { _ in }
   }
 
   // MARK: - Films
@@ -306,7 +320,7 @@ extension ProcessingCoordinator {
     let scratch = home.appendingPathComponent(".forge-\(UUID().uuidString).\(ext)")
     defer { try? FileManager.default.removeItem(at: scratch) }
     try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-    try await Joiner.join(files, as: kind, to: scratch)
+    try await Joiner.join(files, as: kind, to: scratch, privacy: privacyPolicy)
     let output = try claim(home.appendingPathComponent("\(stem).\(ext)"))
     do {
       _ = try FileManager.default.replaceItemAt(output, withItemAt: scratch)

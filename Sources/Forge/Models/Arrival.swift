@@ -10,7 +10,23 @@ enum Arrival: Equatable {
   case run(RulePreset)
   case ask(AskRequest)
 
-  static func of(_ url: URL, folderPreset: RulePreset?, presets: [RulePreset], onlyWhenRenamed: Bool) -> Arrival {
+  /// - Parameter renamed: whether the file was there under another name. One that
+  ///   comes with a tool in its name is only called that.
+  static func of(_ url: URL, folderPreset: RulePreset?, presets: [RulePreset], onlyWhenRenamed: Bool, renamed: Bool = true) -> Arrival {
+    let found = plain(url, folderPreset: folderPreset, presets: presets, onlyWhenRenamed: onlyWhenRenamed, renamed: renamed)
+    guard renamed, !NameTokens.read(url.lastPathComponent).tools.isEmpty else { return found }
+    switch found {
+    case .leave: return .leave
+    case .run(var preset):
+      preset.readsTools = true
+      return .run(preset)
+    case .ask(var request):
+      request.preset.readsTools = true
+      return .ask(request)
+    }
+  }
+
+  private static func plain(_ url: URL, folderPreset: RulePreset?, presets: [RulePreset], onlyWhenRenamed: Bool, renamed: Bool) -> Arrival {
     // A preset's own word first: the user made it up, so it beats Forge's.
     if let called = presets.first(where: { $0.isEnabled && $0.isTriggered(by: url) }) {
       guard called.accepts(url) else { return .leave }
@@ -18,7 +34,8 @@ enum Arrival: Equatable {
       return questions.isEmpty ? .run(called) : .ask(AskRequest(preset: called, questions: questions.map { .parameter($0) }))
     }
 
-    let name = NameTokens.read(url.lastPathComponent)
+    var name = NameTokens.read(url.lastPathComponent)
+    if !renamed { name.tools = [] }
     // Where every file is converted anyway, the bare word is more likely a
     // title: `how_to_ask.pdf`.
     if let word = name.ask, onlyWhenRenamed || word != .everything {

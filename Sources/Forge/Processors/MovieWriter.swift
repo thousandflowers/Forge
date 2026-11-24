@@ -21,10 +21,22 @@ enum MovieWriter {
     guard let first = frames.first else {
       throw ProcessingError.conversionFailed(reason: "Nothing to write")
     }
+    try await write(frames.count, of: CGSize(width: first.image.width, height: first.image.height), to: output, as: type, frame: { frames[$0] }, progress: progress)
+  }
+
+  /// Each frame asked for when its turn comes, and let go of after it.
+  static func write(
+    _ count: Int,
+    of given: CGSize,
+    to output: URL,
+    as type: UTType,
+    frame frameAt: (Int) throws -> ImageFrame,
+    progress: (Double) -> Void
+  ) async throws {
 
     // H.264 rejects odd dimensions, and a frame taken from an arbitrary image
     // is very often odd.
-    let size = CGSize(width: (first.image.width / 2) * 2, height: (first.image.height / 2) * 2)
+    let size = CGSize(width: (Int(given.width) / 2) * 2, height: (Int(given.height) / 2) * 2)
     guard size.width > 0, size.height > 0 else {
       throw ProcessingError.conversionFailed(reason: "The frames are too small to encode")
     }
@@ -57,8 +69,9 @@ enum MovieWriter {
     let timescale: CMTimeScale = 600
     var elapsed = CMTime.zero
 
-    for (index, frame) in frames.enumerated() {
+    for index in 0..<count {
       try Task.checkCancellation()
+      let frame = try frameAt(index)
       try await waitUntilReady(input, writer: writer)
       guard let pool = adaptor.pixelBufferPool else {
         throw ProcessingError.conversionFailed(reason: "Cannot allocate video frames")
@@ -69,7 +82,7 @@ enum MovieWriter {
       // Honour each frame's own delay, so a GIF keeps its pacing.
       let step = frame.duration > 0 ? frame.duration : 1 / Double(defaultFrameRate)
       elapsed = CMTimeAdd(elapsed, CMTime(seconds: step, preferredTimescale: timescale))
-      progress(Double(index + 1) / Double(frames.count))
+      progress(Double(index + 1) / Double(count))
     }
 
     input.markAsFinished()

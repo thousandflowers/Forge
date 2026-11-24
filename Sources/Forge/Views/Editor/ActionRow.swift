@@ -105,7 +105,10 @@ struct ActionRow: View {
       FilmSettingsView(settings: Binding(get: { settings }, set: { action.operation = .film($0) }))
 
     case .tool(let tool):
-      ToolRow(tool: Binding(get: { tool }, set: { action.operation = .tool($0) }))
+      ToolRow(tool: Binding(get: { tool }, set: { tool in
+        guard let readable = tool.readable else { return NSSound.beep() }
+        action.operation = .tool(readable)
+      }))
 
     case .when, .split:
       EmptyView()

@@ -142,8 +142,14 @@ final class ToolNameTests: XCTestCase {
 
   func test_aRenamedFileIsTaken() {
     let web = RulePreset(name: "Web", description: "", category: .custom, actions: [.quality(level: 80)])
+    var ordered = web
+    ordered.readsTools = true
     XCTAssertEqual(
-      Arrival.of(URL(fileURLWithPath: "/tmp/video_mute.mp4"), folderPreset: web, presets: [web], onlyWhenRenamed: true), .run(web)
+      Arrival.of(URL(fileURLWithPath: "/tmp/video_mute.mp4"), folderPreset: web, presets: [web], onlyWhenRenamed: true), .run(ordered)
+    )
+    XCTAssertEqual(
+      Arrival.of(URL(fileURLWithPath: "/tmp/video_mute.mp4"), folderPreset: web, presets: [web], onlyWhenRenamed: true, renamed: false), .leave,
+      "it came with that name"
     )
     XCTAssertEqual(
       Arrival.of(URL(fileURLWithPath: "/tmp/study_mute.pdf"), folderPreset: web, presets: [web], onlyWhenRenamed: true), .leave

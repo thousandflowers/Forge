@@ -82,10 +82,11 @@ enum Quarters {
 
 class ToolTestCase: BaseTestCase {
   /// The file through a chain, beside nothing: into a folder of its own.
-  func run(_ words: [String], on url: URL, to format: UTType? = nil, mode: DestinationMode = .copyTo, more: [Forge.Operation] = []) async throws -> [URL] {
+  func run(_ words: [String], on url: URL, to format: UTType? = nil, mode: DestinationMode = .copyTo, more: [Forge.Operation] = [], readsName: Bool = true) async throws -> [URL] {
     let formats: [Forge.Operation] = format.map { [.convertFormat(to: $0)] } ?? []
     let actions = formats + more + words.map { .tool(Tool(word: $0)!) }
-    let preset = RulePreset(name: "t", description: "", category: .custom, actions: actions)
+    var preset = RulePreset(name: "t", description: "", category: .custom, actions: actions)
+    preset.readsTools = readsName
     let out = path("out-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
     let entry = try await coordinator().processFile(

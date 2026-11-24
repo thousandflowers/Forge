@@ -45,6 +45,7 @@ final class AppModel: ObservableObject {
   let coordinator: ProcessingCoordinator
   private let persistence: PersistenceManager
   private var watchers: [UUID: MonitoredFolderWatcher] = [:]
+  private var memories: [UUID: RenameMemory] = [:]
 
   /// Files Forge has just written. A watched folder that also receives the
   /// output would otherwise convert its own results forever.
@@ -188,7 +189,7 @@ final class AppModel: ObservableObject {
   func importPresets(from url: URL) {
     Task { [weak self] in
       do {
-        let imported = try await self?.persistence.importPresets(from: url) ?? []
+        let imported = (try await self?.persistence.importPresets(from: url) ?? []).map(\.withoutFilesOfItsOwn)
         guard let self else { return }
         // The same file imported twice used to leave two identical presets.
         for preset in imported where !Self.isAlreadyHere(preset, in: self.presets) {
@@ -624,6 +625,9 @@ final class AppModel: ObservableObject {
         await self?.processIncoming(url, folder: folder)
       }
       watchers[folder.id] = watcher
+      let memory = RenameMemory()
+      memory.remember(folder.url, subfolders: folder.includeSubfolders)
+      memories[folder.id] = memory
     } catch {
       // A folder that shows as active but is not being watched is worse than
       // an error message, so say so and turn it back off.
@@ -647,9 +651,12 @@ final class AppModel: ObservableObject {
   private func stopWatcher(_ folder: MonitoredFolder) {
     watchers[folder.id]?.stop()
     watchers[folder.id] = nil
+    memories[folder.id] = nil
   }
 
   private func processIncoming(_ url: URL, folder: MonitoredFolder) async {
+    // Known from now on even where Forge wrote it: it may be renamed next.
+    let renamed = memories[folder.id]?.wasRenamed(url) ?? false
     guard !wroteThis(url) else { return }
     // Asked of the folder as it is now: the watcher was handed a copy, and the
     // settings may have changed since.
@@ -658,7 +665,8 @@ final class AppModel: ObservableObject {
       url,
       folderPreset: presets.first { $0.id == folder.ruleId },
       presets: presets,
-      onlyWhenRenamed: folder.onlyWhenRenamed
+      onlyWhenRenamed: folder.onlyWhenRenamed,
+      renamed: renamed
     )
     guard arrival != .leave, let file = try? ProcessableFile(url: url) else {
       return // nothing asked for, or not something Forge converts
@@ -695,11 +703,17 @@ final class AppModel: ObservableObject {
   }
 
   private func convertArrival(_ file: ProcessableFile, with preset: RulePreset, in folder: MonitoredFolder) async throws -> [URL] {
+    // The same answer about backups here and there, or an original could be
+    // replaced by somebody who thinks it is kept.
+    let snapshot = settings
+    await coordinator.update(settings: snapshot)
+    // A folder watched for names was never asked how: it does what is safe now.
+    let isForNames = folder.ruleId == Self.noPreset
     let entry = try await coordinator.processFile(
       file,
       with: preset,
-      destinationMode: folder.destinationMode,
-      destinationURL: folder.destinationURL
+      destinationMode: isForNames ? Automatic.mode(for: snapshot) : folder.destinationMode,
+      destinationURL: isForNames ? file.url.deletingLastPathComponent() : folder.destinationURL
     ) { [progress = AskSession.progress] in progress?($0) }
     // Every file it wrote, not only the first: the second one lands in the
     // same watched folder and would be converted again.

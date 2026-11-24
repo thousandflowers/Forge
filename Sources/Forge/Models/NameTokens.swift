@@ -90,7 +90,7 @@ enum NameTokens {
         // Two digits at least: `report_q3.pdf` is a quarter, not a request
         // to write it at quality three.
         read.quality = quality
-      } else if let tool = tool(token, for: type) {
+      } else if let tool = tool(piece, for: type) {
         read.tools.insert(tool, at: 0)
       } else {
         // Anything else ends the run. Without this, a date or a word in the
@@ -107,8 +107,10 @@ enum NameTokens {
   ///
   /// They beat what the preset says, because they were typed onto that one file
   /// for this one conversion.
-  static func applying(to operations: [Operation], from fileName: String) -> [Operation] {
-    let read = read(fileName)
+  /// - Parameter tools: whether the tools in it are orders too.
+  static func applying(to operations: [Operation], from fileName: String, tools: Bool = true) -> [Operation] {
+    var read = read(fileName)
+    if !tools { read.tools = [] }
     guard !read.isEmpty else { return operations }
 
     var result = operations

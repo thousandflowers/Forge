@@ -268,6 +268,7 @@ struct FilmSettings: Codable, Hashable, Sendable {
     }
     if !encoder.containers.contains(container) { return said(encoder.title, encoder.containers) }
     if let holders = sound.containers, !holders.contains(container) { return said(sound.title, holders) }
+    if let lut, (lut as NSString).pathExtension.lowercased() != "cube" { return "A LUT is a .cube file." }
     if let lut, !FileManager.default.isReadableFile(atPath: lut) { return "The LUT \((lut as NSString).lastPathComponent) is not where it was." }
     if let from, let to, to <= from { return "The part to keep ends before it starts." }
     return nil

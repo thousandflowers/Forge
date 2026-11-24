@@ -467,11 +467,7 @@ enum ExternalBridge {
       // ffmpeg carries every tag across unless told otherwise, so a privacy
       // level was a promise this path did not keep. It removes a named tag or
       // all of them; the thorough level takes all, which errs the safe way.
-      switch PrivacyFilter.policy(in: operations) {
-      case .keepAll: break
-      case .stripLocation: arguments += ["-metadata", "location=", "-metadata", "location-eng="]
-      case .stripAll: arguments += ["-map_metadata", "-1"]
-      }
+      arguments += privacyArguments(PrivacyFilter.policy(in: operations))
       var before: [String]?
       if let film, film.passes > 1 {
         // Somewhere plain: x265 takes a colon in a path for the end of it.
@@ -507,6 +503,14 @@ enum ExternalBridge {
     }
 
     return nil
+  }
+
+  static func privacyArguments(_ policy: PrivacyPolicy) -> [String] {
+    switch policy {
+    case .keepAll: return []
+    case .stripLocation: return ["-metadata", "location=", "-metadata", "location-eng="]
+    case .stripAll: return ["-map_metadata", "-1"]
+    }
   }
 
   /// What ffmpeg can encode with, from ffmpeg itself. Runs it: not for a view
@@ -687,7 +691,7 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
     }
 
     defer { Self.clear(plan.leftovers) }
-    if plan.toolName == "ffmpeg" { try await Self.refuseWhatIsNotThere(in: input, operations: operations, edit: edit) }
+    if plan.toolName == "ffmpeg" { try await Self.refuseWhatIsNotThere(in: input, for: output.pathExtension.lowercased(), operations: operations, edit: edit) }
 
     // These tools report progress on their own terms and in their own format.
     // Rather than parse it, a file is one step: it either converts or it does
@@ -740,9 +744,20 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
     )
   }
 
+  private static let longestReversed = 20.0
+
   /// A part after the end, or a soundtrack there is not: ffmpeg writes a film
   /// with nothing in it, and says it went well.
-  private static func refuseWhatIsNotThere(in input: URL, operations: [Operation], edit: MediaEdit) async throws {
+  private static func refuseWhatIsNotThere(in input: URL, for target: String, operations: [Operation], edit: MediaEdit) async throws {
+    if edit.isMuted, UTType(filenameExtension: target).map(MediaProcessor.isSoundOnly) ?? false {
+      throw ProcessingError.conversionFailed(reason: MediaProcessor.nothingLeft(of: input))
+    }
+    // ffmpeg turns a film round with all of it in memory.
+    if edit.isReversed, let length = try? await Division.length(of: input), edit.length(of: length) * edit.speed > longestReversed {
+      throw ProcessingError.conversionFailed(
+        reason: "\(input.lastPathComponent) is too long to be reversed as \(target.uppercased()): more than \(Int(longestReversed)) seconds. Convert it to MP4 and reverse that."
+      )
+    }
     let film = operations.film
     if let track = film?.track, ExternalTools.locate("ffprobe") != nil {
       let there = MediaProcessor.streams(of: input, kind: "audio")

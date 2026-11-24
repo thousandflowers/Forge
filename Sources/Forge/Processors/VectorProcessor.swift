@@ -109,6 +109,10 @@ final class VectorProcessor: FileProcessor, @unchecked Sendable {
     with operations: [Operation],
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
+    // Drawn as pixels and traced again, it would be a silhouette of itself.
+    if output.pathExtension.lowercased().hasPrefix("svg") {
+      throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) is a drawing, and Forge changes pictures. Choose a format, such as PNG.")
+    }
     let scratch = FileManager.default.temporaryDirectory
       .appendingPathComponent("forge-vector-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)

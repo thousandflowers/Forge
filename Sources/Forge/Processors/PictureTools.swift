@@ -4,13 +4,15 @@ import Vision
 
 /// What a tool does to one picture.
 enum PictureTools {
-  static func apply(_ tool: Tool, to image: CIImage) throws -> CIImage {
+  /// - Parameter isAlone: not one of many. Followed picture by picture, what an
+  ///   animation is of stands still and everything else jumps.
+  static func apply(_ tool: Tool, to image: CIImage, isAlone: Bool = true) throws -> CIImage {
     switch tool {
     case .turn(let turn): return atTheCorner(image.oriented(turn.orientation))
     case .crop(let crop):
       let size = image.extent.size
       var focus: CGPoint?
-      if case .shape = crop { focus = subject(of: image) }
+      if case .shape = crop, isAlone { focus = subject(of: image) }
       let box = try crop.box(in: size, around: focus)
       // Boxes are counted from the top and Core Image from the bottom.
       return atTheCorner(image.cropped(to: CGRect(

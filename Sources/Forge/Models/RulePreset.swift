@@ -65,6 +65,10 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   /// only, and outside `CodingKeys` for the same reason.
   var onlyIfLighter = false
 
+  /// Whether the tools in the file's name are orders. Only where somebody has
+  /// just put them there: anywhere else a name is a name. For this run only.
+  var readsTools = false
+
   init(
     id: UUID = UUID(),
     name: String,

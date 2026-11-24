@@ -103,7 +103,8 @@ final class CutModel: ObservableObject {
   /// The box turns with the picture.
   func turn() {
     let old = size, was = box
-    quarters = (quarters + 1) % 4
+    // Seen in a mirror a turn to the right is one to the left.
+    quarters = (quarters + (isMirrored ? 3 : 1)) % 4
     box = CGRect(x: old.height - was.maxY, y: was.minX, width: was.height, height: was.width)
     if let shape { self.shape = Shape(across: shape.down, down: shape.across) }
   }
