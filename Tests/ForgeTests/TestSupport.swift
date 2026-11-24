@@ -217,6 +217,26 @@ enum Fixture {
   }
 
   /// A sine tone, written as 16-bit PCM in whatever container the extension names.
+  /// A picture nothing can store losslessly in little room.
+  @discardableResult
+  static func noise(at url: URL, width: Int, height: Int) throws -> URL {
+    var seed: UInt32 = 7
+    let bytes = (0..<(width * height * 4)).map { _ -> UInt8 in
+      seed = seed &* 1_664_525 &+ 1_013_904_223
+      return UInt8(truncatingIfNeeded: seed >> 24)
+    }
+    let provider = try XCTUnwrap(CGDataProvider(data: Data(bytes) as CFData))
+    let image = try XCTUnwrap(CGImage(
+      width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+      provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
+    ))
+    let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil))
+    CGImageDestinationAddImage(destination, image, nil)
+    XCTAssertTrue(CGImageDestinationFinalize(destination))
+    return url
+  }
+
   @discardableResult
   static func audio(
     at url: URL,

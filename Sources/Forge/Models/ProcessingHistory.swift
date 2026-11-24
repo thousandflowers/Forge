@@ -29,6 +29,14 @@ struct ProcessingHistory: Identifiable, Codable, Sendable {
   /// What the preset was called at the time, for naming a preset made from it.
   var presetName: String?
 
+  /// The copy of the original taken before it was replaced, which is what
+  /// Undo puts back. Optional, so history written before this still decodes.
+  var backupURL: URL?
+  /// When this was undone, if it was.
+  var undoneAt: Date?
+
+  var isUndone: Bool { undoneAt != nil }
+
   /// Every file this conversion produced.
   var outputs: [URL] { [outputURL].compactMap { $0 } + (additionalOutputs ?? []) }
 

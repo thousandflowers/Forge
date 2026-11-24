@@ -15,6 +15,8 @@ struct ProcessingResult: Sendable {
   /// fits, so the number that got there is only known afterwards - and it is
   /// the interesting half of "10 MB, and what did that cost".
   let appliedQuality: Int?
+  /// Where the original was copied before it was replaced.
+  let backupURL: URL?
 
   init(
     outputURL: URL,
@@ -22,7 +24,8 @@ struct ProcessingResult: Sendable {
     outputDimensions: (width: Int, height: Int)?,
     duration: TimeInterval,
     additionalOutputs: [URL] = [],
-    appliedQuality: Int? = nil
+    appliedQuality: Int? = nil,
+    backupURL: URL? = nil
   ) {
     self.outputURL = outputURL
     self.outputSize = outputSize
@@ -30,6 +33,7 @@ struct ProcessingResult: Sendable {
     self.duration = duration
     self.additionalOutputs = additionalOutputs
     self.appliedQuality = appliedQuality
+    self.backupURL = backupURL
   }
 }
 

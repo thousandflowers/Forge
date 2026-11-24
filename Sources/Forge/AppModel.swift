@@ -416,6 +416,23 @@ final class AppModel: ObservableObject {
 
   // MARK: - History
 
+  /// Put a past conversion back the way it was before it.
+  func undo(_ entry: ProcessingHistory, discard: (URL) throws -> Void = Undo.trash) {
+    // Before it lands: to a watched folder an original put back is a file
+    // arriving, whose name still asks for what was just undone.
+    remember(entry.fileURL)
+    do {
+      if let restored = try Undo.run(entry, discard: discard) { remember(restored) }
+    } catch {
+      report(error, doing: "undoing “\(entry.fileURL.lastPathComponent)”")
+      return
+    }
+    Task { [weak self] in
+      do { try await self?.persistence.markUndone(entry.id) } catch { self?.report(error, doing: "updating history") }
+      await self?.refreshHistory()
+    }
+  }
+
   func refreshHistory() async {
     do {
       history = try await persistence.loadHistory().sorted { $0.timestamp > $1.timestamp }

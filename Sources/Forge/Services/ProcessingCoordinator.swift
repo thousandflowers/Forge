@@ -68,7 +68,8 @@ actor ProcessingCoordinator {
           additionalOutputs: result.additionalOutputs.isEmpty ? nil : result.additionalOutputs,
           destinationFolder: destinationURL,
           actions: preset.actions,
-          presetName: preset.name
+          presetName: preset.name,
+          backupURL: result.backupURL
         )
         // The record is bookkeeping. A conversion whose output is written and
         // whose history could not be saved is a conversion that worked.
@@ -484,9 +485,7 @@ actor ProcessingCoordinator {
       to: [plan.workURL] + result.additionalOutputs
     )
 
-    if plan.replacesSource, settings.createBackupBeforeOverwrite {
-      try backUp(file.url)
-    }
+    let backup = plan.replacesSource && settings.createBackupBeforeOverwrite ? try backUp(file.url) : nil
 
     // Now the file exists, the parts of its name that describe it can be
     // filled in - how wide it came out, what a size ceiling settled on.
@@ -514,7 +513,8 @@ actor ProcessingCoordinator {
       outputDimensions: result.outputDimensions,
       duration: result.duration,
       additionalOutputs: committed.extras,
-      appliedQuality: result.appliedQuality
+      appliedQuality: result.appliedQuality,
+      backupURL: backup
     )
   }
 
@@ -598,7 +598,7 @@ actor ProcessingCoordinator {
     return (primary, moved)
   }
 
-  private func backUp(_ url: URL) throws {
+  private func backUp(_ url: URL) throws -> URL {
     let backups = persistence.backupsDirectory
     try FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
     let stamp = Self.backupStamp.string(from: Date())
@@ -607,7 +607,9 @@ actor ProcessingCoordinator {
     let desired = backups.appendingPathComponent(
       ext.isEmpty ? "\(name)-\(stamp)" : "\(name)-\(stamp).\(ext)"
     )
-    try FileManager.default.copyItem(at: url, to: try Self.freeURL(desired))
+    let copy = try Self.freeURL(desired)
+    try FileManager.default.copyItem(at: url, to: copy)
+    return copy
   }
 
   private func makeOutputPlan(

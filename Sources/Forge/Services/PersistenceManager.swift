@@ -132,6 +132,16 @@ actor PersistenceManager {
     cachedStamp = historyStamp()
   }
 
+  func markUndone(_ id: UUID) async throws {
+    var history = try loadHistory()
+    guard let index = history.firstIndex(where: { $0.id == id }) else { return }
+    history[index].undoneAt = Date()
+    let data = try JSONEncoder().encode(history)
+    try data.write(to: historyFile, options: .atomic)
+    cachedHistory = history
+    cachedStamp = historyStamp()
+  }
+
   private func setAsideUnreadableHistory() {
     let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "")
     let aside = root.appendingPathComponent("History.unreadable-\(stamp)-\(UUID().uuidString.prefix(8)).json")

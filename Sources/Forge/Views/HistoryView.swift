@@ -63,6 +63,8 @@ private struct HistoryRow: View {
             .font(.caption)
             .foregroundStyle(entry.status.color)
             .lineLimit(2)
+        } else if entry.isUndone {
+          Text("Undone").font(.caption).foregroundStyle(.secondary)
         } else if let landed {
           Text(landed)
             .font(.caption).foregroundStyle(.secondary)
@@ -113,6 +115,10 @@ private struct HistoryRow: View {
   /// run it again, on files chosen now or on the same ones.
   @ViewBuilder
   private var menu: some View {
+    if Undo.isPossible(for: entry) {
+      Button("Undo") { model.undo(entry) }
+      Divider()
+    }
     if entry.isRepeatable {
       Button("Save as a Preset") { model.savePreset(from: entry) }
 
