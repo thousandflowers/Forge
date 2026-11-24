@@ -38,6 +38,8 @@ struct AskRequest: Equatable {
     case tool, join
     /// By hand, in a window.
     case cut
+    /// What is spoken in it.
+    case language
     /// One the preset asks, under its own key.
     case parameter(PresetParameter)
 
@@ -48,7 +50,7 @@ struct AskRequest: Equatable {
       case .width: return .width
       case .quality: return .quality
       case .parameter(let parameter): return parameter.kind
-      case .format, .privacy, .tool, .join, .cut: return nil
+      case .format, .privacy, .tool, .join, .cut, .language: return nil
       }
     }
 
@@ -57,6 +59,7 @@ struct AskRequest: Equatable {
       case .format: return "Comes out as"
       case .tool, .cut: return "Do this to it"
       case .join: return "All of them together"
+      case .language: return "What is spoken in it"
       case .privacy: return "Remove location and camera details"
       case .parameter(let parameter) where !parameter.label.isEmpty: return parameter.label
       case .size, .width, .quality, .parameter:
@@ -77,6 +80,7 @@ struct AskRequest: Equatable {
     case tool(Tool)
     case join(Joiner.Kind)
     case cut
+    case language(String)
   }
 
   var preset: RulePreset
@@ -99,7 +103,7 @@ struct AskRequest: Equatable {
     base.nameTrigger = word.rawValue
     preset = base
     switch word {
-    case .everything: questions = [.join, .format, .tool, .cut, .size, .privacy]
+    case .everything: questions = [.join, .format, .language, .tool, .cut, .size, .privacy]
     case .format: questions = [.format]
     case .size: questions = [.size]
     case .width: questions = [.width]
@@ -116,6 +120,8 @@ struct AskRequest: Equatable {
       case (.format, .format(let type)):
         run.actions.removeAll(where: \.isFormat)
         run.actions.insert(.convertFormat(to: type), at: 0)
+      case (.language, .language(let tag)):
+        run = run.replacing(.recognizeText(languages: [tag]))
       case (.tool, .tool(let tool)):
         run.actions = run.actions.adding(tool)
       case (.privacy, .flag(true)):
@@ -180,6 +186,9 @@ enum AskOptions {
       return Tool.handy(for: kind)
         .filter { tool in files.allSatisfy { tool.suits($0.fileType) } }
         .map { Choice(label: $0.title, value: .tool($0)) }
+    case .language:
+      guard kind == .video || kind == .audio else { return [] }
+      return spoken.map { tag in Choice(label: Locale.current.localizedString(forLanguageCode: tag) ?? tag, value: .language(tag)) }
     case .cut:
       guard files.count == 1, [.image, .video, .audio].contains(kind) else { return [] }
       return [Choice(label: kind == .image ? "Crop…" : "Cut…", value: .cut)]
@@ -202,6 +211,20 @@ enum AskOptions {
       }
     }
   }
+
+  /// The languages of whoever this Mac belongs to, and English, as the
+  /// recogniser knows them.
+  static let spoken: [String] = {
+    let known = Transcription.supportedLocales.map { $0.replacingOccurrences(of: "_", with: "-") }
+    var found: [String] = []
+    for wanted in Locale.preferredLanguages + ["en-US"] {
+      let code = wanted.split(separator: "-").first.map(String.init) ?? wanted
+      guard let tag = known.first(where: { $0 == wanted }) ?? known.first(where: { $0.hasPrefix(code + "-") }),
+            !found.contains(where: { $0.hasPrefix(code + "-") }) else { continue }
+      found.append(tag)
+    }
+    return found
+  }()
 
   private static func answer(_ value: Double, for kind: PresetParameter.Kind) -> AskRequest.Answer {
     kind == .maxFileSize ? .bytes(Int(value * 1_000_000)) : .number(value)

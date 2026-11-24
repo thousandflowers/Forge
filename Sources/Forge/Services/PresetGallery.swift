@@ -43,11 +43,18 @@ actor PresetGallery {
     self.load = load
   }
 
-  /// The published presets, minus any this machine could not run anyway.
+  /// The published presets, minus any this machine could not run anyway, and
+  /// minus any that a newer Forge would understand: one step this one has never
+  /// heard of used to take the whole list with it.
   func entries() async throws -> [Entry] {
     let data = try await load(source)
-    let entries = try JSONDecoder().decode([Entry].self, from: data)
+    let entries = try JSONDecoder().decode([Readable].self, from: data).compactMap(\.entry)
     return entries.filter { Self.isRunnable($0.preset) }
+  }
+
+  private struct Readable: Decodable {
+    let entry: Entry?
+    init(from decoder: Decoder) throws { entry = try? Entry(from: decoder) }
   }
 
   /// Whether every action in a preset means something on this machine. A
@@ -60,5 +67,6 @@ actor PresetGallery {
       || FormatCatalog.isWritableVideo(format)
       || FormatCatalog.isWritableModel(format)
       || DocumentText.canWrite(format)
+      || Subtitles.writes(Conversions.fileExtension(of: format))
   }
 }

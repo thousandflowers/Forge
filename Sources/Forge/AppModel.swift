@@ -478,6 +478,7 @@ final class AppModel: ObservableObject {
   private func startDragMenu() {
     guard settings.dragMenu else { return dragMenu.stop() }
     dragMenu.keys = settings.dragMenuKeys
+    dragMenu.ignored = Set(settings.dragMenuIgnored)
     dragMenu.convert = { [weak self] file, preset in try await self?.convertInHand(file, with: preset) ?? [] }
     dragMenu.cut = { [weak self] file in self?.cut(file) }
     dragMenu.join = { [weak self] files, kind in
@@ -494,6 +495,15 @@ final class AppModel: ObservableObject {
   func cut(_ file: ProcessableFile) {
     cuts.open(file) { [weak self] file, preset in try await self?.convertInHand(file, with: preset) ?? [] }
   }
+
+  /// From the Finder's menu: as many windows as there are files to cut.
+  func cut(_ urls: [URL]) {
+    let files = urls.compactMap { try? ProcessableFile(url: $0) }.filter { CutModel(file: $0) != nil }
+    if files.isEmpty { lastError = "None of those files is one Forge can cut." }
+    files.prefix(Self.mostWindows).forEach(cut)
+  }
+
+  private static let mostWindows = 8
 
   /// Beside the original, which stays.
   private func convertInHand(_ file: ProcessableFile, with preset: RulePreset) async throws -> [URL] {

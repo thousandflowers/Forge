@@ -291,7 +291,7 @@ struct GalleryView: View {
     loading = true
     failure = nil
     do {
-      entries = try await PresetGallery().entries()
+      entries = ReadyWords.entries + (try await PresetGallery().entries())
     } catch {
       failure = error.localizedDescription
     }

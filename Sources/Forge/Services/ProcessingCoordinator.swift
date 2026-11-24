@@ -412,7 +412,7 @@ actor ProcessingCoordinator {
 
     // A preset says what it cares about; Settings says the rest.
     let operations = settings.applyingDefaults(
-      to: preset.actions,
+      to: settings.addingLanguage(to: preset.actions, of: file.fileType),
       writing: preset.targetFormat ?? file.fileType
     )
 

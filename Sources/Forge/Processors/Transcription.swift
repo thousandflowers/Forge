@@ -14,6 +14,11 @@ enum Transcription {
     SFSpeechRecognizer.supportedLocales().map(\.identifier).sorted()
   }
 
+  /// The same, as people call them.
+  static let languages: [(tag: String, name: String)] = supportedLocales
+    .map { ($0.replacingOccurrences(of: "_", with: "-"), Locale.current.localizedString(forIdentifier: $0) ?? $0) }
+    .sorted { $0.1.localizedStandardCompare($1.1) == .orderedAscending }
+
   static func supports(_ locale: String) -> Bool {
     supportedLocales.contains { $0.caseInsensitiveCompare(locale) == .orderedSame }
       || supportedLocales.contains { $0.hasPrefix(locale + "-") || $0.hasPrefix(locale + "_") }

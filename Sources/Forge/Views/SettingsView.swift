@@ -3,6 +3,7 @@ import AppKit
 
 struct SettingsView: View {
   @EnvironmentObject private var model: AppModel
+  @State private var opensAtLogin = LoginItem.isOn
 
   var body: some View {
     Form {
@@ -63,6 +64,7 @@ struct SettingsView: View {
           }
         }
         .disabled(!model.settings.dragMenu)
+        IgnoredApps(identifiers: $model.settings.dragMenuIgnored).disabled(!model.settings.dragMenu)
         Text("Drag a file from anywhere, hold \(model.settings.dragMenuKeys.symbols), and drop it on what it should become. The result goes beside the original, which stays.")
           .font(.caption)
           .foregroundStyle(.secondary)
@@ -80,10 +82,23 @@ struct SettingsView: View {
         Text(model.settings.privacy.summary + " A preset, a batch, or a file named _privacy can ask for more.")
           .font(.caption)
           .foregroundStyle(.secondary)
+        Picker("Spoken in recordings", selection: $model.settings.spokenLanguage) {
+          Text("The Mac’s language").tag("")
+          ForEach(Transcription.languages, id: \.tag) { Text($0.name).tag($0.tag) }
+        }
         TemplateField(title: "Name new files", template: $model.settings.nameTemplate)
         Text("Any preset can override this. A preset that asks a question adds its own token too, so {name}_{maxsize} writes holiday_10MB.jpg.")
           .font(.caption)
           .foregroundStyle(.secondary)
+      }
+      Section("When the Mac starts") {
+        Toggle("Open Forge at login", isOn: Binding(get: { opensAtLogin }, set: { on in
+          do { try LoginItem.set(on) } catch { model.report(error, doing: "changing what opens at login") }
+          opensAtLogin = LoginItem.isOn
+        }))
+        if LoginItem.isWaiting {
+          Text("Allow Forge in System Settings › General › Login Items.").font(.caption).foregroundStyle(.secondary)
+        }
       }
       Section("When a batch finishes") {
         Toggle("Notify me", isOn: $model.settings.notifyWhenFinished)
@@ -96,6 +111,42 @@ struct SettingsView: View {
     .formStyle(.grouped)
     .navigationTitle("Settings")
     .onChange(of: model.settings) { _ in model.saveSettings() }
+  }
+}
+
+/// Apps the menu keeps out of.
+private struct IgnoredApps: View {
+  @Binding var identifiers: [String]
+
+  var body: some View {
+    LabeledContent("Not in") {
+      VStack(alignment: .trailing, spacing: 6) {
+        ForEach(identifiers, id: \.self) { identifier in
+          HStack(spacing: 6) {
+            Text(Self.name(of: identifier))
+            Button { identifiers = identifiers.filter { $0 != identifier } } label: { Image(systemName: "minus.circle.fill") }
+              .buttonStyle(.plain).foregroundStyle(.secondary)
+              .accessibilityLabel(Text("Remove \(Self.name(of: identifier))"))
+          }
+        }
+        Button("Add an App…", action: add).controlSize(.small)
+      }
+    }
+  }
+
+  static func name(of identifier: String) -> String {
+    NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier)?.deletingPathExtension().lastPathComponent ?? identifier
+  }
+
+  private func add() {
+    let panel = NSOpenPanel()
+    panel.directoryURL = URL(fileURLWithPath: "/Applications")
+    panel.allowedContentTypes = [.application]
+    panel.allowsMultipleSelection = true
+    panel.prompt = "Add"
+    guard panel.runModal() == .OK else { return }
+    let added = panel.urls.compactMap { Bundle(url: $0)?.bundleIdentifier }.filter { !identifiers.contains($0) }
+    identifiers = identifiers + added
   }
 }
 

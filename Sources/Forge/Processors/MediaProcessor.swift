@@ -624,7 +624,8 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
 
     // A codec that was asked for and that this container cannot hold: the
     // fallback wrote H.264 into the MP4 and said nothing about the ProRes.
-    if let codec = Self.chosenCodec(in: operations), session.presetName != codec.exportPreset {
+    // H.264 has no preset of its own: it is what the usual one writes.
+    if let codec = Self.chosenCodec(in: operations), codec != .h264, session.presetName != codec.exportPreset {
       throw ProcessingError.conversionFailed(
         reason: "\(codec.title) does not fit in "
           + "\((FormatCatalog.fileExtension(for: outputType) ?? outputType.identifier).uppercased()). A MOV holds it."

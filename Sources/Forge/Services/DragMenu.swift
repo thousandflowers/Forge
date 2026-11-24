@@ -15,10 +15,14 @@ final class DragMenu {
       return found as? [URL] ?? []
     }
     var flags: () -> NSEvent.ModifierFlags = { NSEvent.modifierFlags }
+    /// Whose window it is being dragged from.
+    var app: () -> String? = { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }
     var isDown: () -> Bool = { NSEvent.pressedMouseButtons & 1 == 1 }
   }
 
   var keys = HoldKeys.usual
+  /// Apps it keeps out of: ones that mean something else by the keys.
+  var ignored: Set<String> = []
   var convert: AskCenter.Convert = { _, _ in [] }
   var preview: AskCenter.Preview?
   var join: AskCenter.Join?
@@ -83,6 +87,7 @@ final class DragMenu {
   func dragged() {
     guard timer == nil, hand.changeCount() != seen else { return }
     seen = hand.changeCount()
+    if let app = hand.app(), ignored.contains(app) { return }
     drag += 1
     let timer = Timer(timeInterval: Self.interval, repeats: true) { [weak self] _ in
       MainActor.assumeIsolated { self?.look() }

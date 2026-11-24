@@ -48,6 +48,7 @@ private struct MenuBarLabel: View {
       .onAppear {
         model.showWindow = { openWindow(id: MenuBarView.windowID) }
         delegate.inbox.deliver = { model.open($0) }
+        delegate.service.cut = { model.cut($0) }
       }
   }
 }
@@ -58,6 +59,7 @@ private struct MenuBarLabel: View {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
   let inbox = OpenedFiles()
+  let service = FinderService()
 
   func applicationWillTerminate(_ notification: Notification) { ClipboardLighter.leaveNothing() }
 
@@ -65,6 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // What pandoc writes is asked once, by running it. Asked here, in the
     // background, it is known before any window wants it.
     ExternalBridge.warmUp()
+    service.convert = { [inbox] in inbox.receive($0) }
+    NSApplication.shared.servicesProvider = service
   }
 
   func application(_ application: NSApplication, open urls: [URL]) {

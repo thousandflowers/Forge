@@ -33,6 +33,8 @@ struct AppSettings: Codable, Sendable, Equatable {
   /// Bring the menu up over a file dragged with the keys held.
   var dragMenu: Bool = false
   var dragMenuKeys: HoldKeys = .usual
+  /// Apps the menu keeps out of, by bundle identifier.
+  var dragMenuIgnored: [String] = []
 
   // MARK: - What everything starts from
   //
@@ -54,6 +56,10 @@ struct AppSettings: Codable, Sendable, Equatable {
   /// original said is a conversion that lost something, and this is a choice
   /// rather than a default anybody should have made for them.
   var privacy: PrivacyPolicy = .keepAll
+
+  /// The language spoken in recordings, when a conversion names none. Empty is
+  /// the Mac's own.
+  var spokenLanguage: String = ""
 
   /// How an output file is named. `{name}` is the original's name without its
   /// extension; a preset's parameters are available by their own keys, so a
@@ -92,6 +98,13 @@ struct AppSettings: Codable, Sendable, Equatable {
     return chain + [.quality(level: defaultQuality)]
   }
 
+  /// What is said is listened to in this language unless the chain says.
+  func addingLanguage(to operations: [Operation], of source: UTType) -> [Operation] {
+    guard !spokenLanguage.isEmpty, [.audio, .video].contains(ConvertKind(fileType: source)),
+          !operations.contains(where: { $0.id == "ocr" }) else { return operations }
+    return operations + [.recognizeText(languages: [spokenLanguage])]
+  }
+
   // MARK: - Persistence
 
   private static let settingsKey = "ForgeSettings"
@@ -115,7 +128,7 @@ extension AppSettings {
     case maxConcurrentNative, createBackupBeforeOverwrite, notifyWhenFinished
     case defaultFitMode, defaultQuality, privacy, nameTemplate, appearance
     case lighterClipboard, lighterRecordings, friendlyDownloads
-    case dragMenu, dragMenuKeys
+    case dragMenu, dragMenuKeys, dragMenuIgnored, spokenLanguage
   }
 
   /// Every key is optional on the way in. A setting added in a later version
@@ -137,5 +150,7 @@ extension AppSettings {
     friendlyDownloads = try c.decodeIfPresent(Bool.self, forKey: .friendlyDownloads) ?? fresh.friendlyDownloads
     dragMenu = try c.decodeIfPresent(Bool.self, forKey: .dragMenu) ?? fresh.dragMenu
     dragMenuKeys = try c.decodeIfPresent(HoldKeys.self, forKey: .dragMenuKeys) ?? fresh.dragMenuKeys
+    dragMenuIgnored = try c.decodeIfPresent([String].self, forKey: .dragMenuIgnored) ?? fresh.dragMenuIgnored
+    spokenLanguage = try c.decodeIfPresent(String.self, forKey: .spokenLanguage) ?? fresh.spokenLanguage
   }
 }

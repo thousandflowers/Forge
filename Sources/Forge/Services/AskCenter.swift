@@ -110,7 +110,14 @@ final class AskSession: ObservableObject {
 
   /// The questions these files can really be asked.
   var questions: [AskRequest.Question] {
-    request.questions.filter { ($0 != .join || join != nil) && ($0 != .cut || cut != nil) && !choices(for: $0).isEmpty }
+    request.questions.filter { ($0 != .join || join != nil) && ($0 != .cut || cut != nil) && ($0 != .language || asksLanguage) && !choices(for: $0).isEmpty }
+  }
+
+  /// Once what is said is what is wanted, and there is more than one to choose
+  /// from.
+  private var asksLanguage: Bool {
+    guard case .format(let type)? = answers[.format] else { return false }
+    return (MediaProcessor.isWords(type) || Subtitles.carriesCues(Conversions.fileExtension(of: type))) && AskOptions.spoken.count > 1
   }
 
   /// Files of one kind are asked about; of several, nothing suits them all.
@@ -196,7 +203,7 @@ final class AskSession: ObservableObject {
     guard let preview, let file = files.first, ConvertKind(fileType: file.fileType) == .image else { return }
     measuring?.cancel()
     measured = [:]
-    let asked = questions.filter { $0 != .privacy && $0 != .join && $0 != .cut }
+    let asked = questions.filter { $0 != .privacy && $0 != .join && $0 != .cut && $0 != .language }
     let given = answers
     measuring = Task { [weak self] in
       for question in asked {
