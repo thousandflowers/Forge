@@ -286,13 +286,22 @@ struct FilmSettings: Codable, Hashable, Sendable {
     encoder == .hevc ? ["-x265-params", "pass=\(pass):stats=\(log).log"] : ["-pass", "\(pass)", "-passlogfile", log]
   }
 
+  /// Numbers a file can hold and a film cannot: read from a preset as they are,
+  /// adding two of them up is more than there are numbers.
+  private static let largestSide = 16_384
+  private static let longest = 10_000_000
+  private static func second(_ value: Int) -> Int { min(max(value, 0), longest) }
+
   /// How much of a film this long is kept, in seconds.
   func kept(of length: Double) -> Double {
     max(0, min(to.map(Double.init) ?? length, length) - Double(from ?? 0))
   }
 
   /// Before the input: skipping there is quick, and to the frame.
-  var inputArguments: [String] { from.map { ["-ss", "\($0)"] } ?? [] }
+  var inputArguments: [String] {
+    let start = from.map(Self.second) ?? 0
+    return (from == nil ? [] : ["-ss", "\(start)"]) + (to.map { ["-t", "\(max(1, Self.second($0) - start))"] } ?? [])
+  }
 
   /// - Parameters:
   ///   - picture: the filters the rest of the chain asked for, in its order.
@@ -300,7 +309,6 @@ struct FilmSettings: Codable, Hashable, Sendable {
   ///   - bars: what `.blackBars` came to.
   func outputArguments(for container: String, picture: [String] = [], sound: [String] = [], bars: String?) -> [String] {
     var arguments: [String] = []
-    if let to { arguments += ["-t", "\(max(1, to - (from ?? 0)))"] }
     let filters = filters(picture: picture, bars: bars)
     if !filters.isEmpty { arguments += ["-vf", filters.joined(separator: ",")] }
     if let framesPerSecond { arguments += ["-r", "\(framesPerSecond)"] }
@@ -317,26 +325,17 @@ struct FilmSettings: Codable, Hashable, Sendable {
     case .none: break
     case .blackBars: if let bars { filters.append(bars) }
     case .edges(let top, let bottom, let left, let right):
-      let sides = [top, bottom, left, right].map { max(0, $0) }
+      let sides = [top, bottom, left, right].map { min(max(0, $0), Self.largestSide) }
       filters.append("crop=iw-\(sides[2] + sides[3]):ih-\(sides[0] + sides[1]):\(sides[2]):\(sides[0])")
     }
     filters += picture
-    if let lut { filters.append("lut3d=file=\(Self.plainPath(of: lut))") }
+    if let lut { filters.append("lut3d=file=\(lut)") }
     filters += [turn.filter, sharpness.filter, isGrey ? "hue=s=0" : nil, isRec709 ? "colorspace=all=bt709:iall=bt601-6-625" : nil].compactMap { $0 }
     // Encoders want even sides, and a crop or a turn may leave them odd.
-    return filters.isEmpty ? [] : filters + ["crop=trunc(iw/2)*2:trunc(ih/2)*2"]
-  }
-
-  /// The same file where its path has nothing in it that ffmpeg reads as its
-  /// own: a colon or an apostrophe in a folder's name ends a filter.
-  private static func plainPath(of lut: String) -> String {
-    let home = FileManager.default.temporaryDirectory.appendingPathComponent("forge-luts", isDirectory: true)
-    let name = lut.utf8.reduce(into: UInt64(5381)) { $0 = $0 &* 33 &+ UInt64($1) }
-    let plain = home.appendingPathComponent("\(name).cube")
-    try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-    try? FileManager.default.removeItem(at: plain)
-    try? FileManager.default.copyItem(atPath: lut, toPath: plain.path)
-    return plain.path
+    if !filters.isEmpty { filters.append("crop=trunc(iw/2)*2:trunc(ih/2)*2") }
+    // Deep or not, and nothing with more colour than QuickTime takes.
+    if encoder == .hevc { filters.append("format=yuv420p|yuv420p10le") }
+    return filters
   }
 
   private func videoArguments(for container: String) -> [String] {
@@ -368,6 +367,8 @@ struct FilmSettings: Codable, Hashable, Sendable {
     // A copy cannot be changed, and what has to change is encoded.
     let changes = evensLoudness || channels != .asIs || !filters.isEmpty
     if let name = sound.name, !(sound == .asItIs && changes) { arguments += ["-c:a", name] }
+    // Matroska takes any sound as it is. Left to ffmpeg, it was made into AC-3.
+    if sound == .automatic, container == "mkv" { arguments += ["-c:a", changes || soundKilobits != nil ? "aac" : "copy"] }
     if sound.takesRate, let soundKilobits { arguments += ["-b:a", "\(min(max(soundKilobits, 16), 640))k"] }
     if let count = channels.count { arguments += ["-ac", "\(count)"] }
     // Evened out it comes back at 192 kHz, which no player expects.

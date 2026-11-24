@@ -136,11 +136,12 @@ struct AskView: View {
       header
       switch session.state {
       case .asking: asking
-      case .working(let fraction): ProgressView(value: fraction).progressViewStyle(.linear)
+      case .working(let fraction): ProgressView(value: fraction).progressViewStyle(.linear).accessibilityLabel(Text("Converting"))
       case .done(let outputs): finished(outputs)
       case .failed(let reason):
         Label(reason, systemImage: "exclamationmark.triangle.fill").font(.callout).foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
+          .task { if NSWorkspace.shared.isVoiceOverEnabled { Self.say(reason) } }
       }
     }
     .onPreferenceChange(DropTileFrames.self) { tiles.frames = $0 }
@@ -230,7 +231,7 @@ struct AskView: View {
         TextField("Something else: \(hint(question))", text: Binding(get: { typed[question] ?? "" }, set: { typed[question] = $0 }))
           .textFieldStyle(.roundedBorder)
           .onSubmit { submit(question) }
-          .accessibilityLabel(Text("Something else"))
+          .accessibilityLabel(Text("\(question.title): something else"))
       }
     }
   }
@@ -270,7 +271,8 @@ struct AskView: View {
     .buttonStyle(.plain)
     .modifier(NumberKey(number: armed ? number : nil))
     .dropTile(tile)
-    .accessibilityLabel(Text([choice.label, says].compactMap { $0 }.joined(separator: ", ")))
+    .accessibilityLabel(Text(choice.label))
+    .accessibilityValue(Text([says ?? (choice.isDefault ? "the usual" : nil), armed ? number.map { "key \($0)" } : nil].compactMap { $0 }.joined(separator: ", ")))
     .accessibilityAddTraits(chosen ? [.isButton, .isSelected] : .isButton)
   }
 
@@ -309,9 +311,17 @@ struct AskView: View {
       }
     }
     .task {
+      // Somebody listening to it is told, and leaves when they have heard.
+      guard !NSWorkspace.shared.isVoiceOverEnabled else { return Self.say(outputs.count == 1 ? "Done: \(outputs[0].lastPathComponent)" : "Done: \(outputs.count) files") }
       try? await Task.sleep(nanoseconds: Self.linger)
       if !Task.isCancelled { close() }
     }
+  }
+
+  private static func say(_ words: String) {
+    NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested, userInfo: [
+      .announcement: words, .priority: NSAccessibilityPriorityLevel.high.rawValue,
+    ])
   }
 
   private func weight(_ outputs: [URL]) -> String {

@@ -256,16 +256,8 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   private static func carryCoverAndChapters(from input: URL, to output: URL, chapters carriesChapters: Bool) {
     guard let ffmpeg = ExternalTools.locate("ffmpeg"), let ffprobe = ExternalTools.locate("ffprobe") else { return }
     func probe(_ url: URL, _ arguments: [String]) -> String {
-      let process = Process()
-      process.executableURL = ffprobe
-      process.arguments = ["-v", "error"] + arguments + ["-of", "csv=p=0", url.path]
-      let said = Pipe()
-      process.standardOutput = said
-      process.standardError = Pipe()
-      guard (try? process.run()) != nil else { return "" }
-      let text = String(decoding: said.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-      process.waitUntilExit()
-      return text.trimmingCharacters(in: .whitespacesAndNewlines)
+      ExternalTools.answer(of: ffprobe, ["-v", "error"] + arguments + ["-of", "csv=p=0", url.path])
+        .trimmingCharacters(in: .whitespacesAndNewlines)
     }
     func cover(_ url: URL) -> Bool {
       probe(url, ["-select_streams", "v", "-show_entries", "stream_disposition=attached_pic"]).contains("1")
@@ -291,19 +283,11 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   }
 
   /// How many streams of a kind ffprobe finds, or zero without ffprobe.
-  private static func streams(of url: URL, kind: String) -> Int {
+  static func streams(of url: URL, kind: String) -> Int {
     guard let ffprobe = ExternalTools.locate("ffprobe") else { return 0 }
-    let process = Process()
-    process.executableURL = ffprobe
-    process.arguments = ["-v", "error", "-select_streams", kind == "audio" ? "a" : "s",
-                         "-show_entries", "stream=index", "-of", "csv=p=0", url.path]
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.standardError = Pipe()
-    guard (try? process.run()) != nil else { return 0 }
-    let said = pipe.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    return String(decoding: said, as: UTF8.self).split(whereSeparator: \.isNewline).count
+    return ExternalTools.answer(of: ffprobe, [
+      "-v", "error", "-select_streams", kind == "audio" ? "a" : "s", "-show_entries", "stream=index", "-of", "csv=p=0", url.path,
+    ]).split(whereSeparator: \.isNewline).count
   }
 
   // MARK: - What macOS could not do

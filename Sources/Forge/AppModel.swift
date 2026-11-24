@@ -527,9 +527,10 @@ final class AppModel: ObservableObject {
   /// Beside the original, which stays.
   private func convertInHand(_ file: ProcessableFile, with preset: RulePreset) async throws -> [URL] {
     defer { Task { await refreshHistory() } }
+    let progress = AskSession.progress
     let entry = try await coordinator.processFile(
       file, with: preset, destinationMode: .copyTo, destinationURL: file.url.deletingLastPathComponent()
-    ) { _ in }
+    ) { progress?($0) }
     entry.outputs.forEach(remember)
     return entry.outputs
   }
@@ -699,7 +700,7 @@ final class AppModel: ObservableObject {
       with: preset,
       destinationMode: folder.destinationMode,
       destinationURL: folder.destinationURL
-    ) { _ in }
+    ) { [progress = AskSession.progress] in progress?($0) }
     // Every file it wrote, not only the first: the second one lands in the
     // same watched folder and would be converted again.
     entry.outputs.forEach(remember)

@@ -252,6 +252,29 @@ enum ExternalTools {
     }
   }
 
+  /// What a tool says, where what it says is the answer. Its complaints go
+  /// nowhere: kept in a pipe nobody reads, a damaged film fills it and the tool
+  /// stops for ever. And stopped when whoever asked is.
+  static func answer(of tool: URL, _ arguments: [String]) -> String {
+    let process = Process()
+    process.executableURL = tool
+    process.arguments = arguments
+    process.standardInput = FileHandle.nullDevice
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    let collected = Collected(limit: .max)
+    let reading = DispatchGroup()
+    guard (try? process.run()) != nil else { return "" }
+    DispatchQueue.global(qos: .utility).async(group: reading) { collected.append(pipe.fileHandleForReading.readDataToEndOfFile()) }
+    while process.isRunning {
+      if Task.isCancelled { process.terminate() }
+      Thread.sleep(forTimeInterval: 0.01)
+    }
+    reading.wait()
+    return String(decoding: collected.data, as: UTF8.self)
+  }
+
   private final class Cache: @unchecked Sendable {
     private let lock = NSLock()
     private var found: [String: URL?] = [:]

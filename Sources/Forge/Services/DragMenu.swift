@@ -128,7 +128,8 @@ final class DragMenu {
     finishWatching()
     guard let left = session else { return }
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.grace) { [weak self] in
-      guard let self, self.session === left else { return }
+      // Answered with a click in the meantime, it is no longer waiting.
+      guard let self, self.session === left, case .asking = left.state else { return }
       self.close(left)
     }
   }

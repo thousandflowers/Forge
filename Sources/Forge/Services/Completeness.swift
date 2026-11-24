@@ -98,7 +98,7 @@ enum Completeness {
       process.arguments = ["-v", "error"] + arguments + ["-of", "csv=p=0", url.path]
       let said = Pipe()
       process.standardOutput = said
-      process.standardError = Pipe()
+      process.standardError = FileHandle.nullDevice
       guard (try? process.run()) != nil else { return "" }
       let text = String(decoding: said.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
       process.waitUntilExit()

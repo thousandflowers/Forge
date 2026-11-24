@@ -124,7 +124,7 @@ enum Tesseract {
     process.arguments = ["--list-langs"]
     let pipe = Pipe()
     process.standardOutput = pipe
-    process.standardError = Pipe()
+    process.standardError = FileHandle.nullDevice
 
     guard (try? process.run()) != nil else { return [] }
     let said = pipe.fileHandleForReading.readDataToEndOfFile()

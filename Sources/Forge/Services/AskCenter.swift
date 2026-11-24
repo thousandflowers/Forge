@@ -150,8 +150,12 @@ final class AskSession: ObservableObject {
 
   /// Run the answer, where closing the panel can stop it.
   func start() {
+    guard case .asking = state, working == nil else { return }
     working = Task { await run() }
   }
+
+  /// How far whatever is being converted has got, for whoever converts it to say.
+  @TaskLocal static var progress: (@Sendable (Double) -> Void)?
 
   func run() async {
     guard case .asking = state else { return }
@@ -168,7 +172,10 @@ final class AskSession: ObservableObject {
     }
     for (index, file) in files.enumerated() {
       do {
-        outputs += try await convert(file, preset)
+        let count = Double(files.count)
+        outputs += try await Self.$progress.withValue({ [weak self] share in
+          Task { @MainActor in self?.advance(to: (Double(index) + share) / count) }
+        }) { try await convert(file, preset) }
       } catch is CancellationError {
         state = .failed("Stopped before it finished.")
         return
@@ -183,6 +190,10 @@ final class AskSession: ObservableObject {
     } else {
       state = .done(outputs)
     }
+  }
+
+  private func advance(to fraction: Double) {
+    if case .working(let already) = state, fraction > already { state = .working(min(fraction, 1)) }
   }
 
   /// Stop everything: what is being measured, and what is being converted.

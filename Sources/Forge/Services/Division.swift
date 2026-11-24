@@ -99,15 +99,6 @@ enum Division {
 
   private static func probe(_ url: URL, _ arguments: [String]) -> String? {
     guard let ffprobe = ExternalTools.locate("ffprobe") else { return nil }
-    let process = Process()
-    process.executableURL = ffprobe
-    process.arguments = ["-v", "error"] + arguments + [url.path]
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.standardError = FileHandle.nullDevice
-    guard (try? process.run()) != nil else { return nil }
-    let said = pipe.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    return String(decoding: said, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    return ExternalTools.answer(of: ffprobe, ["-v", "error"] + arguments + [url.path]).trimmingCharacters(in: .whitespacesAndNewlines)
   }
 }

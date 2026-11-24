@@ -25,6 +25,8 @@ enum ExternalBridge {
     var collectFrom: URL?
     /// Run before, where one look is not enough.
     var before: [String]?
+    /// Put somewhere for it, and to be taken away after it.
+    var leftovers: [URL] = []
   }
 
   /// LibreOffice, which is an application rather than a command on PATH.
@@ -378,6 +380,15 @@ enum ExternalBridge {
       // A part named on the file is the part.
       if edit.part != nil { film?.from = nil; film?.to = nil }
       if edit.isMuted { film?.sound = .none }
+      var leftovers: [URL] = []
+      // A copy of its own, under a name ffmpeg reads as a name: a colon or an
+      // apostrophe in a folder ends a filter.
+      if let lut = film?.lut {
+        let copy = FileManager.default.temporaryDirectory.appendingPathComponent("forge-\(UUID().uuidString).cube")
+        try? FileManager.default.copyItem(atPath: lut, toPath: copy.path)
+        film?.lut = copy.path
+        leftovers.append(copy)
+      }
       var arguments = ["-hide_banner", "-loglevel", "error", "-y"] + edit.ffmpegInput + (film?.inputArguments ?? []) + ["-i", input.path]
       if wantsTheSubtitles {
         // The first subtitle track, and nothing else: without a map, ffmpeg
@@ -398,6 +409,11 @@ enum ExternalBridge {
         // a MOV as mov_text, Matroska and WebM as text of their own. Mapped into
         // anything else - an MXF, an AVI - ffmpeg stopped looking for an encoder.
         let keepsSubtitles = (film?.keepsSubtitles ?? true) && edit.keepsSubtitles
+        // Words begun before the part are from before its beginning, and left to
+        // itself ffmpeg moves the film along to make room for them.
+        if keepsSubtitles, ["mkv", "webm"].contains(target), edit.part?.from != nil || film?.from != nil {
+          arguments += ["-avoid_negative_ts", "disabled"]
+        }
         if keepsSubtitles, ["mp4", "m4v", "mov"].contains(target) { arguments += ["-map", "0:s?", "-c:s", "mov_text"] }
         if keepsSubtitles, target == "mkv" { arguments += ["-map", "0:s?", "-c:s", "srt"] }
         if keepsSubtitles, target == "webm" { arguments += ["-map", "0:s?", "-c:s", "webvtt"] }
@@ -407,6 +423,10 @@ enum ExternalBridge {
       // `--to opus` produced, and which macOS cannot then read back.
       if ["ogg", "oga", "opus"].contains(target), MediaProcessor.chosenCodec(in: operations) == nil {
         arguments += ["-c:a", "libopus"]
+      }
+      // Matroska takes any sound as it is. Left to ffmpeg, it was made into AC-3.
+      if target == "mkv", film == nil, MediaProcessor.chosenCodec(in: operations).map(\.isVideo) ?? true {
+        arguments += ["-c:a", edit.ffmpegSound.isEmpty ? "copy" : "aac"]
       }
       // MXF takes sound at 48 kHz and nothing else; a film recorded at 44.1
       // failed with ffmpeg's "only 48khz is implemented".
@@ -454,12 +474,14 @@ enum ExternalBridge {
       }
       var before: [String]?
       if let film, film.passes > 1 {
-        let log = output.deletingPathExtension().path + "-pass"
+        // Somewhere plain: x265 takes a colon in a path for the end of it.
+        let log = FileManager.default.temporaryDirectory.appendingPathComponent("forge-pass-\(UUID().uuidString)").path
+        leftovers.append(URL(fileURLWithPath: log))
         before = arguments + film.passArguments(1, log: log) + ["-an", "-sn", "-f", "null", "/dev/null"]
         arguments += film.passArguments(2, log: log)
       }
       arguments.append(output.path)
-      return Plan(tool: ffmpeg, toolName: "ffmpeg", arguments: arguments, before: before)
+      return Plan(tool: ffmpeg, toolName: "ffmpeg", arguments: arguments, before: before, leftovers: leftovers)
     }
 
     if let office = libreOffice, libreOfficeWrites(from: source).contains(target) {
@@ -503,7 +525,7 @@ enum ExternalBridge {
   static func blackBars(of input: URL, ffmpeg: URL) -> String? {
     let said = run(ffmpeg, [
       "-hide_banner", "-loglevel", "error", "-skip_frame", "nokey", "-i", input.path, "-map", "0:V:0",
-      "-vf", "cropdetect=24:2:0,metadata=mode=print:file=-", "-an", "-f", "null", "-",
+      "-vf", "cropdetect=limit=24:round=2:reset=0:skip=0,metadata=mode=print:file=-", "-an", "-f", "null", "-",
     ])
     let lines = said.split(separator: "\n")
     func last(_ key: String) -> Int? {
@@ -594,18 +616,7 @@ enum ExternalBridge {
     )
   }
 
-  private static func run(_ tool: URL, _ arguments: [String]) -> String {
-    let process = Process()
-    process.executableURL = tool
-    process.arguments = arguments
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.standardError = Pipe()
-    guard (try? process.run()) != nil else { return "" }
-    let said = pipe.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    return String(decoding: said, as: UTF8.self)
-  }
+  private static func run(_ tool: URL, _ arguments: [String]) -> String { ExternalTools.answer(of: tool, arguments) }
 
   private static func list(_ tool: URL, _ argument: String) -> Set<String> {
     // ffmpeg lists its muxers in a table: flags, then the name.
@@ -622,7 +633,7 @@ enum ExternalBridge {
     process.arguments = [argument]
     let pipe = Pipe()
     process.standardOutput = pipe
-    process.standardError = Pipe()
+    process.standardError = FileHandle.nullDevice
 
     guard (try? process.run()) != nil else { return [] }
     let said = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -675,6 +686,9 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
       throw ProcessingError.unsupportedConversion(from: inputType, to: outputType)
     }
 
+    defer { Self.clear(plan.leftovers) }
+    if plan.toolName == "ffmpeg" { try await Self.refuseWhatIsNotThere(in: input, operations: operations, edit: edit) }
+
     // These tools report progress on their own terms and in their own format.
     // Rather than parse it, a file is one step: it either converts or it does
     // not.
@@ -689,20 +703,16 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
 
     do {
       if let film = operations.film, plan.toolName == "ffmpeg" {
-        let length = (try? await AVURLAsset(url: input).load(.duration).seconds) ?? 0
-        let follower = FilmProgress(length: edit.changesTime ? edit.length(of: length) : film.kept(of: length), report: progress)
-        defer { follower.finish() }
-        if let before = plan.before {
-          try ExternalTools.run(plan.tool, before)
+        // Not only as the system knows it: it knows nothing of a Matroska film,
+        // and those are what comes this way.
+        let length = (try? await Division.length(of: input)) ?? 0
+        let whole = edit.changesTime ? edit.length(of: length) : film.kept(of: length)
+        let passes = [plan.before, plan.arguments].compactMap { $0 }
+        for (index, arguments) in passes.enumerated() {
+          let follower = FilmProgress(length: whole) { share in progress((Double(index) + share) / Double(passes.count)) }
+          defer { follower.finish() }
+          try ExternalTools.run(plan.tool, follower.arguments + arguments)
         }
-        defer {
-          // What the first pass wrote down for the second.
-          let folder = output.deletingLastPathComponent(), stem = output.deletingPathExtension().lastPathComponent + "-pass"
-          for left in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where left.hasPrefix(stem) {
-            try? FileManager.default.removeItem(at: folder.appendingPathComponent(left))
-          }
-        }
-        try ExternalTools.run(plan.tool, follower.arguments + plan.arguments)
       } else {
         try ExternalTools.run(plan.tool, plan.arguments)
       }
@@ -728,6 +738,37 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
       outputDimensions: nil,
       duration: Date().timeIntervalSince(start)
     )
+  }
+
+  /// A part after the end, or a soundtrack there is not: ffmpeg writes a film
+  /// with nothing in it, and says it went well.
+  private static func refuseWhatIsNotThere(in input: URL, operations: [Operation], edit: MediaEdit) async throws {
+    let film = operations.film
+    if let track = film?.track, ExternalTools.locate("ffprobe") != nil {
+      let there = MediaProcessor.streams(of: input, kind: "audio")
+      guard track <= there else {
+        throw ProcessingError.conversionFailed(
+          reason: "\(input.lastPathComponent) has \(there == 0 ? "no soundtrack" : there == 1 ? "one soundtrack" : "\(there) soundtracks"), and track \(track) was asked for."
+        )
+      }
+    }
+    let part = edit.part ?? film.map { Span(from: $0.from.map(Double.init), to: $0.to.map(Double.init)) }
+    guard let part, part.from != nil || part.to != nil, let length = try? await Division.length(of: input) else { return }
+    guard part.clamped(to: length) != nil else {
+      throw ProcessingError.conversionFailed(
+        reason: "\(input.lastPathComponent) is \(Tool.clock(length)) long: there is nothing in the part asked for."
+      )
+    }
+  }
+
+  /// And whatever was named after them, as ffmpeg names what it writes down.
+  private static func clear(_ leftovers: [URL]) {
+    for left in leftovers {
+      let folder = left.deletingLastPathComponent()
+      for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where name.hasPrefix(left.lastPathComponent) {
+        try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
+      }
+    }
   }
 
   /// Say what went wrong in the terms of the file rather than the tool's.
