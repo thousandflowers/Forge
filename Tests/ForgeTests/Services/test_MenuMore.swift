@@ -64,6 +64,51 @@ final class MenuMoreTests: ToolTestCase {
     XCTAssertLessThan(zip(heights, heights.dropFirst()).map { $1 - $0 }.max() ?? 0, total / 2, "\(heights)")
   }
 
+  /// Dropped on, it closes on where the file is, a little at a time, and stays
+  /// that size from the progress to the result.
+  func test_itClosesOnWhereTheFileWasLetGo() async throws {
+    try XCTSkipIf(NSScreen.main == nil, "no screen")
+    let url = path("a.png")
+    try Quarters.image(at: url, width: 2400, height: 1600)
+    let session = AskSession(request: AskRequest(word: .everything, over: nil), file: try ProcessableFile(url: url), convert: { file, _ in
+      try await Task.sleep(nanoseconds: 700_000_000)
+      return [file.url]
+    })
+    let tiles = DropTiles()
+    tiles.isLive = true
+    let panel = AskPanel(session: session, tiles: tiles) {}
+    panel.appear(takingKeys: false)
+    defer { panel.close() }
+    try await Task.sleep(nanoseconds: 900_000_000)
+    let before = panel.frame, jpeg = DropTiles.Tile(question: .format, answer: .format(.jpeg)), place = try XCTUnwrap(tiles.frames[jpeg])
+    let y = before.maxY - place.midY
+    session.choose(jpeg.answer, for: jpeg.question)
+    session.start()
+    tiles.isLive = false
+    panel.gather(at: NSPoint(x: before.midX, y: y))
+    var frames: [NSRect] = [before]
+    for _ in 0..<110 {
+      try await Task.sleep(nanoseconds: 12_000_000)
+      if panel.frame != frames.last { frames.append(panel.frame) }
+    }
+    XCTAssertGreaterThan(frames.count, 5, "\(frames.map(\.height))")
+    XCTAssertEqual(frames.map(\.height), frames.map(\.height).sorted(by: >), "it only grows small")
+    XCTAssertEqual(try XCTUnwrap(frames.last).height, AskView.restingHeight, accuracy: 1)
+    XCTAssertEqual(try XCTUnwrap(frames.last).midY, y, accuracy: 2)
+    let steps = zip(frames, frames.dropFirst()).map { $0.height - $1.height }
+    XCTAssertLessThan(try XCTUnwrap(steps.max()), (before.height - AskView.restingHeight) / 2)
+    if case .done = session.state {} else { XCTFail("\(session.state)") }
+  }
+
+  func test_itNeverGathersOffTheScreen() {
+    let screen = NSRect(x: 0, y: 0, width: 1470, height: 890), frame = NSRect(x: 100, y: 40, width: 400, height: 360)
+    for y in stride(from: 0.0, through: 890, by: 20) {
+      let top = AskPanel.top(around: y, in: screen, from: frame)
+      XCTAssertGreaterThanOrEqual(top - AskView.restingHeight, 0)
+      XCTAssertLessThanOrEqual(top, frame.maxY)
+    }
+  }
+
   func test_oneSectionAfterAnother() {
     XCTAssertEqual(Unfold.progress(after: 0, step: 0), 0)
     XCTAssertEqual(Unfold.progress(after: Unfold.length(of: 3), step: 2), 1)

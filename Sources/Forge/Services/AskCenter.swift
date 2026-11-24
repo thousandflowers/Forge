@@ -90,6 +90,10 @@ final class AskSession: ObservableObject {
   @Published var files: [ProcessableFile] { didSet { lookUp() } }
   @Published private(set) var answers: [AskRequest.Question: AskRequest.Answer] = [:]
   @Published private(set) var state: State = .asking
+  /// Said at once: what it is starting on is known a moment later.
+  @Published private(set) var isStarted = false
+  /// What was measured for the choice that was taken.
+  private(set) var promised: Weight?
   /// What each choice would really come out as, measured on the first file.
   @Published private(set) var measured: [AskRequest.Answer: Weight] = [:]
   /// Whether what is wanted now and then is shown as well.
@@ -166,6 +170,8 @@ final class AskSession: ObservableObject {
 
   func choose(_ answer: AskRequest.Answer?, for question: AskRequest.Question) {
     if answer == .cut { return openTheCutter() }
+    // Alone, it is what it was measured as; beside another answer it is not.
+    promised = answers.isEmpty ? answer.flatMap { measured[$0] } : nil
     answers[question] = answer
     // Made into one they are not made into anything else as well.
     // And a preset is the whole recipe.
@@ -188,6 +194,7 @@ final class AskSession: ObservableObject {
   /// Run the answer, where closing the panel can stop it.
   func start() {
     guard case .asking = state, working == nil else { return }
+    isStarted = true
     working = Task { await run() }
   }
 

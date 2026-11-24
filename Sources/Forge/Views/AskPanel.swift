@@ -100,6 +100,17 @@ final class AskPanel {
   func owns(_ window: NSWindow) -> Bool { window === panel }
   var target: any NSDraggingDestination { panel }
 
+  /// What is left when the choices have gone is where the file was let go.
+  func gather(at mouse: NSPoint = NSEvent.mouseLocation) {
+    let screen = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.visibleFrame ?? .zero
+    panel.gather(to: Self.top(around: mouse.y, in: screen, from: panel.frame))
+  }
+
+  /// Its middle at the pointer, and never above where it was or off the screen.
+  static func top(around y: CGFloat, in screen: NSRect, from frame: NSRect) -> CGFloat {
+    max(min(y + AskView.restingHeight / 2, frame.maxY), screen.minY + AskView.restingHeight)
+  }
+
   func close() {
     panel.unregisterDraggedTypes()
     panel.ignoresMouseEvents = true
@@ -116,8 +127,20 @@ private final class KeyPanel: NSPanel, NSDraggingDestination {
   /// It grows downwards. Its top is where the eye, and a file being held, is.
   override func setFrame(_ frame: NSRect, display: Bool) {
     var frame = frame
-    if frame.height != self.frame.height { frame.origin.y = self.frame.maxY - frame.height }
+    if frame.height != self.frame.height { frame.origin.y = top(at: frame.height) - frame.height }
     super.setFrame(frame, display: display)
+  }
+
+  private var gathering: (height: CGFloat, top: CGFloat, end: CGFloat)?
+
+  func gather(to top: CGFloat) { gathering = (frame.height, frame.maxY, top) }
+
+  /// Its top stays, unless it is closing on somewhere: then it goes there as it
+  /// grows small.
+  private func top(at height: CGFloat) -> CGFloat {
+    guard let gathering, gathering.height > AskView.restingHeight else { return frame.maxY }
+    let share = min(max((gathering.height - height) / (gathering.height - AskView.restingHeight), 0), 1)
+    return gathering.top + (gathering.end - gathering.top) * share
   }
 
   override func cancelOperation(_ sender: Any?) {
@@ -163,6 +186,8 @@ private final class KeyPanel: NSPanel, NSDraggingDestination {
 struct AskView: View {
   static let width: CGFloat = 400
   static let headerHeight: CGFloat = padding + portrait + section
+  /// With nothing left to choose.
+  static let restingHeight: CGFloat = padding * 2 + portrait
   /// The corners are concentric: what is inside turns with what is outside.
   private static let radius: CGFloat = 22
   private static let padding: CGFloat = 12
@@ -180,6 +205,7 @@ struct AskView: View {
   private static let linger: UInt64 = 5_000_000_000
   private static let bar: CGFloat = 38
   private static let arming: UInt64 = 800_000_000
+  private static let patience: UInt64 = 300_000_000
   private static let quick = Animation.easeOut(duration: 0.12)
 
   @ObservedObject var session: AskSession
@@ -191,23 +217,28 @@ struct AskView: View {
   @State private var typed: [AskRequest.Question: String] = [:]
   @State private var hovered: DropTiles.Tile?
   @State private var isOverMore = false
+  @State private var isFolded = false
+  @State private var isSlow = false
   /// Whether the numbers answer yet. The panel comes up over somebody who may
   /// be in the middle of typing one.
   @State private var armed = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Self.section) {
+    VStack(alignment: .leading, spacing: 0) {
       header
-      switch session.state {
-      case .asking: asking
-      case .working(let fraction): ProgressView(value: fraction).progressViewStyle(.linear).accessibilityLabel(Text("Converting"))
-      case .done(let outputs): finished(outputs)
-      case .failed(let reason):
+      if isAsking {
+        choices
+      } else if !isFolded {
+        Folding(isStill: isStill, done: { isFolded = true }) { choices }
+      }
+      if case .failed(let reason) = session.state {
         Label(reason, systemImage: "exclamationmark.triangle.fill").font(.callout).foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
+          .padding(.top, Self.section)
           .task { if NSWorkspace.shared.isVoiceOverEnabled { Self.say(reason) } }
       }
     }
+    .overlay(alignment: .bottom) { progress }
     .onPreferenceChange(DropTileFrames.self) { tiles.frames = $0 }
     .onPreferenceChange(MoreFrame.self) { tiles.more = $0 }
     .padding(Self.padding)
@@ -219,23 +250,67 @@ struct AskView: View {
       try? await Task.sleep(nanoseconds: Self.arming)
       armed = true
     }
+    .task(id: outputs) {
+      guard case .done(let made) = session.state else { return }
+      // Somebody listening to it is told, and leaves when they have heard.
+      guard !NSWorkspace.shared.isVoiceOverEnabled else {
+        if !made.isEmpty { Self.say(made.count == 1 ? "Done: \(made[0].lastPathComponent)" : "Done: \(made.count) files") }
+        return
+      }
+      try? await Task.sleep(nanoseconds: Self.linger)
+      if !Task.isCancelled { close() }
+    }
   }
 
   // MARK: - What it is, and what it would be
+
+  private var isAsking: Bool { if case .asking = session.state { return !session.isStarted } else { return false } }
+
+  /// With the room above them, so that when they go it goes with them.
+  private var choices: some View {
+    VStack(alignment: .leading, spacing: Self.section) { asking }.padding(.top, Self.section)
+  }
+
+  private var outputs: [URL] { if case .done(let outputs) = session.state { return outputs } else { return [] } }
+
+  /// Along the bottom edge, where it takes no room and moves nothing. What is
+  /// over in a moment is not seen to have begun.
+  @ViewBuilder
+  private var progress: some View {
+    if case .working(let fraction) = session.state {
+      GeometryReader { place in
+        Color.accentColor.frame(width: (place.size.width + Self.padding * 2) * max(fraction, 0.02), height: 3)
+      }
+      .frame(height: 3)
+      .offset(x: -Self.padding, y: Self.padding)
+      .opacity(isSlow ? 1 : 0)
+      .animation(.easeOut(duration: 0.15), value: fraction)
+      .accessibilityElement()
+      .accessibilityLabel(Text("Converting"))
+      .accessibilityValue(Text("\(Int(fraction * 100))%"))
+      .task {
+        try? await Task.sleep(nanoseconds: Self.patience)
+        if !Task.isCancelled { isSlow = true }
+      }
+    }
+  }
 
   private var aimed: DropTiles.Tile? { tiles.over ?? (tiles.isLive ? nil : hovered) }
 
   private var header: some View {
     HStack(spacing: 11) {
-      PreviewImage(url: session.files[0].url, maxPixels: 120)
+      PreviewImage(url: outputs.first ?? session.files[0].url, maxPixels: 120)
         .frame(width: Self.portrait, height: Self.portrait)
         .clipShape(RoundedRectangle(cornerRadius: Self.inset, style: .continuous))
       VStack(alignment: .leading, spacing: 2) {
-        Text(session.files.count == 1 ? session.files[0].fileName : "\(session.files.count) files")
-          .font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-        detail.font(.title3.weight(.semibold).monospacedDigit()).lineLimit(1)
+        Text(name).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+        detail.font(.title3.weight(.semibold).monospacedDigit()).lineLimit(1).minimumScaleFactor(0.8)
       }
       Spacer(minLength: 8)
+      if !outputs.isEmpty {
+        ResultActions(urls: outputs)
+        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(outputs); close() }.controlSize(.small)
+      }
       // Nothing to press while the button is down.
       if !tiles.isLive {
         Button(action: close) { Image(systemName: "xmark.circle.fill").font(.title3) }
@@ -247,19 +322,35 @@ struct AskView: View {
     .frame(height: Self.portrait)
   }
 
-  /// What it weighs; over a choice, what it would weigh.
+  private var name: String {
+    if !outputs.isEmpty { return outputs.count == 1 ? outputs[0].lastPathComponent : "\(outputs.count) files" }
+    return session.files.count == 1 ? session.files[0].fileName : "\(session.files.count) files"
+  }
+
+  /// What it weighs; over a choice, what it would weigh; made, what it does.
   private var detail: Text {
     let now = session.files.reduce(Int64(0)) { $0 + $1.fileSize }
     let size = now.formatted(.byteCount(style: .file))
-    if session.files.count == 1, let aimed, let after = session.measured[aimed.answer]?.bytes {
-      let heavier = session.isHeavier(after)
-      let percent = ResultCard.percent(from: now, to: after).map { "  \($0)" } ?? ""
-      return Text("\(size) → ").foregroundColor(.secondary)
-        + Text(after.formatted(.byteCount(style: .file))).foregroundColor(heavier ? .heavier : .primary)
-        + Text(percent).foregroundColor(.lighter)
+    if case .done(let made) = session.state {
+      guard !made.isEmpty else { return Text("Left as it is: its folder is no longer watched.").font(.callout) }
+      let after = Self.weight(of: made)
+      // What it was is known by now, and there is more beside it.
+      return change(from: nil, of: now, to: after, isHeavier: after > now + now / 20)
+    }
+    var weight = isAsking ? aimed.flatMap { session.measured[$0.answer] } : session.promised
+    if case .failed = session.state { weight = nil }
+    if session.files.count == 1, let after = weight?.bytes {
+      return change(from: now, of: now, to: after, isHeavier: session.isHeavier(after))
     }
     guard session.files.count == 1, let shape = session.files[0].dimensions else { return Text(size) }
     return Text(size) + Text("  \(shape.width) × \(shape.height)").font(.callout).foregroundColor(.secondary)
+  }
+
+  private func change(from before: Int64?, of whole: Int64, to after: Int64, isHeavier: Bool) -> Text {
+    let percent = ResultCard.percent(from: whole, to: after).map { "  \($0)" } ?? ""
+    return Text(before.map { "\($0.formatted(.byteCount(style: .file))) → " } ?? "").foregroundColor(.secondary)
+      + Text(after.formatted(.byteCount(style: .file))).foregroundColor(isHeavier ? .heavier : .primary)
+      + Text(percent).foregroundColor(.lighter)
   }
 
   // MARK: - Asking
@@ -273,7 +364,7 @@ struct AskView: View {
     let folds = session.folds
     ForEach(folds ? questions.filter { !$0.isSecondary } : questions, id: \.self) { section($0) }
     if folds, isOpen || session.showsMore { rest(of: questions) }
-    if !questions.isEmpty, !session.answersAtOnce, !tiles.isLive {
+    if !questions.isEmpty, !session.answersAtOnce, !tiles.isLive, isAsking {
       HStack {
         Spacer()
         Button { go() } label: { Text("Convert").frame(minWidth: 76) }
@@ -379,7 +470,7 @@ struct AskView: View {
   }
 
   private func grid(_ question: AskRequest.Question, numbered: Bool) -> some View {
-    let byNumber = numbered && !tiles.isLive
+    let byNumber = numbered && !tiles.isLive && isAsking
     // Cutting by hand is one more thing to do to it.
     let byHand = session.questions.contains(.cut) ? session.choices(for: .cut).first : nil
     let joinsTools = question == .tool && !handsOutCut, fillsRow = question == .format && handsOutCut
@@ -458,42 +549,14 @@ struct AskView: View {
 
   // MARK: - Done
 
-  @ViewBuilder
-  private func finished(_ outputs: [URL]) -> some View {
-    if outputs.isEmpty {
-      Text("Left as it is: its folder is no longer watched.").font(.callout).foregroundStyle(.secondary)
-    }
-    HStack(spacing: 10) {
-      if let first = outputs.first {
-        PreviewImage(url: first, maxPixels: 120).frame(width: 48, height: 36).clipShape(RoundedRectangle(cornerRadius: 6))
-      }
-      VStack(alignment: .leading, spacing: 1) {
-        if !outputs.isEmpty { Text(outputs.count == 1 ? outputs[0].lastPathComponent : "\(outputs.count) files").font(.body.weight(.semibold)).lineLimit(1).truncationMode(.middle)
-        Text(weight(outputs)).font(.callout).foregroundStyle(.green) }
-      }
-      Spacer(minLength: 8)
-      if !outputs.isEmpty {
-        ResultActions(urls: outputs)
-        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(outputs); close() }.controlSize(.small)
-      }
-    }
-    .task {
-      // Somebody listening to it is told, and leaves when they have heard.
-      guard !NSWorkspace.shared.isVoiceOverEnabled else { return Self.say(outputs.count == 1 ? "Done: \(outputs[0].lastPathComponent)" : "Done: \(outputs.count) files") }
-      try? await Task.sleep(nanoseconds: Self.linger)
-      if !Task.isCancelled { close() }
-    }
-  }
-
   private static func say(_ words: String) {
     NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested, userInfo: [
       .announcement: words, .priority: NSAccessibilityPriorityLevel.high.rawValue,
     ])
   }
 
-  private func weight(_ outputs: [URL]) -> String {
+  private static func weight(of outputs: [URL]) -> Int64 {
     outputs.reduce(Int64(0)) { $0 + (((try? FileManager.default.attributesOfItem(atPath: $1.path)[.size]) as? Int64) ?? 0) }
-      .formatted(.byteCount(style: .file))
   }
 }
 
@@ -619,6 +682,36 @@ private struct Unfolding<Content: View>: View {
     .task {
       try? await Task.sleep(nanoseconds: UInt64((Unfold.length(of: step + 1) + 0.1) * 1_000_000_000))
       isOut = true
+    }
+  }
+}
+
+/// Something that goes back in by itself.
+private struct Folding<Content: View>: View {
+  let isStill: Bool
+  let done: () -> Void
+  let content: Content
+  @State private var since: Date?
+
+  init(isStill: Bool, done: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+    self.isStill = isStill
+    self.done = done
+    self.content = content()
+  }
+
+  var body: some View {
+    TimelineView(.animation(paused: isStill)) { time in
+      let left = 1 - (isStill ? 1 : Unfold.progress(after: since.map { time.date.timeIntervalSince($0) } ?? 0, step: 0))
+      Unfold(progress: left) { content }
+        .opacity(left)
+        .clipped()
+    }
+    .allowsHitTesting(false)
+    .accessibilityHidden(true)
+    .onAppear { if since == nil { since = Date() } }
+    .task {
+      try? await Task.sleep(nanoseconds: UInt64(Unfold.length(of: 1) * 1_000_000_000))
+      done()
     }
   }
 }

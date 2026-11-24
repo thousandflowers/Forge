@@ -165,6 +165,7 @@ final class DragMenu {
     tiles.drop = { [weak self, weak session, weak panel, weak tiles] tile in
       guard let self, let session, self.dropped(on: tile, of: session) else { return false }
       tiles?.isLive = false
+      if tile != nil { panel?.gather() }
       panel?.takeKeys()
       return true
     }
