@@ -47,6 +47,7 @@ final class AppModel: ObservableObject {
   private let persistence: PersistenceManager
   private var watchers: [UUID: MonitoredFolderWatcher] = [:]
   private var memories: [UUID: RenameMemory] = [:]
+  private let turns = Turns()
 
   /// Files Forge has just written. A watched folder that also receives the
   /// output would otherwise convert its own results forever.
@@ -668,7 +669,11 @@ final class AppModel: ObservableObject {
 
   private func processIncoming(_ url: URL, folder: MonitoredFolder) async {
     // Known from now on even where Forge wrote it: it may be renamed next.
-    let renamed = memories[folder.id]?.wasRenamed(url) ?? false
+    let before = memories[folder.id]?.nameBefore(url)
+    if let before, let job = await Task.detached(operation: { Retype.wanted(of: url, before: before) }).value {
+      return await retype(url, job, in: folder)
+    }
+    let renamed = before != nil
     guard !wroteThis(url) else { return }
     // Asked of the folder as it is now: the watcher was handed a copy, and the
     // settings may have changed since.
@@ -699,7 +704,7 @@ final class AppModel: ObservableObject {
     }
 
     do {
-      _ = try await convertArrival(file, with: preset, in: folder)
+      try await turns.take(of: settings.maxConcurrentNative) { [weak self] in _ = try await self?.convertArrival(file, with: preset, in: folder) }
     } catch is CancellationError {
       // nothing to say
     } catch ProcessingError.unreadableFormat, ProcessingError.unsupportedConversion, ProcessingError.unknownType,
@@ -714,13 +719,37 @@ final class AppModel: ObservableObject {
     await refreshHistory()
   }
 
-  private func convertArrival(_ file: ProcessableFile, with preset: RulePreset, in folder: MonitoredFolder) async throws -> [URL] {
+  /// Given another extension, and to become what it says: where it is, as
+  /// whoever renamed it there expects.
+  private func retype(_ url: URL, _ job: Retype, in folder: MonitoredFolder) async {
+    do {
+      try await turns.take(of: settings.maxConcurrentNative) { [weak self] in try await self?.retypeNow(url, job, in: folder) }
+    } catch is CancellationError {
+      // nothing to say
+    } catch {
+      report(error, doing: "converting “\(url.lastPathComponent)”")
+    }
+    await refreshHistory()
+  }
+
+  private func retypeNow(_ url: URL, _ job: Retype, in folder: MonitoredFolder) async throws {
+    // Its turn may have been a while coming, and it may be called something else.
+    guard let folder = folders.first(where: { $0.id == folder.id }), folder.isActive,
+          FileManager.default.fileExists(atPath: url.path) else { return }
+    let file = try job.putBack(url)
+    memories[folder.id]?.know(file)
+    remember(file)
+    let outputs = try await convertArrival(try ProcessableFile(url: file), with: job.preset, in: folder, inPlace: true)
+    outputs.forEach { memories[folder.id]?.know($0) }
+  }
+
+  private func convertArrival(_ file: ProcessableFile, with preset: RulePreset, in folder: MonitoredFolder, inPlace: Bool = false) async throws -> [URL] {
     // The same answer about backups here and there, or an original could be
     // replaced by somebody who thinks it is kept.
     let snapshot = settings
     await coordinator.update(settings: snapshot)
     // A folder watched for names was never asked how: it does what is safe now.
-    let isForNames = folder.ruleId == Self.noPreset
+    let isForNames = inPlace || folder.ruleId == Self.noPreset
     let entry = try await coordinator.processFile(
       file,
       with: preset,

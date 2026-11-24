@@ -171,24 +171,7 @@ struct RecipeOptions: ParsableArguments {
 
   private func targetType() throws -> UTType? {
     guard let format else { return nil }
-    if let type = UTType(filenameExtension: format), !type.isDynamic { return type }
-    // Only then: the formats macOS has no type for and Forge writes anyway.
-    // Taking this branch first would have handed back a dynamic type for
-    // `txt`, which has a perfectly good one of its own.
-    if Toml.handles(format) || Subtitles.writes(format),
-       let text = UTType(filenameExtension: format, conformingTo: .plainText) {
-      return text
-    }
-    // WOFF2 has no type on macOS either, and is a font rather than text.
-    if ExternalBridge.Fonts.handles(format),
-       let font = UTType(filenameExtension: format, conformingTo: .font) {
-      return font
-    }
-    // What pandoc writes and macOS has no name for: rst, org, tex, ipynb.
-    if ExternalBridge.pandocWritesFormat(format),
-       let text = UTType(filenameExtension: format, conformingTo: .text) {
-      return text
-    }
+    if let type = FormatCatalog.type(named: format) { return type }
     throw ValidationError("“\(format)” is not a format this Mac knows. Try `forge formats`.")
   }
 

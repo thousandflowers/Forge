@@ -19,9 +19,15 @@ final class RenameMemory {
 
   /// Whether this file was here under another name. Either way it is known by
   /// this one from now on.
-  func wasRenamed(_ url: URL) -> Bool {
-    guard let number = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.systemFileNumber] as? UInt64 else { return false }
+  func wasRenamed(_ url: URL) -> Bool { nameBefore(url) != nil }
+
+  /// What it was called here, if that was something else.
+  func nameBefore(_ url: URL) -> String? {
+    guard let number = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.systemFileNumber] as? UInt64 else { return nil }
     let before = names.updateValue(url.lastPathComponent, forKey: number)
-    return before != nil && before != url.lastPathComponent
+    return before == url.lastPathComponent ? nil : before
   }
+
+  /// Called this by Forge, and not by somebody who wants something.
+  func know(_ url: URL) { _ = nameBefore(url) }
 }

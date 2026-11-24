@@ -866,7 +866,9 @@ actor ProcessingCoordinator {
     fallbackSuffix: String
   ) -> String {
     let template = preset.nameTemplate ?? settings.nameTemplate
-    var name = NameTemplate.resolve(template, with: context)
+    // A file's own name is kept to the letter: what is tidied off the end is what
+    // a token with nothing to say leaves there.
+    var name = template == "{name}" ? context.name : NameTemplate.resolve(template, with: context)
 
     // A template that said nothing keeps the old behaviour, where a resize
     // puts its size in the name.

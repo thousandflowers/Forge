@@ -40,6 +40,29 @@ enum FormatCatalog {
   /// system prefers `cfg`) and wrong for Markdown, written as `.markdown`.
   private static let whatPeopleCallIt: [String: String] = ["net.daringfireball.markdown": "md"]
 
+  /// The format an extension names, where Forge knows of one.
+  static func type(named format: String) -> UTType? {
+    if let type = UTType(filenameExtension: format), !type.isDynamic { return type }
+    // Only then: the formats macOS has no type for and Forge writes anyway.
+    // Taking this branch first would have handed back a dynamic type for
+    // `txt`, which has a perfectly good one of its own.
+    if Toml.handles(format) || Subtitles.writes(format),
+       let text = UTType(filenameExtension: format, conformingTo: .plainText) {
+      return text
+    }
+    // WOFF2 has no type on macOS either, and is a font rather than text.
+    if ExternalBridge.Fonts.handles(format),
+       let font = UTType(filenameExtension: format, conformingTo: .font) {
+      return font
+    }
+    // What pandoc writes and macOS has no name for: rst, org, tex, ipynb.
+    if ExternalBridge.pandocWritesFormat(format),
+       let text = UTType(filenameExtension: format, conformingTo: .text) {
+      return text
+    }
+    return nil
+  }
+
   static func fileExtension(for type: UTType) -> String? {
     if let spoken = whatPeopleCallIt[type.identifier] { return spoken }
     let declared = type.tags[.filenameExtension] ?? []
