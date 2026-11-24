@@ -122,6 +122,10 @@ final class ComicProcessor: FileProcessor, @unchecked Sendable {
   func process(
     _ input: URL, to output: URL, with operations: [Operation], progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
+    // A processor that reads a file is asked for any format, and hands on what is not its own.
+    guard ["pdf", "cbz"].contains(output.pathExtension.lowercased()), input.pathExtension.lowercased() != output.pathExtension.lowercased() else {
+      throw ProcessingError.unsupportedConversion(from: UTType(filenameExtension: input.pathExtension) ?? .data, to: UTType(filenameExtension: output.pathExtension) ?? .data)
+    }
     let start = Date()
     let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("forge-comic-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)

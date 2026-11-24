@@ -20,7 +20,7 @@ struct OutputFormat: Identifiable, Hashable {
   static var audio: [OutputFormat] { Self.sorted(Set(FormatCatalog.writableAudioTypes.keys)) }
   static var video: [OutputFormat] { Self.sorted(FormatCatalog.writableVideoTypes) }
   static var documents: [OutputFormat] {
-    Self.sorted(Set(DocumentText.writable.keys).union([.pdf]).union([Book.type].compactMap { $0 }))
+    Self.sorted(Set(DocumentText.writable.keys).union([.pdf]).union([Book.type, UTType(filenameExtension: "pptx"), UTType(filenameExtension: "cbz", conformingTo: .data)].compactMap { $0 }))
   }
 
   /// The image formats, plus the ones a tool on this Mac adds. Offered only
@@ -32,6 +32,8 @@ struct OutputFormat: Identifiable, Hashable {
       types.insert(webp)
     }
     types.insert(.svg)
+    if let dxf = FormatCatalog.type(named: "dxf") { types.insert(dxf) }
+    if let slides = UTType(filenameExtension: "pptx") { types.insert(slides) }
     return Self.sorted(types)
   }
 
@@ -72,14 +74,17 @@ struct OutputFormat: Identifiable, Hashable {
   /// What `DataProcessor` writes: it refuses any other pairing rather than
   /// writing something nothing can open.
   static var data: [OutputFormat] {
-    let own = (DataProcessor.records + DataProcessor.tables + DataProcessor.settings + DataProcessor.places + DataProcessor.cards).compactMap(FormatCatalog.type(named:))
+    let own = (DataProcessor.records + DataProcessor.tables + DataProcessor.settings + DataProcessor.places + DataProcessor.cards + DataProcessor.palettes + DataProcessor.phrases).compactMap(FormatCatalog.type(named:))
     return Self.sorted(Set(DataProcessor.readable).union(own.filter { $0 != FormatCatalog.type(named: "ndjson") }))
   }
 
   /// Data as something to look at.
-  static var dataPages: [OutputFormat] { Self.sorted(Set([.html, DocumentText.markdown].compactMap { $0 })) }
+  static var dataPages: [OutputFormat] { Self.sorted(Set([.html, .pdf, DocumentText.markdown].compactMap { $0 })) }
 
-  static var models: [OutputFormat] { Self.sorted(FormatCatalog.writableModelTypes) }
+  static var models: [OutputFormat] {
+    let more = ExternalTool.blender.isInstalled ? ["fbx", "blend"].compactMap { UTType(filenameExtension: $0) } : []
+    return Self.sorted(FormatCatalog.writableModelTypes.union(more))
+  }
 
   private static func sorted(_ types: Set<UTType>) -> [OutputFormat] {
     types.map { OutputFormat(type: $0) }.sorted { $0.label < $1.label }

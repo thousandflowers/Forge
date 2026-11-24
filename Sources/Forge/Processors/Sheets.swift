@@ -33,7 +33,7 @@ private final class Reading: NSObject, XMLParserDelegate {
   }
 }
 
-private enum Grid {
+enum Grid {
   /// A sheet says it has a million rows, and means the few with something in.
   static let widest = 16_384
   static let longest = 1_048_576
@@ -109,16 +109,22 @@ enum Xlsx {
     var own: Set<Int> = [], styles: Set<Int> = [], inside = false, index = 0
     try Reading.read(try zip.data("xl/styles.xml"), began: { name, values in
       if name == "numFmt", let id = values["numFmtId"].flatMap(Int.init), let code = values["formatCode"] {
-        let bare = code.replacing(#/"[^"]*"|\[[^\]]*\]|\\./#, with: "").lowercased()
-        if bare.contains(where: { "dy".contains($0) }) || bare.contains("h:") { own.insert(id) }
+        if isDate(id, code) { own.insert(id) }
       }
       if name == "cellXfs" { inside = true }
       if name == "xf", inside {
-        if let id = values["numFmtId"].flatMap(Int.init), (14...22).contains(id) || (45...47).contains(id) || own.contains(id) { styles.insert(index) }
+        if let id = values["numFmtId"].flatMap(Int.init), isDate(id, nil) || own.contains(id) { styles.insert(index) }
         index += 1
       }
     }, ended: { name, _ in if name == "cellXfs" { inside = false } })
     return styles
+  }
+
+  /// Whether a number shown that way is a day: by its number, or how it is spelled.
+  static func isDate(_ id: Int, _ code: String?) -> Bool {
+    if (14...22).contains(id) || (45...47).contains(id) { return true }
+    let bare = (code ?? "").replacing(#/"[^"]*"|\[[^\]]*\]|\\./#, with: "").lowercased()
+    return bare.contains { "dy".contains($0) } || bare.contains("h:")
   }
 
   private static func rows(_ data: Data, _ words: [String], _ dates: Set<Int>, _ countsFrom1904: Bool) throws -> [[String]] {
@@ -170,13 +176,13 @@ enum Xlsx {
   }
 
   /// 0.1 is kept as 0.10000000000000001, which is not what anybody typed.
-  private static func tidy(_ text: String) -> String {
+  static func tidy(_ text: String) -> String {
     guard text.contains(where: { ".eE".contains($0) }), let number = Double(text) else { return text }
     let short = String(format: "%.15g", locale: Locale(identifier: "en_US_POSIX"), number)
     return short.contains("e") ? "\(number)" : short
   }
 
-  private static func day(_ serial: Double, _ countsFrom1904: Bool) -> String {
+  static func day(_ serial: Double, _ countsFrom1904: Bool) -> String {
     let seconds = ((serial + (countsFrom1904 ? 1462 : 0) - 25_569) * 86_400).rounded()
     guard abs(seconds) < 1e12 else { return "\(serial)" }
     let date = Date(timeIntervalSince1970: seconds), format = DateFormatter()

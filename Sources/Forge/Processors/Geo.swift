@@ -72,6 +72,22 @@ enum Geo {
     return #"<?xml version="1.0" encoding="UTF-8"?>"# + "\n" + #"<gpx version="1.1" creator="Forge" xmlns="http://www.topografix.com/GPX/1/1">"# + "\n" + body + "</gpx>\n"
   }
 
+  /// A watch's other language: the same track, said differently.
+  @Sendable static func tcx(_ text: String) throws -> Any {
+    let root = try document(text, "a TCX file")
+    let tracks = all("Track", in: root).compactMap { track -> [String: Any]? in
+      var line: [[Double]] = [], times: [String] = []
+      for point in all("Trackpoint", in: track) {
+        guard let place = all("Position", in: point).first, let lat = words("LatitudeDegrees", in: place).flatMap(Double.init), let lon = words("LongitudeDegrees", in: place).flatMap(Double.init) else { continue }
+        line.append([lon, lat] + (words("AltitudeMeters", in: point).flatMap(Double.init).map { [$0] } ?? []))
+        times.append(words("Time", in: point) ?? "")
+      }
+      return line.isEmpty ? nil : feature("LineString", line, ["times": times])
+    }
+    guard !tracks.isEmpty else { throw DataFormats.broken("a TCX file") }
+    return collection(tracks)
+  }
+
   // MARK: - KML
 
   @Sendable static func kml(_ text: String) throws -> Any {

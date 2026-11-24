@@ -262,20 +262,20 @@ enum Capabilities {
       ),
       Capability(
         id: "office-suite",
-        title: "Old Office files, Pages, Numbers and Keynote",
-        summary: "Word 97, Excel and PowerPoint, and Apple's own office formats, into PDF and text.",
+        title: "Office, whole",
+        summary: "Visio, Publisher, Pages, Numbers and Keynote, and from any Office format to any other.",
         symbol: "doc.richtext",
         status: .needsPack(.init(
           name: "An office suite",
           requires: "a whole office suite, which reads what nothing else does",
           approximateSize: "about a gigabyte",
           tool: ExternalTool(
-            binary: "soffice", name: "LibreOffice", adds: "DOC, XLS, PPT, XLSX, PPTX, Pages, Numbers and Keynote",
+            binary: "soffice", name: "LibreOffice", adds: "Visio, Publisher, Pages, Numbers, Keynote, and PPTX, XLS and PPT to write",
             insideApplications: "LibreOffice.app/Contents/MacOS/soffice", serves: [.document]
           ),
           isWired: true
         )),
-        evidence: ["xls", "ppt", "pptx", "pages", "numbers", "key", "odp", "wpd"]
+        evidence: ["pages", "numbers", "key", "odp", "wpd", "xlsb", "vsd", "vsdx", "pub", "odg", "wmf", "emf", "cdr"]
       ),
       Capability(
         id: "ebooks",
@@ -290,6 +290,20 @@ enum Capabilities {
           isWired: true
         )),
         evidence: ["mobi", "azw", "azw3", "fb2", "lit", "lrf", "pdb", "prc", "chm"]
+      ),
+      Capability(
+        id: "blender",
+        title: "Blender and FBX",
+        summary: "BLEND files, and FBX to write, with their colours and materials.",
+        symbol: "cube.transparent",
+        status: .needsPack(.init(
+          name: "Blender",
+          requires: "a 3D program",
+          approximateSize: "hundreds of megabytes",
+          tool: .blender,
+          isWired: true
+        )),
+        evidence: ["blend"]
       ),
       Capability(
         id: "parquet",

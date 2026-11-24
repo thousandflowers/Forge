@@ -16,7 +16,10 @@ enum DataFormats {
   /// Several tables under one roof, in order.
   struct Book { let sheets: [(name: String, table: Separated.Table)] }
 
-  static let texts: [String: Written] = {
+  static let texts: [String: Written] = own.merging(MoreData.texts) { first, _ in first }
+  static let packs: [String: Packed] = packed.merging(MoreData.packs) { first, _ in first }
+
+  private static let own: [String: Written] = {
     let lines = Written(read: Lines.read, write: Lines.write), yaml = Written(read: Yaml.read, write: Yaml.write)
     return [
       "jsonl": lines, "ndjson": lines, "yaml": yaml, "yml": yaml,
@@ -34,7 +37,7 @@ enum DataFormats {
     ]
   }()
 
-  static let packs: [String: Packed] = [
+  private static let packed: [String: Packed] = [
     "xlsx": Packed(read: Xlsx.read, write: Xlsx.write),
     "ods": Packed(read: Ods.read, write: Ods.write),
     "sqlite": Packed(read: Sqlite.read), "sqlite3": Packed(read: Sqlite.read), "db": Packed(read: Sqlite.read),
@@ -208,7 +211,7 @@ private enum Strings {
 
 // MARK: - XML
 
-private enum Xml {
+enum Xml {
   private static let root = "root", item = "item"
 
   @Sendable static func read(_ text: String) throws -> Any {

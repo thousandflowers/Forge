@@ -70,6 +70,7 @@ protocol FileProcessor: AnyObject, Sendable {
 /// file can become something is whether any of them takes it there.
 enum Conversions {
   static let processors: [FileProcessor] = [
+    OutlineProcessor(),
     // Before the image processor, which would claim an SVG through
     // `readableImageTypes` and then hand ImageIO a file it cannot decode.
     VectorProcessor(),
@@ -88,8 +89,12 @@ enum Conversions {
     // Before the document reader: JSON and CSV are plain text as far as the
     // system is concerned, and the document reader would take them.
     DataProcessor(),
+    // Before the document reader, which would hand a PDF's words to pandoc:
+    // a PDF asked for slides is its pages.
+    SlidesProcessor(),
     SimpleDocProcessor(),
     ComicProcessor(),
+    ThroughProcessor(),
     ArchiveProcessor(),
     // Last: a conversion macOS can do itself is still done by macOS, and a
     // tool the user installed is only asked about what is left over.

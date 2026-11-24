@@ -34,6 +34,11 @@ struct ExternalTool: Hashable, Identifiable, Sendable {
 
   var isInstalled: Bool { location != nil }
 
+  static let blender = ExternalTool(
+    binary: "Blender", name: "Blender", adds: "BLEND, and FBX to write",
+    insideApplications: "Blender.app/Contents/MacOS/Blender", serves: [.model]
+  )
+
   static let calibre = ExternalTool(
     binary: "ebook-convert", name: "calibre", adds: "MOBI, AZW3, FB2, LIT, PDB and more",
     insideApplications: "calibre.app/Contents/MacOS/ebook-convert", serves: [.document]

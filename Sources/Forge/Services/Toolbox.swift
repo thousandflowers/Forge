@@ -96,6 +96,15 @@ struct Toolbox: Sendable {
                    "f63131b6e1e69ded1a55e0b96f2f1d77658e4cf5b666346487c927820a4d53c5", 21_684_907),
       commands: ["duckdb"]
     ),
+    "Blender": Release(
+      // Its makers stopped at the fourth for an Intel Mac.
+      version: "5.3.0", licence: "GPL 3",
+      arm: Build("https://download.blender.org/release/Blender5.3/blender-5.3.0-macos-arm64.dmg",
+                 "2d802b54766741e612cead50b03ebbc8eb64dadc71eda932573d256b8a784720", 359_893_873),
+      intel: Build("https://download.blender.org/release/Blender4.5/blender-4.5.9-macos-x64.dmg",
+                   "00c8a433504291374bfa045c0c2d708a779f8abc8400b4718fdd11c117486fa4", 335_828_094),
+      commands: ["Blender"]
+    ),
     "Typst": Release(
       version: "0.15.1", licence: "Apache 2",
       arm: Build(github + "typst/typst/releases/download/v0.15.1/typst-aarch64-apple-darwin.tar.xz",

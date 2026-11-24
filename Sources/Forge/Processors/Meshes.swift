@@ -17,7 +17,7 @@ enum Meshes {
   private static let most = 20_000_000
   static let broken = ProcessingError.conversionFailed(reason: "It looks damaged: there is no shape in it that can be read.")
 
-  static let readable: Set<String> = ["gltf", "glb", "3mf", "off", "dae"]
+  static let readable: Set<String> = ["gltf", "glb", "3mf", "off", "dae", "fbx", "3ds", "x3d", "amf"]
   static let writable: Set<String> = ["glb", "gltf", "3mf", "off"]
 
   static func read(_ url: URL) throws -> [Mesh] {
@@ -27,6 +27,10 @@ enum Meshes {
     case "3mf": found = try threeMF(url)
     case "off": found = [try off(url)]
     case "dae": found = try collada(url)
+    case "fbx": found = try fbx(url)
+    case "3ds": found = try threeDS(url)
+    case "x3d": found = try x3d(url)
+    case "amf": found = try amf(url)
     default: found = []
     }
     let whole = found.filter { mesh in !mesh.points.isEmpty && mesh.triangles.count >= 3 && mesh.triangles.allSatisfy { Int($0) < mesh.points.count } }

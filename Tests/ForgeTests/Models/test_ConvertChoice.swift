@@ -175,12 +175,13 @@ final class EditorConversionTests: BaseTestCase {
     XCTAssertEqual(one.title, "a.png")
   }
 
-  /// A CSV cannot become a JPEG, so the two together are not offered one.
-  func test_filesWithNothingInCommonAreOfferedNoFormat() throws {
+  /// A CSV cannot become a JPEG, so the two together are not offered one. Both
+  /// can become pages, and that is all.
+  func test_filesWithLittleInCommonAreOfferedThatMuch() throws {
     let csv = path("b.csv")
     try "a,b\n1,2\n".write(to: csv, atomically: true, encoding: .utf8)
     let mixed = try conversion([Fixture.image(at: path("a.png")), csv])
-    XCTAssertTrue(mixed.formats.isEmpty)
+    XCTAssertEqual(mixed.formats, [OutputFormat(type: .pdf)])
     XCTAssertEqual(mixed.category, .custom)
     XCTAssertEqual(mixed.title, "2 files")
   }

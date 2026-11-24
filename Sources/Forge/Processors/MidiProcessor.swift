@@ -22,6 +22,10 @@ final class MidiProcessor: FileProcessor, @unchecked Sendable {
   func process(
     _ input: URL, to output: URL, with operations: [Operation], progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
+    // A processor that reads a file is asked for any format, and hands on what is not its own.
+    guard UTType(filenameExtension: output.pathExtension).map({ FormatCatalog.audioFormatID(for: $0) != nil }) ?? false else {
+      throw ProcessingError.unsupportedConversion(from: UTType(filenameExtension: input.pathExtension) ?? .data, to: UTType(filenameExtension: output.pathExtension) ?? .data)
+    }
     let start = Date()
     let played = FileManager.default.temporaryDirectory.appendingPathComponent("forge-midi-\(UUID().uuidString).caf")
     defer { try? FileManager.default.removeItem(at: played) }

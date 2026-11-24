@@ -34,10 +34,14 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
       self = .font
     // Before the rest: a glTF is JSON and a COLLADA is XML, and neither is
     // what anybody means by one.
-    } else if FormatCatalog.isReadableModel(fileType) {
+    } else if FormatCatalog.isReadableModel(fileType) || (fileType.goes(by: BlenderBridge.extensions) && ExternalTool.blender.isInstalled) {
       self = .model
     } else if fileType.goes(by: MidiProcessor.readable) {
       self = .audio
+    // What is opened through something else is filed by what comes of it. A
+    // sheet is data before it is pages.
+    } else if let way = ThroughProcessor.way(for: fileType), way.kind != .data {
+      self = way.kind
     } else if FormatCatalog.isReadableImage(fileType) {
       self = .image
     } else if FormatCatalog.isReadableMedia(fileType) {

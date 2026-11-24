@@ -19,9 +19,13 @@ final class DataProcessor: FileProcessor, @unchecked Sendable {
 
   // Who may become what: a list of contacts is a table, and a table of sales is
   // no list of contacts, but nobody can tell which it is until it is asked for.
-  static let records = ["json", "jsonl", "ndjson", "yaml", "yml", "toml", "plist", "xml"]
+  static let records = ["json", "jsonl", "ndjson", "yaml", "yml", "toml", "plist", "xml", "msgpack", "cbor"]
   static let tables = ["csv", "tsv", "xlsx", "ods", "sql"]
-  static let settings = ["ini", "strings"]
+  static let settings = ["ini", "strings", "properties", "env"]
+  static let palettes = ["ase", "gpl"]
+  static let phrases = ["po"]
+  /// Read, and written as nothing of the sort.
+  static let onlyTables = ["xls", "xlt", "xlsm", "xltx", "xltm", "sqlite", "sqlite3", "db", "dbf", "lrcat", "aco", "xliff", "xlf"]
   static let places = ["geojson", "gpx", "kml", "kmz"]
   static let cards = ["vcf", "ics"]
 
@@ -37,9 +41,13 @@ final class DataProcessor: FileProcessor, @unchecked Sendable {
 
   func takes(_ file: ProcessableFile, to target: UTType) -> Bool {
     let source = file.url.pathExtension.lowercased(), wanted = Conversions.fileExtension(of: target)
+    let isTable = Self.tables.contains(source) || Self.onlyTables.contains(source)
+    // A page is words: what it has for data is asked elsewhere.
     if Self.settings.contains(wanted) { return Self.settings.contains(source) || Self.records.contains(source) }
-    if Self.places.contains(wanted) { return Self.places.contains(source) || Self.tables.contains(source) || source == "json" }
-    if Self.cards.contains(wanted) { return Self.tables.contains(source) || source == wanted }
+    if Self.palettes.contains(wanted) { return source != wanted && (isTable || Self.palettes.contains(source) || source == "json") }
+    if Self.phrases.contains(wanted) { return source != wanted && isTable }
+    if Self.places.contains(wanted) { return Self.places.contains(source) || isTable || source == "json" || source == "tcx" }
+    if Self.cards.contains(wanted) { return isTable }
     return Toml.handles(wanted) || DataFormats.writes(wanted) || Self.readable.contains { target.conforms(to: $0) }
   }
 

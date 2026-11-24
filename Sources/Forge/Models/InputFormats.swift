@@ -32,10 +32,10 @@ enum InputFormats {
     let documents = Set(DocumentText.readable.keys).union(SimpleDocProcessor.readableTypes)
     let fonts = FontProcessor.readable.sorted()
     return [
-      Group(kind: .image, extensions: extensions(FormatCatalog.readableImageTypes)),
+      Group(kind: .image, extensions: Set(extensions(FormatCatalog.readableImageTypes) + ThroughProcessor.ways.filter { $0.kind == .image }.flatMap(\.extensions)).sorted()),
       Group(kind: .video, extensions: extensions(video)),
       Group(kind: .audio, extensions: extensions(audio)),
-      Group(kind: .document, extensions: (extensions(documents) + ComicProcessor.readable).sorted()),
+      Group(kind: .document, extensions: Set(extensions(documents) + ComicProcessor.readable + ThroughProcessor.ways.filter { $0.kind == .document }.flatMap(\.extensions)).sorted()),
       Group(kind: .data, extensions: Set(extensions(DataProcessor.readable) + DataFormats.written + DataFormats.binary).sorted()),
       Group(kind: .model, extensions: extensions(FormatCatalog.readableModelTypes)),
       Group(kind: .subtitle, extensions: Subtitles.readableExtensions.sorted()),

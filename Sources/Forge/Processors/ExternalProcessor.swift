@@ -68,6 +68,7 @@ enum ExternalBridge {
   /// The files nobody opens but one tool.
   static let special: [(extensions: Set<String>, binary: String, isWords: Bool)] = [
     (books, "ebook-convert", false), (tables, "duckdb", false), (["typ"], "typst", true),
+    (BlenderBridge.extensions, "Blender", false),
   ]
 
   /// The one tool for the pair, and what to tell it.
@@ -85,6 +86,9 @@ enum ExternalBridge {
        let duckdb = ExternalTools.locate("duckdb") {
       func quoted(_ url: URL) -> String { "'" + url.path.replacingOccurrences(of: "'", with: "''") + "'" }
       return Plan(tool: duckdb, toolName: "DuckDB", arguments: ["-batch", "-no-init", ":memory:", "-c", "COPY (SELECT * FROM \(reader)(\(quoted(input)))) TO \(quoted(output)) (\(writer))"])
+    }
+    if BlenderBridge.takes(source, target), let blender = ExternalTool.blender.location {
+      return Plan(tool: blender, toolName: "Blender", arguments: BlenderBridge.arguments(input, output))
     }
     // Only where one end of it is a book nobody else handles.
     if books.contains(source) || books.contains(target), source != target, bookSources.contains(source), bookTargets.contains(target),
@@ -176,11 +180,13 @@ enum ExternalBridge {
   /// text document does not become a spreadsheet, nor a deck a text.
   // ponytail: a table of LibreOffice's export filters; extend it when a filter is wanted that is not here.
   static let libreOfficeFamilies: [(reads: Set<String>, writes: Set<String>)] = [
-    (["doc", "docx", "odt", "rtf", "wpd", "pages", "txt", "html", "fodt"],
+    (["doc", "docx", "odt", "rtf", "wpd", "pages", "txt", "html", "fodt", "dot", "docm", "dotx", "dotm", "ott", "sxw", "wps", "abw", "lwp", "hwp", "mw", "psw"],
      ["pdf", "docx", "doc", "odt", "rtf", "txt", "html", "epub", "png", "jpg"]),
-    (["xls", "xlsx", "ods", "numbers", "csv", "fods"],
+    (["xls", "xlsx", "ods", "numbers", "csv", "fods", "xlsb", "xlsm", "xltx", "xltm", "xlt", "xlw", "ots", "sxc", "dbf", "slk", "dif", "wk1", "wks", "123", "wb2", "gnumeric"],
      ["pdf", "xlsx", "xls", "ods", "csv", "html", "png"]),
-    (["ppt", "pptx", "odp", "key", "fodp"],
+    (["vsd", "vsdx", "vsdm", "pub", "odg", "otg", "fodg", "sxd", "cdr", "cgm", "wmf", "emf", "svm", "wpg", "zmf", "fh", "p65", "pm", "pmd", "qxp", "dxf", "met", "pct"],
+     ["pdf", "svg", "png", "jpg", "odg", "eps"]),
+    (["ppt", "pptx", "odp", "key", "fodp", "pps", "pot", "ppsx", "potx", "pptm", "ppsm", "potm", "otp", "sxi"],
      ["pdf", "pptx", "ppt", "odp", "png", "jpg", "html"]),
   ]
 
@@ -271,6 +277,7 @@ enum ExternalBridge {
 
   static func canHandle(_ type: UTType) -> Bool {
     guard let ext = type.preferredFilenameExtension else { return false }
+    if BlenderBridge.extensions.contains(ext) || BlenderBridge.takes(ext, "fbx") || ext == "fbx" { return ExternalTool.blender.isInstalled }
     if let one = special.first(where: { $0.extensions.contains(ext) }) { return ExternalTools.locate(one.binary) != nil }
     if pandocReads(ext) { return true }
     // Read by others, and by these for what only they write.

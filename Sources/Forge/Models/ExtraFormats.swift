@@ -11,7 +11,8 @@ enum ExtraFormats {
     (.archive, ArchiveProcessor.own),
     (.midi, ["mid", "midi", "kar"]),
     (.plainText, Subtitles.readableExtensions.union(["toml"])),
-    (.data, DataFormats.binary.union(ComicProcessor.readable)),
+    (.image, ["pcx", "psb", "dxf"]),
+    (.data, DataFormats.binary.union(ComicProcessor.readable).union(ThroughProcessor.extensions)),
     (.text, DataFormats.written),
   ]
 
@@ -20,7 +21,8 @@ enum ExtraFormats {
     let ext = ext.lowercased()
     // What a tool reads and nobody else does, where the tool is here.
     if let tool = ExternalBridge.special.first(where: { $0.extensions.contains(ext) }) {
-      return ExternalTools.locate(tool.binary) == nil ? nil : UTType(filenameExtension: ext, conformingTo: tool.isWords ? .text : .data)
+      let isHere = ExternalTools.locate(tool.binary) != nil || ToolOffers.all.contains { $0.binary == tool.binary && $0.isInstalled }
+      return !isHere ? nil : UTType(filenameExtension: ext, conformingTo: tool.isWords ? .text : .data)
     }
     guard let kind = kinds.first(where: { $0.extensions.contains(ext) }) else { return nil }
     return UTType(filenameExtension: ext, conformingTo: kind.is)

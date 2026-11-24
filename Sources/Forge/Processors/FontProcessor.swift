@@ -25,6 +25,10 @@ final class FontProcessor: FileProcessor, @unchecked Sendable {
   func process(
     _ input: URL, to output: URL, with operations: [Operation], progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
+    // A processor that reads a file is asked for any format, and hands on what is not its own.
+    guard Self.writable.contains(output.pathExtension.lowercased()) else {
+      throw ProcessingError.unsupportedConversion(from: UTType(filenameExtension: input.pathExtension) ?? .data, to: UTType(filenameExtension: output.pathExtension) ?? .data)
+    }
     let start = Date(), target = output.pathExtension.lowercased()
     let faces = try Self.faces(of: input)
     var written: [URL] = []
