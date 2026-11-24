@@ -174,12 +174,17 @@ actor ProcessingCoordinator {
 
     // Every `if` decided for this file, every split fanned out: what is left
     // is one flat chain per output, and the processors only ever see those.
+    var preset = preset
     let resolution = preset.actions.resolved(for: file)
     // What is written into the file's own name beats the preset, because
     // somebody typed it onto that file for this conversion.
     var chains: [(branch: String?, actions: [Operation])] = []
     for chain in resolution.chains {
-      let actions = NameTokens.applying(to: chain.actions, from: file.fileName).settlingFormat()
+      var actions = NameTokens.applying(to: chain.actions, from: file.fileName).settlingFormat()
+      if actions.tools.contains(.lighter) {
+        preset.onlyIfLighter = true
+        actions = try Lighter.settled(actions, for: file)
+      }
       try Self.refuseToolsThatDoNotSuit(file, in: actions)
       guard let parts = try await Division.chains(for: actions, of: file) else {
         chains.append((chain.branch, actions))

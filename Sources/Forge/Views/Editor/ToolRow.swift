@@ -45,7 +45,7 @@ struct ToolRow: View {
         moment("Seconds apart", seconds, none: "5") { if let value = $0, value > 0 { tool = .frames(every: value) } }
         Text("seconds").foregroundStyle(.secondary)
       }
-    case .mute, .normalize, .reverse, .removeBackground:
+    case .mute, .normalize, .reverse, .removeBackground, .lighter:
       Text(tool.kind.summary).font(.callout).foregroundStyle(.secondary)
     }
   }

@@ -11,6 +11,8 @@ enum Tool: Hashable, Sendable {
   /// Every file as loud as the next.
   case normalize
   case reverse
+  /// As light as it goes without anybody noticing, and left alone if it is.
+  case lighter
   case speed(Double)
   case loop(Int)
   /// A part of it. Fast keeps the film as it was encoded; otherwise the part
@@ -107,7 +109,7 @@ extension Tool {
   /// Each takes the words it knows. In no particular order: no two take the
   /// same one.
   private static let readers: [@Sendable (String) -> Tool?] = [
-    { ["mute": .mute, "normalize": .normalize, "reverse": .reverse, "nobg": .removeBackground, "splitchapters": .divide(.chapters), "splitpages": .divide(.pages(1))][$0] },
+    { ["mute": .mute, "normalize": .normalize, "reverse": .reverse, "lighter": .lighter, "nobg": .removeBackground, "splitchapters": .divide(.chapters), "splitpages": .divide(.pages(1))][$0] },
     { (Turn(rawValue: $0) ?? ["rotateright": .right, "rotateleft": .left][$0]).map(Tool.turn) },
     { $0.wholeMatch(of: #/speed(.+)x/#).flatMap { number($0.1) }.flatMap { speeds.contains($0) ? .speed($0) : nil } },
     { $0.wholeMatch(of: #/loop(\d{1,3})/#).flatMap { Int($0.1) }.flatMap { loops.contains($0) ? .loop($0) : nil } },
@@ -150,6 +152,7 @@ extension Tool {
     case .mute: return "mute"
     case .normalize: return "normalize"
     case .reverse: return "reverse"
+    case .lighter: return "lighter"
     case .removeBackground: return "nobg"
     case .speed(let times): return "speed\(Self.text(times))x"
     case .loop(let times): return "loop\(times)"
@@ -205,6 +208,7 @@ extension Tool {
     case trim, divide, speed, loop, reverse, mute, normalize, frames
     case crop, turn, removeBackground
     case pages, dropPages
+    case lighter
 
     var title: String {
       switch self {
@@ -221,6 +225,7 @@ extension Tool {
       case .removeBackground: return "Remove background"
       case .pages: return "Keep pages"
       case .dropPages: return "Remove pages"
+      case .lighter: return "Make lighter"
       }
     }
 
@@ -238,7 +243,8 @@ extension Tool {
       case .turn: return "rotate.right"
       case .removeBackground: return "person.crop.rectangle"
       case .pages: return "doc.text.magnifyingglass"
-      case .dropPages: return "doc.badge.minus"
+      case .dropPages: return "minus.rectangle.portrait"
+      case .lighter: return "feather"
       }
     }
 
@@ -257,6 +263,7 @@ extension Tool {
       case .removeBackground: return "Keep what the picture is of"
       case .pages: return "These pages, in this order"
       case .dropPages: return "All the pages but these"
+      case .lighter: return "Less weight, looking the same"
       }
     }
 
@@ -276,6 +283,7 @@ extension Tool {
       case .removeBackground: return .removeBackground
       case .pages: return .pages(PageList("1-2")!)
       case .dropPages: return .dropPages(PageList("1")!)
+      case .lighter: return .lighter
       }
     }
 
@@ -288,6 +296,7 @@ extension Tool {
       case .crop, .turn: return [.image, .video, .document]
       case .removeBackground: return [.image]
       case .pages, .dropPages: return [.document]
+      case .lighter: return [.image, .video, .audio, .document]
       }
     }
   }
@@ -307,6 +316,7 @@ extension Tool {
     case .pages: return .pages
     case .dropPages: return .dropPages
     case .frames: return .frames
+    case .lighter: return .lighter
     }
   }
 
@@ -354,7 +364,7 @@ extension Tool {
     case .pages(let list): return "Pages \(list.text)"
     case .dropPages(let list): return "Without pages \(list.text)"
     case .frames(let seconds): return "A frame every \(Self.text(seconds)) s"
-    case .mute, .normalize, .reverse, .removeBackground: return kind.title
+    case .mute, .normalize, .reverse, .removeBackground, .lighter: return kind.title
     }
   }
 

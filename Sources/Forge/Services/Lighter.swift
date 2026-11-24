@@ -67,6 +67,16 @@ enum Lighter {
     return drawn && alpha.allSatisfy { $0 == .max }
   }
 
+  /// A chain asked to make it lighter, with what that comes to for this file. A
+  /// PDF is made lighter by whoever writes PDFs.
+  static func settled(_ actions: [Operation], for file: ProcessableFile) throws -> [Operation] {
+    guard !file.fileType.conforms(to: .pdf) else { return actions }
+    let rest = actions.filter { $0 != .tool(.lighter) }
+    guard ConvertKind(fileType: file.fileType).map(Tool.Kind.lighter.kinds.contains) ?? false else { return actions }
+    guard let lighter = preset(for: file) else { throw ProcessingError.leftAlone(reason: notLighter) }
+    return rest + lighter.actions.filter { step in !rest.contains { $0.id == step.id } }
+  }
+
   /// What to try, by kind. Nil for what nothing here makes lighter.
   static func preset(for file: ProcessableFile) -> RulePreset? {
     let actions: [Operation]

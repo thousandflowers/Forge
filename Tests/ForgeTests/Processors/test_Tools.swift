@@ -622,9 +622,100 @@ final class PDFToolTests: ToolTestCase {
     XCTAssertEqual(try texts(made), ["Page 2", "Page 3"])
   }
 
+  func test_aSignedDocumentIsLeftAlone() async throws {
+    let source = try document("contract.pdf", pages: 2)
+    let handle = try FileHandle(forWritingTo: source)
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data("\n% /ByteRange [0 10 20 30]\n".utf8))
+    try handle.close()
+    for word in ["pages1", "rotate90", "lighter"] {
+      let said = await reason { _ = try await self.run([word], on: source) }
+      XCTAssertTrue(said.contains("contract.pdf is signed"), said)
+    }
+    let pictures = try await run(["pages2"], on: source, to: .png)
+    XCTAssertEqual(pictures.count, 1, "a picture of a page undoes nothing")
+  }
+
   func test_aPageIsNotMirrored() async throws {
     let source = try document("a.pdf", pages: 1)
     let said = await reason { _ = try await self.run(["mirror"], on: source) }
     XCTAssertEqual(said, "“Mirror” is not something done to PDFs.")
+  }
+}
+
+final class LighterToolTests: ToolTestCase {
+  /// A page with a scan on it, words over the scan, and a link to the second.
+  private func scan(_ name: String) throws -> URL {
+    let url = path(name)
+    let noise = path("noise.png")
+    try Fixture.noise(at: noise, width: 1200, height: 1600)
+    let source = try XCTUnwrap(CGImageSourceCreateWithURL(noise as CFURL, nil))
+    let picture = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+    var box = CGRect(x: 0, y: 0, width: 300, height: 400)
+    let context = try XCTUnwrap(CGContext(url as CFURL, mediaBox: &box, nil))
+    for page in 1...2 {
+      context.beginPDFPage(nil)
+      context.draw(picture, in: box)
+      let line = CTLineCreateWithAttributedString(NSAttributedString(string: "Page \(page)", attributes: [.font: NSFont.systemFont(ofSize: 30)]))
+      context.textPosition = CGPoint(x: 50, y: 300)
+      CTLineDraw(line, context)
+      context.endPDFPage()
+    }
+    CGPDFContextSetOutline(context, ["Children": [["Title": "Second", "Destination": 2] as [String: Any]]] as CFDictionary)
+    context.closePDF()
+    let pdf = try XCTUnwrap(PDFDocument(url: url))
+    let link = PDFAnnotation(bounds: CGRect(x: 10, y: 10, width: 50, height: 20), forType: .link, withProperties: nil)
+    link.action = PDFActionGoTo(destination: PDFDestination(page: pdf.page(at: 1)!, at: .zero))
+    pdf.page(at: 0)?.addAnnotation(link)
+    pdf.page(at: 1)?.rotation = 90
+    pdf.documentAttributes = [PDFDocumentAttribute.titleAttribute: "Scan"]
+    XCTAssertTrue(pdf.write(to: url))
+    return url
+  }
+
+  func test_aScanIsLighterAndStillADocument() async throws {
+    let source = try scan("scan_lighter.pdf")
+    XCTAssertEqual(PDFDocument(url: source)?.outlineRoot?.child(at: 0)?.label, "Second", "what it is made of")
+    let made = try await run([], on: source)[0]
+    XCTAssertEqual(made.lastPathComponent, "scan.pdf")
+    XCTAssertLessThan(size(of: made), size(of: source) / 2)
+    let pdf = try XCTUnwrap(PDFDocument(url: made))
+    XCTAssertTrue(pdf.string?.contains("Page 2") ?? false, "its words are words")
+    XCTAssertEqual(pdf.page(at: 1)?.rotation, 90)
+    XCTAssertEqual(pdf.outlineRoot?.child(at: 0)?.label, "Second")
+    XCTAssertEqual(pdf.outlineRoot?.child(at: 0)?.destination?.page.map { pdf.index(for: $0) }, 1)
+    XCTAssertEqual(pdf.page(at: 0)?.annotations.count, 1)
+    XCTAssertEqual(pdf.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String, "Scan")
+  }
+
+  func test_aPDFUnderASize() async throws {
+    let source = try scan("scan.pdf")
+    let ceiling = Int(size(of: source)) / 4
+    let made = try await run([], on: source, more: [.limitSize(bytes: ceiling)])[0]
+    XCTAssertLessThanOrEqual(size(of: made), Int64(ceiling))
+    let said = await reason { _ = try await self.run([], on: source, more: [.limitSize(bytes: 900)]) }
+    XCTAssertTrue(said.contains("smallest"), said)
+  }
+
+  func test_whatIsLightAlreadyIsLeftAlone() async throws {
+    let source = path("a.pdf")
+    try Fixture.pdf(at: source, pages: 1)
+    let said = await reason { _ = try await self.run(["lighter"], on: source) }
+    XCTAssertEqual(said, Lighter.notLighter)
+  }
+
+  func test_aPictureMadeLighter() async throws {
+    let source = path("a.png")
+    try Fixture.noise(at: source, width: 800, height: 600)
+    let made = try await run(["lighter"], on: source)[0]
+    XCTAssertEqual(made.pathExtension, "jpeg")
+    XCTAssertLessThan(size(of: made), size(of: source))
+  }
+
+  func test_pagesAndLighter() async throws {
+    let source = try scan("scan.pdf")
+    let made = try await run(["pages2", "lighter"], on: source)[0]
+    XCTAssertEqual(PDFDocument(url: made)?.pageCount, 1)
+    XCTAssertLessThan(size(of: made), size(of: source) / 2)
   }
 }

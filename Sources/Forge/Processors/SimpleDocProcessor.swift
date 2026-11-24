@@ -76,9 +76,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("forge-pages-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: scratch) }
     if inputType.conforms(to: .pdf), PDFTools.change(operations) {
-      if outputType.conforms(to: .pdf), let pdf = PDFDocument(url: input) {
-        try PDFTools.refuseIfSigned(pdf, named: input.lastPathComponent)
-      }
+      if outputType.conforms(to: .pdf) { try PDFTools.refuseIfSigned(input) }
       try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
       let changed = scratch.appendingPathComponent(input.lastPathComponent)
       try PDFTools.apply(operations, to: input, writing: changed)
@@ -153,6 +151,11 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       default: return false
       }
     }
+    let ceiling = ImageProcessor.sizeCeiling(from: operations)
+    let weight = (try FileManager.default.attributesOfItem(atPath: input.path)[.size] as? Int64) ?? 0
+    if !redraws, operations.tools.contains(.lighter) || ceiling.map({ weight > Int64($0) }) ?? false {
+      return try lighten(input, at: output, under: ceiling, since: start, progress: progress)
+    }
     guard redraws else {
       try Data(contentsOf: input, options: .mappedIfSafe).write(to: output, options: .atomic)
       progress(1.0)
@@ -175,6 +178,26 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     }
     try Merger.pdf(from: pages, to: output)
     return try Self.result(output, since: start)
+  }
+
+  /// The first level that is under the ceiling, or the first there is.
+  private func lighten(
+    _ input: URL, at output: URL, under ceiling: Int?, since start: Date, progress: @escaping @Sendable (Double) -> Void
+  ) throws -> ProcessingResult {
+    var smallest = Int64.max
+    for (index, level) in PDFLightener.levels.enumerated() {
+      try? FileManager.default.removeItem(at: output)
+      try PDFLightener.write(input, to: output, at: level)
+      progress(Double(index + 1) / Double(PDFLightener.levels.count))
+      let result = try Self.result(output, since: start)
+      smallest = min(smallest, result.outputSize)
+      guard let ceiling, result.outputSize > Int64(ceiling) else { progress(1); return result }
+    }
+    try? FileManager.default.removeItem(at: output)
+    throw ProcessingError.tooBig(
+      reason: "\(input.lastPathComponent) cannot be made to fit in \(Int64(ceiling ?? 0).formatted(.byteCount(style: .file))): "
+        + "the smallest it came out was \(smallest.formatted(.byteCount(style: .file)))."
+    )
   }
 
   /// The PDF's words, written out and given to whichever tool writes the

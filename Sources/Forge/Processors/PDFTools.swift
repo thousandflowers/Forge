@@ -10,12 +10,12 @@ enum PDFTools {
   }
 
   /// Changing a signed document is unsigning it.
-  static func refuseIfSigned(_ pdf: PDFDocument, named name: String) throws {
-    let isSigned = (0..<pdf.pageCount).contains { index in
-      pdf.page(at: index)?.annotations.contains { $0.widgetFieldType == .signature && $0.value(forAnnotationKey: .widgetValue) != nil } ?? false
-    }
-    guard isSigned else { return }
-    throw ProcessingError.conversionFailed(reason: "\(name) is signed, and a change to it would undo the signature.")
+  ///
+  /// A signature says which bytes of the file it is of, and so is the one thing
+  /// in a PDF that is always written out plainly.
+  static func refuseIfSigned(_ url: URL) throws {
+    guard let bytes = try? Data(contentsOf: url, options: .mappedIfSafe), bytes.range(of: Data("/ByteRange".utf8)) != nil else { return }
+    throw ProcessingError.conversionFailed(reason: "\(url.lastPathComponent) is signed, and a change to it would undo the signature.")
   }
 
   static func apply(_ operations: [Operation], to url: URL, writing output: URL) throws {

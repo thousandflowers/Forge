@@ -10,6 +10,7 @@ final class ToolWordTests: XCTestCase {
       ("mute", .mute),
       ("normalize", .normalize),
       ("reverse", .reverse),
+      ("lighter", .lighter),
       ("nobg", .removeBackground),
       ("speed2x", .speed(2)),
       ("speed0.5x", .speed(0.5)),
