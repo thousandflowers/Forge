@@ -64,6 +64,20 @@ final class AskCenter: ObservableObject {
 /// One question, the files it is about, and how far it has got.
 @MainActor
 final class AskSession: ObservableObject {
+  /// What a choice comes out as. Without bytes, it cannot be made.
+  struct Weight: Equatable {
+    let bytes: Int64?
+    let shape: Dimensions?
+
+    /// The shape is said where it is another one.
+    func words(from source: ProcessableFile?) -> (short: String, full: String) {
+      guard let bytes else { return ("cannot", "cannot") }
+      let size = bytes.formatted(.byteCount(style: .file))
+      guard let shape, shape != source?.dimensions else { return (size, size) }
+      return (size, "\(size) · \(shape.width) × \(shape.height)")
+    }
+  }
+
   enum State {
     case asking
     case working(Double)
@@ -77,9 +91,9 @@ final class AskSession: ObservableObject {
   @Published private(set) var answers: [AskRequest.Question: AskRequest.Answer] = [:]
   @Published private(set) var state: State = .asking
   /// What each choice would really come out as, measured on the first file.
-  @Published private(set) var measured: [AskRequest.Answer: String] = [:]
+  @Published private(set) var measured: [AskRequest.Answer: Weight] = [:]
   /// Whether what is wanted now and then is shown as well.
-  @Published var showsMore = false { didSet { if showsMore, !oldValue { measure(again: false) } } }
+  @Published var showsMore = false { didSet { if showsMore, !oldValue { unfold() } } }
   var onClose: () -> Void = {}
 
   private let convert: AskCenter.Convert
@@ -233,12 +247,31 @@ final class AskSession: ObservableObject {
     try? FileManager.default.removeItem(at: scratch)
   }
 
+  /// By enough to be told: a picture written again is always a little off.
+  func isHeavier(_ bytes: Int64?) -> Bool {
+    guard let bytes, let file = files.first else { return false }
+    return Double(bytes) > Double(file.fileSize) * 1.05
+  }
+
+  /// Measured once it is open: weighing a picture takes all the Mac has, and the
+  /// opening would be seen to stumble.
+  private func unfold() {
+    Task { [weak self] in
+      try? await Task.sleep(nanoseconds: UInt64((Unfold.length(of: 3) + 0.1) * 1_000_000_000))
+      guard let self, case .asking = self.state else { return }
+      self.measure(again: false)
+    }
+  }
+
+  /// Whether choices are tried before they are taken.
+  var weighs: Bool { preview != nil && files.first.map { ConvertKind(fileType: $0.fileType) == .image } ?? false }
+
   /// Each choice tried on the first file, so the menu says what comes out
   /// rather than what was asked for. Pictures only: trying a film takes as
   /// long as converting it.
   /// - Parameter again: what is known already is no longer so.
   func measure(again: Bool = true) {
-    guard let preview, let file = files.first, ConvertKind(fileType: file.fileType) == .image else { return }
+    guard let preview, let file = files.first, weighs else { return }
     measuring.forEach { $0.cancel() }
     if again { measured = [:] }
     var seen: Set<AskRequest.Answer> = []
@@ -250,9 +283,9 @@ final class AskSession: ObservableObject {
     measuring = (0..<Self.atOnce).map { _ in
       Task { [weak self] in
         while !Task.isCancelled, let self, let next = self.nextToMeasure() {
-          let says = await self.weigh(next.answer, for: next.question, of: file, given: given, by: preview)
+          let weight = await self.weigh(next.answer, for: next.question, of: file, given: given, by: preview)
           guard !Task.isCancelled else { return }
-          self.measured[next.answer] = says
+          self.measured[next.answer] = weight
         }
       }
     }
@@ -265,17 +298,13 @@ final class AskSession: ObservableObject {
   private func weigh(
     _ answer: AskRequest.Answer, for question: AskRequest.Question, of file: ProcessableFile,
     given: [AskRequest.Question: AskRequest.Answer], by preview: AskCenter.Preview
-  ) async -> String {
+  ) async -> Weight {
     let folder = scratch.appendingPathComponent(UUID().uuidString, isDirectory: true)
     try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: folder) }
     let tried = given.merging([question: answer]) { _, new in new }
     let result = try? await preview(file, request.answered(with: tried), folder)
-    return result.map(Self.describe) ?? "cannot"
+    return Weight(bytes: result?.outputSize, shape: result?.outputDimensions.map { Dimensions(width: $0.width, height: $0.height) })
   }
 
-  private static func describe(_ result: ProcessingResult) -> String {
-    let size = result.outputSize.formatted(.byteCount(style: .file))
-    return result.outputDimensions.map { "\(size) · \($0.width) × \($0.height)" } ?? size
-  }
 }

@@ -14,3 +14,18 @@ extension View {
     }
   }
 }
+
+/// What is behind the window, blurred, as a menu has it. A material of
+/// SwiftUI's goes flat and grey in a panel that has not got the keyboard, and
+/// one over a drag never has.
+struct BehindGlass: NSViewRepresentable {
+  func makeNSView(context: Context) -> NSVisualEffectView {
+    let view = NSVisualEffectView()
+    view.material = .popover
+    view.blendingMode = .behindWindow
+    view.state = .active
+    return view
+  }
+
+  func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}

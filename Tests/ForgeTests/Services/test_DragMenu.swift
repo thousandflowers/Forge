@@ -200,10 +200,27 @@ final class DragMenuTests: BaseTestCase {
     XCTAssertEqual(tiles.over, jpeg)
     tiles.move(to: CGPoint(x: 62, y: 15))
     XCTAssertEqual(tiles.over, jpeg, "in the gap beside it")
-    tiles.move(to: CGPoint(x: 5, y: 5))
+    tiles.move(to: CGPoint(x: -4, y: 2))
     XCTAssertNil(tiles.over)
     tiles.move(to: nil)
     XCTAssertNil(tiles.over)
+  }
+
+  /// It takes the file before the file is quite there, and the nearer takes it.
+  func test_aChoicePulls_andTheNearestWins() {
+    let tiles = DropTiles(), jpeg = DropTiles.Tile(question: .format, answer: .format(.jpeg)), tiff = DropTiles.Tile(question: .format, answer: .format(.tiff))
+    tiles.frames = [jpeg: CGRect(x: 10, y: 10, width: 50, height: 20), tiff: CGRect(x: 72, y: 10, width: 50, height: 20)]
+    tiles.move(to: CGPoint(x: 35, y: 38))
+    XCTAssertEqual(tiles.over, jpeg, "eight points below it")
+    tiles.move(to: CGPoint(x: 70, y: 20))
+    XCTAssertEqual(tiles.over, tiff)
+    tiles.move(to: CGPoint(x: 65, y: 20))
+    XCTAssertEqual(tiles.over, tiff, "a wobble on the edge changes nothing")
+    tiles.move(to: CGPoint(x: 61, y: 20))
+    XCTAssertEqual(tiles.over, jpeg)
+    tiles.more = CGRect(x: 10, y: 34, width: 112, height: 20)
+    tiles.move(to: CGPoint(x: 35, y: 36))
+    XCTAssertNil(tiles.over, "on what opens the rest, nothing else is meant")
   }
 }
 
@@ -241,6 +258,59 @@ final class DragMenuLayoutTests: BaseTestCase {
         XCTAssertTrue(screen.contains(frame), "\(mouse)")
       }
     }
+  }
+
+  /// Brought up by a drag, its choices are level with the file being held.
+  func test_itsChoicesComeUpLevelWithTheFile() {
+    let screen = NSRect(x: 0, y: 0, width: 1470, height: 890), size = NSSize(width: 400, height: 300)
+    for x in stride(from: 0.0, through: 1470, by: 35) {
+      for y in stride(from: 0.0, through: 890, by: 35) {
+        let mouse = NSPoint(x: x, y: y), lead = AskPanel.lead(of: size.height)
+        let frame = NSRect(origin: AskPanel.origin(for: size, at: mouse, in: screen, lead: lead), size: size)
+        XCTAssertFalse(frame.contains(mouse), "\(mouse)")
+        XCTAssertTrue(screen.contains(frame), "\(mouse)")
+      }
+    }
+    let middle = NSPoint(x: 600, y: 450)
+    let top = AskPanel.origin(for: size, at: middle, in: screen, lead: AskPanel.lead(of: size.height)).y + size.height
+    let choices = (top - AskView.headerHeight + (top - size.height)) / 2
+    XCTAssertEqual(choices, middle.y, accuracy: 1)
+  }
+
+  /// Every choice of a section is as wide as the next, and wide enough to be read.
+  func test_asManyColumnsAsTheWordsAllow() {
+    XCTAssertEqual(AskView.columns(for: ["JPEG", "HEIC", "WEBP"]), 4)
+    XCTAssertEqual(AskView.columns(for: ["Make lighter", "Instagram Square", "PNG → JPEG"]), 2)
+    XCTAssertEqual(AskView.columns(for: []), 4)
+  }
+
+  /// Seven formats leave a place in a row of four, and it is given to the window
+  /// the rest is done in. Eight leave none.
+  func test_thePlaceLeftOverIsForCuttingByHand() {
+    XCTAssertEqual(AskView.leftOver(7, in: 4), 1)
+    XCTAssertEqual(AskView.leftOver(6, in: 4), 2)
+    XCTAssertEqual(AskView.leftOver(8, in: 4), 0)
+    XCTAssertEqual(AskView.leftOver(0, in: 4), 0)
+  }
+
+  /// Two hundred points is a hand's width; it was nearly three hundred to the nearest.
+  func test_theNearestFormatIsCloseToTheFile() async throws {
+    let file = try ProcessableFile(url: Fixture.image(at: path("big.png"), width: 2400, height: 1600))
+    let session = AskSession(request: AskRequest(word: .everything, over: nil), file: file, convert: { _, _ in [] })
+    session.suggest = { _ in [] }
+    let tiles = DropTiles()
+    tiles.isLive = true
+    let panel = AskPanel(session: session, tiles: tiles) {}
+    panel.appear(takingKeys: false)
+    defer { panel.close() }
+    try await Task.sleep(nanoseconds: 1_000_000_000)
+    let pointer = CGPoint(x: -14, y: AskPanel.lead(of: panel.frame.height))
+    let formats = tiles.frames.filter { $0.key.question == .format }.map { frame in
+      hypot(max(frame.value.minX - pointer.x, 0), max(frame.value.minY - pointer.y, 0, pointer.y - frame.value.maxY))
+    }
+    XCTAssertLessThan(try XCTUnwrap(formats.min()), 60)
+    XCTAssertEqual(Set(tiles.frames.filter { $0.key.question == .format }.map { $0.value.size.width.rounded() }).count, 1, "all as wide")
+    XCTAssertEqual(Set(tiles.frames.filter { $0.key.question == .format }.map { $0.value.size.height.rounded() }).count, 1, "all as tall")
   }
 
   func test_aFileHeldOverAChoice_thenDropped() async throws {

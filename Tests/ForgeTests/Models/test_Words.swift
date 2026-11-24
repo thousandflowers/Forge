@@ -295,7 +295,19 @@ final class AskCenterTests: BaseTestCase {
     session.choose(.number(800), for: .width)
     try await Task.sleep(nanoseconds: 700_000_000)
     let jpeg = try XCTUnwrap(session.choices(for: .format).first).value
-    XCTAssertEqual(session.measured[jpeg]?.contains("999"), false)
+    XCTAssertEqual(session.measured[jpeg]?.bytes, 1)
+  }
+
+  /// A picture written again in the same way is a little off, and that is not news.
+  func test_heavierIsSaidOnlyWhereItIsTold() throws {
+    let center = AskCenter(shows: false)
+    center.preview = { _, _, _ in throw CancellationError() }
+    let session = try measuring(with: center)
+    let size = session.files[0].fileSize
+    XCTAssertFalse(session.isHeavier(nil))
+    XCTAssertFalse(session.isHeavier(size + size / 100))
+    XCTAssertTrue(session.isHeavier(size * 2))
+    session.stop()
   }
 
   private func measuring(with center: AskCenter, _ questions: [AskRequest.Question] = [.format]) throws -> AskSession {

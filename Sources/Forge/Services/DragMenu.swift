@@ -212,13 +212,16 @@ final class DropTiles: ObservableObject {
   @Published private(set) var over: Tile?
   /// From the top left, as SwiftUI counts.
   var frames: [Tile: CGRect] = [:]
-  /// The line that opens the rest.
+  /// Whether a file is being held over what opens the rest.
+  @Published private(set) var isResting = false
+  /// What opens the rest.
   var more: CGRect?
   var openMore: () -> Void = {}
   private var waiting: Task<Void, Never>?
   /// Passing over it on the way somewhere is not resting on it.
   private let dwell: UInt64
   private static let dwell: UInt64 = 300_000_000
+  static let dwellSeconds = Double(dwell) / 1_000_000_000
 
   init(dwell: UInt64? = nil) { self.dwell = dwell ?? Self.dwell }
 
@@ -226,21 +229,34 @@ final class DropTiles: ObservableObject {
   @Published var isLive = false
   var drop: (Tile?) -> Bool = { _ in false }
 
-  /// The choices meet halfway: between two of them is still one of them.
-  private static let reach: CGFloat = 4
+  /// A choice takes a file that is nearly on it.
+  private static let reach: CGFloat = 12
+  /// And keeps it while the hand is unsteady.
+  private static let hold: CGFloat = 3
 
   func tile(at point: CGPoint) -> Tile? {
-    frames.first { $0.value.insetBy(dx: -Self.reach, dy: -Self.reach).contains(point) }?.key
+    if let more, more.contains(point) { return nil }
+    let near = frames.map { tile, frame in
+      (tile, hypot(max(frame.minX - point.x, 0, point.x - frame.maxX), max(frame.minY - point.y, 0, point.y - frame.maxY)) - (tile == over ? Self.hold : 0))
+    }
+    return near.filter { $0.1 <= Self.reach }.min { $0.1 < $1.1 }?.0
   }
 
   func move(to point: CGPoint?) {
-    over = point.flatMap(tile)
+    let now = point.flatMap(tile)
+    if now != over {
+      over = now
+      // Felt on a trackpad, as a guide is when something is dragged onto it.
+      if now != nil, isLive { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
+    }
     guard let point, isMore(point) else {
+      if isResting { isResting = false }
       waiting?.cancel()
       waiting = nil
       return
     }
     guard waiting == nil else { return }
+    isResting = true
     waiting = Task { [weak self, dwell] in
       try? await Task.sleep(nanoseconds: dwell)
       guard !Task.isCancelled else { return }
@@ -249,7 +265,7 @@ final class DropTiles: ObservableObject {
   }
 
   func isMore(_ point: CGPoint) -> Bool {
-    more?.insetBy(dx: 0, dy: -Self.reach).contains(point) ?? false
+    more?.contains(point) ?? false
   }
 
   /// Never a move or a delete: whoever is being dragged from keeps its file.

@@ -25,6 +25,7 @@ final class AskPanel {
     panel.hasShadow = true
     panel.isFloatingPanel = true
     panel.level = .floating
+    panel.animationBehavior = .none
     panel.hidesOnDeactivate = false
     panel.isReleasedWhenClosed = false
     panel.isMovableByWindowBackground = true
@@ -51,8 +52,10 @@ final class AskPanel {
     let screen = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.visibleFrame ?? .zero
     panel.setContentSize(size)
     let room = NSSize(width: panel.frame.width, height: max(panel.frame.height, tallest()))
-    let origin = Self.origin(for: room, at: mouse, in: screen)
+    let origin = Self.origin(for: room, at: mouse, in: screen, lead: takingKeys ? nil : Self.lead(of: panel.frame.height))
     panel.setFrameOrigin(NSPoint(x: origin.x, y: origin.y + room.height - panel.frame.height))
+    panel.alphaValue = 0
+    fade(to: 1, in: Self.fadeIn)
     guard takingKeys else { return panel.orderFrontRegardless() }
     takeKeys()
   }
@@ -67,10 +70,11 @@ final class AskPanel {
   /// Just under the pointer and to its right, or on its other side where there
   /// is no room, and wholly on the screen. Never over the pointer where that
   /// can be helped: a file let go of there would be dropped on it.
-  static func origin(for size: NSSize, at mouse: NSPoint, in screen: NSRect) -> NSPoint {
+  /// - Parameter lead: how far its top is above the pointer, where it is beside it.
+  static func origin(for size: NSSize, at mouse: NSPoint, in screen: NSRect, lead: CGFloat? = nil) -> NSPoint {
     let gap: CGFloat = 14
     let right = mouse.x + gap, left = mouse.x - gap - size.width
-    let below = mouse.y - gap - size.height
+    let below = mouse.y + (lead ?? -gap) - size.height
     let x = right + size.width + gap <= screen.maxX || left < screen.minX + gap ? right : left
     return NSPoint(
       x: min(max(x, screen.minX + gap), screen.maxX - size.width - gap),
@@ -78,11 +82,30 @@ final class AskPanel {
     )
   }
 
+  /// The middle of the choices is where the file is: none of them is far.
+  static func lead(of height: CGFloat) -> CGFloat { (height + AskView.headerHeight) / 2 }
+
+  private func fade(to alpha: CGFloat, in seconds: TimeInterval, then done: @escaping @Sendable () -> Void = {}) {
+    NSAnimationContext.runAnimationGroup({ context in
+      context.duration = seconds
+      context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+      panel.animator().alphaValue = alpha
+    }, completionHandler: done)
+  }
+
+  private static let fadeIn: TimeInterval = 0.1
+  private static let fadeOut: TimeInterval = 0.08
+
   var frame: NSRect { panel.frame }
   func owns(_ window: NSWindow) -> Bool { window === panel }
   var target: any NSDraggingDestination { panel }
 
-  func close() { panel.orderOut(nil) }
+  func close() {
+    panel.unregisterDraggedTypes()
+    panel.ignoresMouseEvents = true
+    let panel = panel
+    fade(to: 0, in: Self.fadeOut) { Task { @MainActor in panel.orderOut(nil) } }
+  }
 }
 
 /// A panel that can be typed into, and that Esc closes.
@@ -139,22 +162,41 @@ private final class KeyPanel: NSPanel, NSDraggingDestination {
 /// What these files should be, in as few presses as it takes.
 struct AskView: View {
   static let width: CGFloat = 400
+  static let headerHeight: CGFloat = padding + portrait + section
+  /// The corners are concentric: what is inside turns with what is outside.
+  private static let radius: CGFloat = 22
+  private static let padding: CGFloat = 12
+  private static let gap: CGFloat = 6
+  private static let section: CGFloat = 12
+  private static let portrait: CGFloat = 46
+  fileprivate static let inset: CGFloat = 10
+  /// Two of a row of four are as wide as one of a row of two, so they line up.
+  private static let shapes = [4, 2]
+  /// A choice with nothing said under it.
+  fileprivate static let plain: CGFloat = 34
+  private static let weighed: CGFloat = 44
+  fileprivate static let labelFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
   /// How long a finished one stays up.
   private static let linger: UInt64 = 5_000_000_000
+  private static let bar: CGFloat = 38
   private static let arming: UInt64 = 800_000_000
+  private static let quick = Animation.easeOut(duration: 0.12)
 
   @ObservedObject var session: AskSession
   @ObservedObject var tiles: DropTiles
   /// To be measured, whatever is folded.
   var isOpen = false
   let close: () -> Void
+  @Environment(\.accessibilityReduceMotion) private var isStill
   @State private var typed: [AskRequest.Question: String] = [:]
+  @State private var hovered: DropTiles.Tile?
+  @State private var isOverMore = false
   /// Whether the numbers answer yet. The panel comes up over somebody who may
   /// be in the middle of typing one.
   @State private var armed = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
+    VStack(alignment: .leading, spacing: Self.section) {
       header
       switch session.state {
       case .asking: asking
@@ -168,38 +210,56 @@ struct AskView: View {
     }
     .onPreferenceChange(DropTileFrames.self) { tiles.frames = $0 }
     .onPreferenceChange(MoreFrame.self) { tiles.more = $0 }
-    .padding(16)
+    .padding(Self.padding)
     .frame(width: Self.width, alignment: .leading)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
+    .background(BehindGlass().overlay(Color(nsColor: .windowBackgroundColor).opacity(0.6)))
+    .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
+    .overlay(RoundedRectangle(cornerRadius: Self.radius, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
     .task {
       try? await Task.sleep(nanoseconds: Self.arming)
       armed = true
     }
   }
 
+  // MARK: - What it is, and what it would be
+
+  private var aimed: DropTiles.Tile? { tiles.over ?? (tiles.isLive ? nil : hovered) }
+
   private var header: some View {
-    HStack(spacing: 10) {
+    HStack(spacing: 11) {
       PreviewImage(url: session.files[0].url, maxPixels: 120)
-        .frame(width: 48, height: 36)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-      VStack(alignment: .leading, spacing: 1) {
+        .frame(width: Self.portrait, height: Self.portrait)
+        .clipShape(RoundedRectangle(cornerRadius: Self.inset, style: .continuous))
+      VStack(alignment: .leading, spacing: 2) {
         Text(session.files.count == 1 ? session.files[0].fileName : "\(session.files.count) files")
-          .font(.headline).lineLimit(1).truncationMode(.middle)
-        Text(detail).font(.callout).foregroundStyle(.secondary)
+          .font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+        detail.font(.title3.weight(.semibold).monospacedDigit()).lineLimit(1)
       }
       Spacer(minLength: 8)
-      Button(action: close) { Image(systemName: "xmark.circle.fill").font(.title3) }
-        .buttonStyle(.plain).foregroundStyle(.secondary)
-        .help("Leave it as it is")
-        .accessibilityLabel(Text("Leave it as it is"))
+      // Nothing to press while the button is down.
+      if !tiles.isLive {
+        Button(action: close) { Image(systemName: "xmark.circle.fill").font(.title3) }
+          .buttonStyle(.plain).foregroundStyle(.secondary)
+          .help("Leave it as it is")
+          .accessibilityLabel(Text("Leave it as it is"))
+      }
     }
+    .frame(height: Self.portrait)
   }
 
-  private var detail: String {
-    let size = session.files.reduce(Int64(0)) { $0 + $1.fileSize }.formatted(.byteCount(style: .file))
-    guard session.files.count == 1, let shape = session.files[0].dimensions else { return size }
-    return "\(size) · \(shape.width) × \(shape.height)"
+  /// What it weighs; over a choice, what it would weigh.
+  private var detail: Text {
+    let now = session.files.reduce(Int64(0)) { $0 + $1.fileSize }
+    let size = now.formatted(.byteCount(style: .file))
+    if session.files.count == 1, let aimed, let after = session.measured[aimed.answer]?.bytes {
+      let heavier = session.isHeavier(after)
+      let percent = ResultCard.percent(from: now, to: after).map { "  \($0)" } ?? ""
+      return Text("\(size) → ").foregroundColor(.secondary)
+        + Text(after.formatted(.byteCount(style: .file))).foregroundColor(heavier ? .heavier : .primary)
+        + Text(percent).foregroundColor(.lighter)
+    }
+    guard session.files.count == 1, let shape = session.files[0].dimensions else { return Text(size) }
+    return Text(size) + Text("  \(shape.width) × \(shape.height)").font(.callout).foregroundColor(.secondary)
   }
 
   // MARK: - Asking
@@ -210,27 +270,11 @@ struct AskView: View {
     if questions.isEmpty {
       Text(session.isMixed ? "These are different kinds of file. Take one kind at a time." : "There is nothing to choose for this kind of file.").font(.callout).foregroundStyle(.secondary)
     }
-    if tiles.isLive, !questions.isEmpty {
-      Text("Drop it on a choice, or anywhere here to choose with a click.").font(.callout).foregroundStyle(.secondary)
-    }
-    ForEach(isOpen ? questions : session.shownQuestions, id: \.self) { question in
-      if question == .privacy {
-        Toggle(question.title, isOn: Binding(
-          get: { session.answers[question] == .flag(true) },
-          set: { session.choose(.flag($0), for: question) }
-        ))
-        .toggleStyle(.checkbox)
-        .dropTile(.init(question: question, answer: .flag(true)))
-      } else if question != .cut || !questions.contains(.tool) {
-        VStack(alignment: .leading, spacing: 8) {
-          Text(question.title).font(.callout.weight(.semibold)).foregroundStyle(.secondary)
-          grid(question, numbered: question == numbered)
-        }
-      }
-    }
-    if !questions.isEmpty, !session.answersAtOnce {
+    let folds = session.folds
+    ForEach(folds ? questions.filter { !$0.isSecondary } : questions, id: \.self) { section($0) }
+    if folds, isOpen || session.showsMore { rest(of: questions) }
+    if !questions.isEmpty, !session.answersAtOnce, !tiles.isLive {
       HStack {
-        if session.folds, !session.showsMore { more }
         Spacer()
         Button { go() } label: { Text("Convert").frame(minWidth: 76) }
           .buttonStyle(.borderedProminent)
@@ -238,34 +282,124 @@ struct AskView: View {
           .disabled(session.answers.values.allSatisfy { $0 == .flag(false) })
       }
     }
+    if folds, !isOpen, !session.showsMore { more }
   }
 
+  @ViewBuilder
+  private func section(_ question: AskRequest.Question) -> some View {
+    if question == .privacy {
+      Toggle(question.title, isOn: Binding(
+        get: { session.answers[question] == .flag(true) },
+        set: { session.choose(.flag($0), for: question) }
+      ))
+      .toggleStyle(.checkbox)
+      .dropTile(.init(question: question, answer: .flag(true)))
+    } else {
+      VStack(alignment: .leading, spacing: Self.gap) {
+        Text(question.title).font(.subheadline.weight(.medium)).foregroundStyle(.secondary).padding(.leading, 2)
+        grid(question, numbered: question == numbered)
+      }
+    }
+  }
+
+  /// One section after another, each as it makes room for itself.
+  private func rest(of questions: [AskRequest.Question]) -> some View {
+    let sections = questions.filter { $0.isSecondary && ($0 != .cut || !questions.contains(.tool) && !handsOutCut) }
+    return VStack(alignment: .leading, spacing: 0) {
+      ForEach(Array(sections.enumerated()), id: \.element) { step, question in
+        Unfolding(step: step, isWhole: isOpen || isStill) {
+          section(question).padding(.top, step == 0 ? 0 : Self.section)
+        }
+      }
+    }
+    // No shorter than what it takes the place of: it grows, and only grows.
+    .frame(minHeight: Self.bar - Self.section, alignment: .top)
+  }
+
+  /// The whole width of the menu, along the bottom of it.
   private var more: some View {
     Button { session.showsMore = true } label: {
-      Label("More…", systemImage: "chevron.down")
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.07)))
-        .contentShape(Rectangle())
+      HStack {
+        Text("More…").font(Font(Self.labelFont))
+        Spacer()
+        Image(systemName: "chevron.down").font(.callout.weight(.semibold)).foregroundStyle(.secondary)
+      }
+      .padding(.horizontal, Self.padding + Self.inset)
+      .frame(width: Self.width, height: Self.bar)
+      .background(alignment: .leading) {
+        // As long as it takes to open, so that it is seen to be opening.
+        Color.accentColor.opacity(0.3)
+          .scaleEffect(x: tiles.isResting ? 1 : 0, anchor: .leading)
+          .animation(tiles.isResting ? .linear(duration: DropTiles.dwellSeconds) : nil, value: tiles.isResting)
+      }
+      .background(Color.primary.opacity(isOverMore && !tiles.isLive ? 0.06 : 0))
+      .overlay(alignment: .top) { Rectangle().fill(Color.primary.opacity(0.1)).frame(height: 1) }
+      .opacity(tiles.over == nil ? 1 : 0.55)
+      .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
     .help("What to do to it, how heavy, and what it says about you")
+    .onHover { isOverMore = $0 }
     .background(GeometryReader { Color.clear.preference(key: MoreFrame.self, value: $0.frame(in: .global)) })
+    .padding([.horizontal, .bottom], -Self.padding)
   }
 
   /// The numbers go to what stays where it is: what is suggested moves about,
   /// and a key that does something else tomorrow is worse than none.
   private var numbered: AskRequest.Question? { session.questions.first { $0 != .forYou && $0 != .join } }
 
+  /// As many to a row as leave every one of them room for its words.
+  static func columns(for labels: [String]) -> Int {
+    let widest = labels.map { ($0 as NSString).size(withAttributes: [.font: labelFont]).width }.max() ?? 0
+    return shapes.first { widest + inset * 2 <= cell(of: $0) } ?? 2
+  }
+
+  private static func cell(of columns: Int) -> CGFloat {
+    (width - padding * 2 - gap * CGFloat(columns - 1)) / CGFloat(columns)
+  }
+
+  private struct Offer: Identifiable {
+    let question: AskRequest.Question
+    let choice: AskOptions.Choice
+    let number: Int?
+    var id: String { "\(question) \(choice.id)" }
+  }
+
+  /// Places a last row has to spare.
+  static func leftOver(_ count: Int, in columns: Int) -> Int {
+    (columns - count % columns) % columns
+  }
+
+  /// Whether cutting by hand has a place among the formats, and is not looked for
+  /// under what is folded.
+  private var handsOutCut: Bool {
+    guard session.questions.contains(.cut), session.questions.contains(.format) else { return false }
+    let labels = session.choices(for: .format).map(\.label)
+    return Self.leftOver(labels.count, in: Self.columns(for: labels)) > 0
+  }
+
   private func grid(_ question: AskRequest.Question, numbered: Bool) -> some View {
-    let choices = session.choices(for: question)
+    let byNumber = numbered && !tiles.isLive
     // Cutting by hand is one more thing to do to it.
-    let byHand = question == .tool && session.questions.contains(.cut) ? session.choices(for: .cut) : []
-    return VStack(alignment: .leading, spacing: 8) {
-      LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-        ForEach(Array(choices.enumerated()), id: \.element.id) { index, choice in
-          button(choice, for: question, number: numbered && index < 9 ? index + 1 : nil)
+    let byHand = session.questions.contains(.cut) ? session.choices(for: .cut).first : nil
+    let joinsTools = question == .tool && !handsOutCut, fillsRow = question == .format && handsOutCut
+    let offers = session.choices(for: question).enumerated().map { Offer(question: question, choice: $1, number: byNumber && $0 < 9 ? $0 + 1 : nil) }
+      + [joinsTools ? byHand : nil].compactMap { $0 }.map { Offer(question: .cut, choice: $0, number: nil) }
+    let columns = Self.columns(for: offers.map(\.choice.label))
+    let cell = Self.cell(of: columns)
+    let height: CGFloat = session.weighs && question != .join || offers.contains { $0.choice.isDefault } ? Self.weighed : Self.plain
+    let rows = stride(from: 0, to: offers.count, by: columns).map { Array(offers[$0..<min($0 + columns, offers.count)]) }
+    return VStack(alignment: .leading, spacing: Self.gap) {
+      ForEach(rows, id: \.first?.id) { row in
+        HStack(spacing: Self.gap) {
+          ForEach(row) { offer in button(offer, width: cell, height: height) }
+          if fillsRow, let byHand, row.count < columns {
+            button(
+              Offer(question: .cut, choice: byHand, number: nil),
+              width: CGFloat(columns - row.count) * (cell + Self.gap) - Self.gap, height: height
+            )
+          }
         }
-        ForEach(byHand) { button($0, for: .cut, number: nil) }
       }
       if question.kind != nil {
         TextField("Something else: \(hint(question))", text: Binding(get: { typed[question] ?? "" }, set: { typed[question] = $0 }))
@@ -284,36 +418,29 @@ struct AskView: View {
     }
   }
 
-  private func button(_ choice: AskOptions.Choice, for question: AskRequest.Question, number: Int?) -> some View {
+  private func button(_ offer: Offer, width: CGFloat, height: CGFloat) -> some View {
+    let choice = offer.choice, question = offer.question
     let tile = DropTiles.Tile(question: question, answer: choice.value)
-    let chosen = session.answers[question] == choice.value || tiles.over == tile
-    let says = session.measured[choice.value]
-    return Button { pick(choice.value, for: question) } label: {
-      VStack(alignment: .leading, spacing: 2) {
-        HStack(spacing: 4) {
-          Text(choice.label).font(.body.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
-          Spacer(minLength: 0)
-          if let number {
-            Text("\(number)").font(.caption2.weight(.semibold)).foregroundStyle(chosen ? Color.white.opacity(0.8) : .secondary)
-          }
-        }
-        Text(says ?? (choice.isDefault ? "the usual" : " "))
-          .font(.caption2).lineLimit(1).minimumScaleFactor(0.8)
-          .frame(height: 13)
-          .foregroundStyle(chosen ? Color.white.opacity(0.85) : .secondary)
-      }
-      .padding(.horizontal, 10).padding(.vertical, 8)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(chosen ? Color.accentColor : Color.primary.opacity(0.07)))
-      .foregroundStyle(chosen ? Color.white : Color.primary)
-      .contentShape(Rectangle())
-    }
+    let isAimed = tiles.over == tile
+    let isLit = isAimed || session.answers[question] == choice.value
+    let weight = session.measured[choice.value]
+    let says = weight?.words(from: session.files.first) ?? (choice.isDefault ? (short: "the usual", full: "the usual") : nil)
+    let isHeavier = session.isHeavier(weight?.bytes)
+    let isWeighed = height > Self.plain && (question != .cut || says != nil)
+    let face = ChoiceFace(
+      label: choice.label, says: says, number: offer.number, isLit: isLit, isAimed: isAimed,
+      isHeavier: isHeavier, isWeighed: isWeighed, isFaint: !isLit && (tiles.over != nil || weight.map { $0.bytes == nil } ?? false), isHovered: hovered == tile && !tiles.isLive, isCommand: question == .cut,
+      isStill: isStill, width: width, height: height
+    )
+    return Button { pick(choice.value, for: question) } label: { face.animation(isStill ? nil : Self.quick, value: tiles.over) }
     .buttonStyle(.plain)
-    .modifier(NumberKey(number: armed ? number : nil))
+    .zIndex(isAimed ? 1 : 0)
+    .onHover { hovered = $0 ? tile : hovered == tile ? nil : hovered }
+    .modifier(NumberKey(number: armed ? offer.number : nil))
     .dropTile(tile)
     .accessibilityLabel(Text(choice.label))
-    .accessibilityValue(Text([says ?? (choice.isDefault ? "the usual" : nil), armed ? number.map { "key \($0)" } : nil].compactMap { $0 }.joined(separator: ", ")))
-    .accessibilityAddTraits(chosen ? [.isButton, .isSelected] : .isButton)
+    .accessibilityValue(Text([says?.full, armed ? offer.number.map { "key \($0)" } : nil].compactMap { $0 }.joined(separator: ", ")))
+    .accessibilityAddTraits(isLit ? [.isButton, .isSelected] : .isButton)
   }
 
   private func pick(_ answer: AskRequest.Answer, for question: AskRequest.Question) {
@@ -370,6 +497,59 @@ struct AskView: View {
   }
 }
 
+/// What one choice looks like.
+private struct ChoiceFace: View {
+  let label: String
+  let says: (short: String, full: String)?
+  let number: Int?
+  let isLit: Bool
+  let isAimed: Bool
+  let isHeavier: Bool
+  let isWeighed: Bool
+  let isFaint: Bool
+  let isHovered: Bool
+  /// Something done to it, among what it can become.
+  let isCommand: Bool
+  let isStill: Bool
+  let width: CGFloat
+  let height: CGFloat
+
+  private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: AskView.inset, style: .continuous) }
+  private var fill: Color { isLit ? .accentColor : Color.primary.opacity(isHovered ? 0.13 : isCommand ? 0 : 0.07) }
+  private var weightColor: Color { isLit ? Color.white.opacity(0.9) : isHeavier ? .heavier : .secondary }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 1) {
+      HStack(spacing: 4) {
+        Text(label).font(Font(AskView.labelFont)).lineLimit(1).minimumScaleFactor(0.7)
+        Spacer(minLength: 0)
+        if let number {
+          Text("\(number)").font(.caption2.weight(.semibold)).foregroundColor(isLit ? Color.white.opacity(0.8) : .secondary)
+        }
+      }
+      if isWeighed { weight }
+    }
+    .padding(.horizontal, AskView.inset)
+    .frame(width: width, height: height, alignment: .leading)
+    .background(shape.fill(fill))
+    .overlay(shape.strokeBorder(Color.primary.opacity(isCommand && !isLit ? 0.16 : 0)))
+    .foregroundColor(isLit ? .white : .primary)
+    .contentShape(Rectangle())
+    .scaleEffect(isAimed && !isStill ? 1.05 : 1)
+    .shadow(color: Color.accentColor.opacity(isAimed ? 0.35 : 0), radius: 8, y: 3)
+    .opacity(isFaint ? 0.55 : 1)
+  }
+
+  private var weight: some View {
+    ViewThatFits(in: .horizontal) {
+      Text(says?.full ?? " ")
+      Text(says?.short ?? " ")
+    }
+    .font(.caption.monospacedDigit()).lineLimit(1)
+    .foregroundColor(weightColor)
+  }
+}
+
 /// Says where a choice is, for a file held over it. Gathered as one, every
 /// time it is drawn: a choice drawn again goes after the new one has come.
 private struct DropTileFrames: PreferenceKey {
@@ -400,5 +580,76 @@ private struct NumberKey: ViewModifier {
     } else {
       content
     }
+  }
+}
+
+private extension Color {
+  /// The system's green and orange are too pale to be read on a light panel.
+  static let lighter = Color(nsColor: shade(light: NSColor(red: 0.05, green: 0.45, blue: 0.22, alpha: 1), dark: .systemGreen))
+  static let heavier = Color(nsColor: shade(light: NSColor(red: 0.65, green: 0.3, blue: 0, alpha: 1), dark: .systemOrange))
+
+  private static func shade(light: NSColor, dark: NSColor) -> NSColor {
+    NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light }
+  }
+}
+
+/// Something that comes out by itself, from when it is first drawn. What it holds
+/// is made once: only how much of it shows is worked out again.
+private struct Unfolding<Content: View>: View {
+  let step: Int
+  let isWhole: Bool
+  let content: Content
+  @State private var since: Date?
+  @State private var isOut = false
+
+  init(step: Int, isWhole: Bool, @ViewBuilder content: () -> Content) {
+    self.step = step
+    self.isWhole = isWhole
+    self.content = content()
+  }
+
+  var body: some View {
+    TimelineView(.animation(paused: isWhole || isOut)) { time in
+      let progress = isWhole || isOut ? 1 : Unfold.progress(after: since.map { time.date.timeIntervalSince($0) } ?? 0, step: step)
+      Unfold(progress: progress) { content }
+        .opacity(progress)
+        .clipped()
+    }
+    .onAppear { if since == nil { since = Date() } }
+    .task {
+      try? await Task.sleep(nanoseconds: UInt64((Unfold.length(of: step + 1) + 0.1) * 1_000_000_000))
+      isOut = true
+    }
+  }
+}
+
+/// As much of something as has come out, from the top. The room it takes is the
+/// room it shows, so what it is in grows with it.
+struct Unfold: Layout {
+  let progress: Double
+
+  private static let each: TimeInterval = 0.22
+  private static let apart: TimeInterval = 0.09
+
+  static func length(of steps: Int) -> TimeInterval { each + apart * Double(max(steps - 1, 0)) }
+
+  /// Fast to begin with, and slow to come to rest.
+  static func progress(after elapsed: TimeInterval, step: Int) -> Double {
+    let share = min(max((elapsed - apart * Double(step)) / each, 0), 1)
+    return 1 - pow(1 - share, 3)
+  }
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    let size = whole(proposal, subviews)
+    return CGSize(width: size.width, height: size.height * progress)
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    let size = whole(proposal, subviews)
+    for view in subviews { view.place(at: bounds.origin, proposal: ProposedViewSize(size)) }
+  }
+
+  private func whole(_ proposal: ProposedViewSize, _ subviews: Subviews) -> CGSize {
+    subviews.first?.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil)) ?? .zero
   }
 }
