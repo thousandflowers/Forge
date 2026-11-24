@@ -15,6 +15,7 @@ final class AppModel: ObservableObject {
   /// What was done without being asked.
   let results = ResultCenter()
   private lazy var clipboard = ClipboardLighter(coordinator: coordinator)
+  private let dragMenu = DragMenu()
   private var inHand: Set<String> = []
   private var automatic: [Automatic.Place: MonitoredFolderWatcher] = [:]
 
@@ -60,6 +61,7 @@ final class AppModel: ObservableObject {
     let coordinator = ProcessingCoordinator(settings: loaded, persistence: persistence)
     self.coordinator = coordinator
     asks.preview = { file, preset, folder in try await coordinator.preview(file, with: preset, into: folder) }
+    dragMenu.preview = asks.preview
   }
 
   /// Load persisted state on launch; seed default presets on first run.
@@ -84,6 +86,7 @@ final class AppModel: ObservableObject {
     await refreshHistory()
     for folder in folders where folder.isActive { startWatcher(folder) }
     startAutomatic()
+    startDragMenu()
   }
 
   // MARK: - Presets
@@ -466,6 +469,26 @@ final class AppModel: ObservableObject {
     let snapshot = settings
     Task { await coordinator.update(settings: snapshot) }
     startAutomatic()
+    startDragMenu()
+  }
+
+  // MARK: - In hand
+
+  private func startDragMenu() {
+    guard settings.dragMenu else { return dragMenu.stop() }
+    dragMenu.keys = settings.dragMenuKeys
+    dragMenu.convert = { [weak self] file, preset in try await self?.convertInHand(file, with: preset) ?? [] }
+    dragMenu.start()
+  }
+
+  /// Beside the original, which stays.
+  private func convertInHand(_ file: ProcessableFile, with preset: RulePreset) async throws -> [URL] {
+    defer { Task { await refreshHistory() } }
+    let entry = try await coordinator.processFile(
+      file, with: preset, destinationMode: .copyTo, destinationURL: file.url.deletingLastPathComponent()
+    ) { _ in }
+    entry.outputs.forEach(remember)
+    return entry.outputs
   }
 
   // MARK: - Without being asked

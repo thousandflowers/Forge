@@ -28,6 +28,12 @@ struct AppSettings: Codable, Sendable, Equatable {
   /// Turn HEIC, WebP and AVIF downloads into JPEGs.
   var friendlyDownloads: Bool = false
 
+  // MARK: - In hand
+
+  /// Bring the menu up over a file dragged with the keys held.
+  var dragMenu: Bool = false
+  var dragMenuKeys: HoldKeys = .usual
+
   // MARK: - What everything starts from
   //
   // A preference here is what Forge does when a preset does not say otherwise.
@@ -109,6 +115,7 @@ extension AppSettings {
     case maxConcurrentNative, createBackupBeforeOverwrite, notifyWhenFinished
     case defaultFitMode, defaultQuality, privacy, nameTemplate, appearance
     case lighterClipboard, lighterRecordings, friendlyDownloads
+    case dragMenu, dragMenuKeys
   }
 
   /// Every key is optional on the way in. A setting added in a later version
@@ -128,5 +135,7 @@ extension AppSettings {
     lighterClipboard = try c.decodeIfPresent(Bool.self, forKey: .lighterClipboard) ?? fresh.lighterClipboard
     lighterRecordings = try c.decodeIfPresent(Bool.self, forKey: .lighterRecordings) ?? fresh.lighterRecordings
     friendlyDownloads = try c.decodeIfPresent(Bool.self, forKey: .friendlyDownloads) ?? fresh.friendlyDownloads
+    dragMenu = try c.decodeIfPresent(Bool.self, forKey: .dragMenu) ?? fresh.dragMenu
+    dragMenuKeys = try c.decodeIfPresent(HoldKeys.self, forKey: .dragMenuKeys) ?? fresh.dragMenuKeys
   }
 }

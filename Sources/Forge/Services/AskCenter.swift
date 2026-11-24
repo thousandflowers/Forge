@@ -97,12 +97,17 @@ final class AskSession: ObservableObject {
     return request.questions == other.questions && request.preset.runs(like: other.preset) && ConvertKind(fileType: file.fileType) == files.first.flatMap { ConvertKind(fileType: $0.fileType) }
   }
 
+  var isWorking: Bool { if case .working = state { return true } else { return false } }
+
   func choices(for question: AskRequest.Question) -> [AskOptions.Choice] {
     AskOptions.choices(for: question, files: files)
   }
 
   /// The questions these files can really be asked.
   var questions: [AskRequest.Question] { request.questions.filter { !choices(for: $0).isEmpty } }
+
+  /// Files of one kind are asked about; of several, nothing suits them all.
+  var isMixed: Bool { Set(files.map { ConvertKind(fileType: $0.fileType) }).count > 1 }
 
   /// A lone question is answered by pressing the answer.
   var answersAtOnce: Bool { questions.count == 1 && questions[0] != .privacy }

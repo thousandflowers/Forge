@@ -44,6 +44,29 @@ struct SettingsView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
+      Section("While dragging") {
+        Toggle("Show a menu over the file", isOn: $model.settings.dragMenu)
+        LabeledContent("Keys to hold") {
+          HStack(spacing: 6) {
+            if model.settings.dragMenuKeys != .usual {
+              Button("Reset") { model.settings.dragMenuKeys = .usual }.controlSize(.small)
+            }
+            ForEach(HoldKeys.all) { key in
+              Toggle(key.symbol, isOn: Binding(
+                get: { model.settings.dragMenuKeys.contains(key.keys) },
+                set: { _ in model.settings.dragMenuKeys = model.settings.dragMenuKeys.toggling(key.keys) }
+              ))
+              .toggleStyle(.button)
+              .help(key.name)
+              .accessibilityLabel(Text(key.name))
+            }
+          }
+        }
+        .disabled(!model.settings.dragMenu)
+        Text("Drag a file from anywhere, hold \(model.settings.dragMenuKeys.symbols), and drop it on what it should become. The result goes beside the original, which stays.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
       Section("What everything starts from") {
         Picker("Resizing means", selection: $model.settings.defaultFitMode) {
           ForEach(ResizeFitMode.allCases, id: \.self) { Text($0.title).tag($0) }

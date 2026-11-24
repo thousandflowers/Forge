@@ -9,7 +9,8 @@ final class AskPanel {
   /// SwiftUI hands the keyboard to the first field a moment after it appears.
   private static let settling: TimeInterval = 0.15
 
-  init(session: AskSession, close: @escaping () -> Void) {
+  /// - Parameter tiles: where a file being dragged can be dropped.
+  init(session: AskSession, tiles: DropTiles? = nil, close: @escaping () -> Void) {
     panel = KeyPanel(
       contentRect: NSRect(x: 0, y: 0, width: AskView.width, height: 200),
       styleMask: [.nonactivatingPanel, .borderless],
@@ -26,45 +27,92 @@ final class AskPanel {
     panel.backgroundColor = .clear
     panel.isOpaque = false
     panel.onEscape = close
+    if let tiles { panel.takeDrops(on: tiles) }
     // The controller's preferred size is the window's: it grows and shrinks
     // with what is being asked.
-    let host = NSHostingController(rootView: AskView(session: session, close: close))
+    let host = NSHostingController(rootView: AskView(session: session, tiles: tiles ?? DropTiles(), close: close))
     host.sizingOptions = [.preferredContentSize]
     panel.contentViewController = host
   }
 
-  func appear() {
+  /// - Parameter takingKeys: not while the mouse is in the middle of a drag.
+  func appear(takingKeys: Bool = true) {
     panel.contentViewController?.view.layoutSubtreeIfNeeded()
     let size = panel.contentViewController?.view.fittingSize ?? panel.frame.size
     let mouse = NSEvent.mouseLocation
     let screen = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.visibleFrame ?? .zero
     panel.setContentSize(size)
     panel.setFrameOrigin(Self.origin(for: panel.frame.size, at: mouse, in: screen))
+    guard takingKeys else { return panel.orderFrontRegardless() }
+    takeKeys()
+  }
+
+  func takeKeys() {
     panel.makeKeyAndOrderFront(nil)
     // Not in the field: the numbers are there to be pressed, and in a field
     // they are only typed.
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.settling) { [panel] in panel.makeFirstResponder(nil) }
   }
 
-  /// Just under the pointer and to its right, and wholly on the screen.
+  /// Just under the pointer and to its right, or on its other side where there
+  /// is no room, and wholly on the screen. Never over the pointer where that
+  /// can be helped: a file let go of there would be dropped on it.
   static func origin(for size: NSSize, at mouse: NSPoint, in screen: NSRect) -> NSPoint {
     let gap: CGFloat = 14
-    let x = min(max(mouse.x + gap, screen.minX + gap), screen.maxX - size.width - gap)
-    let y = min(max(mouse.y - size.height - gap, screen.minY + gap), screen.maxY - size.height - gap)
-    return NSPoint(x: x, y: y)
+    let right = mouse.x + gap, left = mouse.x - gap - size.width
+    let below = mouse.y - gap - size.height
+    let x = right + size.width + gap <= screen.maxX || left < screen.minX + gap ? right : left
+    return NSPoint(
+      x: min(max(x, screen.minX + gap), screen.maxX - size.width - gap),
+      y: min(max(below, screen.minY + gap), screen.maxY - size.height - gap)
+    )
   }
+
+  var frame: NSRect { panel.frame }
+  func owns(_ window: NSWindow) -> Bool { window === panel }
+  var target: any NSDraggingDestination { panel }
 
   func close() { panel.orderOut(nil) }
 }
 
 /// A panel that can be typed into, and that Esc closes.
-private final class KeyPanel: NSPanel {
+private final class KeyPanel: NSPanel, NSDraggingDestination {
   var onEscape: () -> Void = {}
   override var canBecomeKey: Bool { true }
   override func cancelOperation(_ sender: Any?) {
     // A key held down would go through every question waiting behind this one.
     guard NSApp.currentEvent?.type != .keyDown || NSApp.currentEvent?.isARepeat == false else { return }
     onEscape()
+  }
+
+  // MARK: - A file dropped on it
+
+  private var tiles: DropTiles?
+
+  func takeDrops(on tiles: DropTiles) {
+    self.tiles = tiles
+    registerForDraggedTypes([.fileURL])
+  }
+
+  func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { draggingUpdated(sender) }
+
+  func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+    guard let tiles, tiles.isLive else { return [] }
+    tiles.move(to: fromTheTop(sender.draggingLocation))
+    return DropTiles.operation(of: sender.draggingSourceOperationMask)
+  }
+
+  func draggingExited(_ sender: NSDraggingInfo?) { tiles?.move(to: nil) }
+
+  func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    guard let tiles else { return false }
+    let tile = tiles.tile(at: fromTheTop(sender.draggingLocation))
+    tiles.move(to: nil)
+    return tiles.drop(tile)
+  }
+
+  private func fromTheTop(_ point: NSPoint) -> CGPoint {
+    CGPoint(x: point.x, y: (contentView?.bounds.height ?? 0) - point.y)
   }
 }
 
@@ -76,6 +124,7 @@ struct AskView: View {
   private static let arming: UInt64 = 800_000_000
 
   @ObservedObject var session: AskSession
+  @ObservedObject var tiles: DropTiles
   let close: () -> Void
   @State private var typed: [AskRequest.Question: String] = [:]
   /// Whether the numbers answer yet. The panel comes up over somebody who may
@@ -94,6 +143,7 @@ struct AskView: View {
           .fixedSize(horizontal: false, vertical: true)
       }
     }
+    .onPreferenceChange(DropTileFrames.self) { tiles.frames = $0 }
     .padding(16)
     .frame(width: Self.width, alignment: .leading)
     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -134,7 +184,10 @@ struct AskView: View {
   private var asking: some View {
     let questions = session.questions
     if questions.isEmpty {
-      Text("There is nothing to choose for this kind of file.").font(.callout).foregroundStyle(.secondary)
+      Text(session.isMixed ? "These are different kinds of file. Take one kind at a time." : "There is nothing to choose for this kind of file.").font(.callout).foregroundStyle(.secondary)
+    }
+    if tiles.isLive, !questions.isEmpty {
+      Text("Drop it on a choice, or anywhere here to choose with a click.").font(.callout).foregroundStyle(.secondary)
     }
     ForEach(Array(questions.enumerated()), id: \.element) { index, question in
       if question == .privacy {
@@ -143,6 +196,7 @@ struct AskView: View {
           set: { session.choose(.flag($0), for: question) }
         ))
         .toggleStyle(.checkbox)
+        .dropTile(.init(question: question, answer: .flag(true)))
       } else {
         VStack(alignment: .leading, spacing: 8) {
           Text(question.title).font(.callout.weight(.semibold)).foregroundStyle(.secondary)
@@ -187,7 +241,8 @@ struct AskView: View {
   }
 
   private func button(_ choice: AskOptions.Choice, for question: AskRequest.Question, number: Int?) -> some View {
-    let chosen = session.answers[question] == choice.value
+    let tile = DropTiles.Tile(question: question, answer: choice.value)
+    let chosen = session.answers[question] == choice.value || tiles.over == tile
     let says = session.measured[choice.value]
     return Button { pick(choice.value, for: question) } label: {
       VStack(alignment: .leading, spacing: 2) {
@@ -211,6 +266,7 @@ struct AskView: View {
     }
     .buttonStyle(.plain)
     .modifier(NumberKey(number: armed ? number : nil))
+    .dropTile(tile)
     .accessibilityLabel(Text([choice.label, says].compactMap { $0 }.joined(separator: ", ")))
     .accessibilityAddTraits(chosen ? [.isButton, .isSelected] : .isButton)
   }
@@ -255,6 +311,21 @@ struct AskView: View {
   private func weight(_ outputs: [URL]) -> String {
     outputs.reduce(Int64(0)) { $0 + (((try? FileManager.default.attributesOfItem(atPath: $1.path)[.size]) as? Int64) ?? 0) }
       .formatted(.byteCount(style: .file))
+  }
+}
+
+/// Says where a choice is, for a file held over it. Gathered as one, every
+/// time it is drawn: a choice drawn again goes after the new one has come.
+private struct DropTileFrames: PreferenceKey {
+  static let defaultValue: [DropTiles.Tile: CGRect] = [:]
+  static func reduce(value: inout [DropTiles.Tile: CGRect], nextValue: () -> [DropTiles.Tile: CGRect]) {
+    value.merge(nextValue()) { $1 }
+  }
+}
+
+private extension View {
+  func dropTile(_ tile: DropTiles.Tile) -> some View {
+    background(GeometryReader { Color.clear.preference(key: DropTileFrames.self, value: [tile: $0.frame(in: .global)]) })
   }
 }
 
