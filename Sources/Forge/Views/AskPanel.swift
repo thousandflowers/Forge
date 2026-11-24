@@ -6,11 +6,16 @@ import SwiftUI
 @MainActor
 final class AskPanel {
   private let panel: KeyPanel
+  /// As tall as it can get, so that there is room for it to open where it is.
+  private let tallest: () -> CGFloat
   /// SwiftUI hands the keyboard to the first field a moment after it appears.
   private static let settling: TimeInterval = 0.15
 
   /// - Parameter tiles: where a file being dragged can be dropped.
   init(session: AskSession, tiles: DropTiles? = nil, close: @escaping () -> Void) {
+    tallest = {
+      NSHostingController(rootView: AskView(session: session, tiles: DropTiles(), isOpen: true, close: {})).view.fittingSize.height
+    }
     panel = KeyPanel(
       contentRect: NSRect(x: 0, y: 0, width: AskView.width, height: 200),
       styleMask: [.nonactivatingPanel, .borderless],
@@ -27,7 +32,10 @@ final class AskPanel {
     panel.backgroundColor = .clear
     panel.isOpaque = false
     panel.onEscape = close
-    if let tiles { panel.takeDrops(on: tiles) }
+    if let tiles {
+      panel.takeDrops(on: tiles)
+      tiles.openMore = { [weak session] in session?.showsMore = true }
+    }
     // The controller's preferred size is the window's: it grows and shrinks
     // with what is being asked.
     let host = NSHostingController(rootView: AskView(session: session, tiles: tiles ?? DropTiles(), close: close))
@@ -42,7 +50,9 @@ final class AskPanel {
     let mouse = NSEvent.mouseLocation
     let screen = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.visibleFrame ?? .zero
     panel.setContentSize(size)
-    panel.setFrameOrigin(Self.origin(for: panel.frame.size, at: mouse, in: screen))
+    let room = NSSize(width: panel.frame.width, height: max(panel.frame.height, tallest()))
+    let origin = Self.origin(for: room, at: mouse, in: screen)
+    panel.setFrameOrigin(NSPoint(x: origin.x, y: origin.y + room.height - panel.frame.height))
     guard takingKeys else { return panel.orderFrontRegardless() }
     takeKeys()
   }
@@ -79,6 +89,14 @@ final class AskPanel {
 private final class KeyPanel: NSPanel, NSDraggingDestination {
   var onEscape: () -> Void = {}
   override var canBecomeKey: Bool { true }
+
+  /// It grows downwards. Its top is where the eye, and a file being held, is.
+  override func setFrame(_ frame: NSRect, display: Bool) {
+    var frame = frame
+    if frame.height != self.frame.height { frame.origin.y = self.frame.maxY - frame.height }
+    super.setFrame(frame, display: display)
+  }
+
   override func cancelOperation(_ sender: Any?) {
     // A key held down would go through every question waiting behind this one.
     guard NSApp.currentEvent?.type != .keyDown || NSApp.currentEvent?.isARepeat == false else { return }
@@ -106,7 +124,9 @@ private final class KeyPanel: NSPanel, NSDraggingDestination {
 
   func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
     guard let tiles else { return false }
-    let tile = tiles.tile(at: fromTheTop(sender.draggingLocation))
+    let point = fromTheTop(sender.draggingLocation)
+    let tile = tiles.tile(at: point)
+    if tile == nil, tiles.isMore(point) { tiles.openMore() }
     tiles.move(to: nil)
     return tiles.drop(tile)
   }
@@ -125,6 +145,8 @@ struct AskView: View {
 
   @ObservedObject var session: AskSession
   @ObservedObject var tiles: DropTiles
+  /// To be measured, whatever is folded.
+  var isOpen = false
   let close: () -> Void
   @State private var typed: [AskRequest.Question: String] = [:]
   /// Whether the numbers answer yet. The panel comes up over somebody who may
@@ -145,6 +167,7 @@ struct AskView: View {
       }
     }
     .onPreferenceChange(DropTileFrames.self) { tiles.frames = $0 }
+    .onPreferenceChange(MoreFrame.self) { tiles.more = $0 }
     .padding(16)
     .frame(width: Self.width, alignment: .leading)
     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -190,7 +213,7 @@ struct AskView: View {
     if tiles.isLive, !questions.isEmpty {
       Text("Drop it on a choice, or anywhere here to choose with a click.").font(.callout).foregroundStyle(.secondary)
     }
-    ForEach(questions, id: \.self) { question in
+    ForEach(isOpen ? questions : session.shownQuestions, id: \.self) { question in
       if question == .privacy {
         Toggle(question.title, isOn: Binding(
           get: { session.answers[question] == .flag(true) },
@@ -207,6 +230,7 @@ struct AskView: View {
     }
     if !questions.isEmpty, !session.answersAtOnce {
       HStack {
+        if session.folds, !session.showsMore { more }
         Spacer()
         Button { go() } label: { Text("Convert").frame(minWidth: 76) }
           .buttonStyle(.borderedProminent)
@@ -214,6 +238,18 @@ struct AskView: View {
           .disabled(session.answers.values.allSatisfy { $0 == .flag(false) })
       }
     }
+  }
+
+  private var more: some View {
+    Button { session.showsMore = true } label: {
+      Label("More…", systemImage: "chevron.down")
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.07)))
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .help("What to do to it, how heavy, and what it says about you")
+    .background(GeometryReader { Color.clear.preference(key: MoreFrame.self, value: $0.frame(in: .global)) })
   }
 
   /// The numbers go to what stays where it is: what is suggested moves about,
@@ -255,7 +291,7 @@ struct AskView: View {
     return Button { pick(choice.value, for: question) } label: {
       VStack(alignment: .leading, spacing: 2) {
         HStack(spacing: 4) {
-          Text(choice.label).font(.body.weight(.semibold)).lineLimit(1)
+          Text(choice.label).font(.body.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
           Spacer(minLength: 0)
           if let number {
             Text("\(number)").font(.caption2.weight(.semibold)).foregroundStyle(chosen ? Color.white.opacity(0.8) : .secondary)
@@ -341,6 +377,11 @@ private struct DropTileFrames: PreferenceKey {
   static func reduce(value: inout [DropTiles.Tile: CGRect], nextValue: () -> [DropTiles.Tile: CGRect]) {
     value.merge(nextValue()) { $1 }
   }
+}
+
+private struct MoreFrame: PreferenceKey {
+  static let defaultValue: CGRect? = nil
+  static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) { value = nextValue() ?? value }
 }
 
 private extension View {

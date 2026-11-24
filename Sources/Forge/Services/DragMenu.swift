@@ -212,6 +212,16 @@ final class DropTiles: ObservableObject {
   @Published private(set) var over: Tile?
   /// From the top left, as SwiftUI counts.
   var frames: [Tile: CGRect] = [:]
+  /// The line that opens the rest.
+  var more: CGRect?
+  var openMore: () -> Void = {}
+  private var waiting: Task<Void, Never>?
+  /// Passing over it on the way somewhere is not resting on it.
+  private let dwell: UInt64
+  private static let dwell: UInt64 = 300_000_000
+
+  init(dwell: UInt64? = nil) { self.dwell = dwell ?? Self.dwell }
+
   /// Whether a drag brought this menu up and is still going.
   @Published var isLive = false
   var drop: (Tile?) -> Bool = { _ in false }
@@ -225,6 +235,21 @@ final class DropTiles: ObservableObject {
 
   func move(to point: CGPoint?) {
     over = point.flatMap(tile)
+    guard let point, isMore(point) else {
+      waiting?.cancel()
+      waiting = nil
+      return
+    }
+    guard waiting == nil else { return }
+    waiting = Task { [weak self, dwell] in
+      try? await Task.sleep(nanoseconds: dwell)
+      guard !Task.isCancelled else { return }
+      self?.openMore()
+    }
+  }
+
+  func isMore(_ point: CGPoint) -> Bool {
+    more?.insetBy(dx: 0, dy: -Self.reach).contains(point) ?? false
   }
 
   /// Never a move or a delete: whoever is being dragged from keeps its file.

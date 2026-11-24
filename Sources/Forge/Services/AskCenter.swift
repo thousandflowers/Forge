@@ -78,6 +78,8 @@ final class AskSession: ObservableObject {
   @Published private(set) var state: State = .asking
   /// What each choice would really come out as, measured on the first file.
   @Published private(set) var measured: [AskRequest.Answer: String] = [:]
+  /// Whether what is wanted now and then is shown as well.
+  @Published var showsMore = false { didSet { if showsMore, !oldValue { measure(again: false) } } }
   var onClose: () -> Void = {}
 
   private let convert: AskCenter.Convert
@@ -131,6 +133,11 @@ final class AskSession: ObservableObject {
     guard case .format(let type)? = answers[.format] else { return false }
     return (MediaProcessor.isWords(type) || Subtitles.carriesCues(Conversions.fileExtension(of: type))) && AskOptions.spoken.count > 1
   }
+
+  /// Folded only where there is something else to see: one question is asked
+  /// outright.
+  var folds: Bool { questions.contains { !$0.isSecondary } && questions.contains(where: \.isSecondary) }
+  var shownQuestions: [AskRequest.Question] { folds && !showsMore ? questions.filter { !$0.isSecondary } : questions }
 
   /// Files of one kind are asked about; of several, nothing suits them all.
   var isMixed: Bool { Set(files.map { ConvertKind(fileType: $0.fileType) }).count > 1 }
@@ -225,17 +232,19 @@ final class AskSession: ObservableObject {
   /// Each choice tried on the first file, so the menu says what comes out
   /// rather than what was asked for. Pictures only: trying a film takes as
   /// long as converting it.
-  func measure() {
+  /// - Parameter again: what is known already is no longer so.
+  func measure(again: Bool = true) {
     guard let preview, let file = files.first, ConvertKind(fileType: file.fileType) == .image else { return }
     measuring?.cancel()
-    measured = [:]
-    let asked = questions.filter { $0 != .privacy && $0 != .join && $0 != .cut && $0 != .language }
+    if again { measured = [:] }
+    let asked = shownQuestions.filter { $0 != .privacy && $0 != .join && $0 != .cut && $0 != .language }
     let given = answers
     measuring = Task { [weak self] in
       for question in asked {
         guard let self else { return }
         for choice in self.choices(for: question) {
           guard !Task.isCancelled else { return }
+          if self.measured[choice.value] != nil { continue }
           let folder = self.scratch.appendingPathComponent(UUID().uuidString, isDirectory: true)
           try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
           let tried = given.merging([question: choice.value]) { _, new in new }

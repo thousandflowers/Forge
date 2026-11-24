@@ -63,6 +63,9 @@ struct AskRequest: Equatable {
     /// One the preset asks, under its own key.
     case parameter(PresetParameter)
 
+    /// Wanted now and then: kept under More, so that the rest is close at hand.
+    var isSecondary: Bool { [.tool, .cut, .size, .privacy].contains(self) }
+
     /// What is being chosen, whoever asks.
     var kind: PresetParameter.Kind? {
       switch self {

@@ -219,8 +219,15 @@ final class DragMenuLayoutTests: BaseTestCase {
     panel.appear(takingKeys: false)
     defer { panel.close() }
     try await Task.sleep(nanoseconds: 1_500_000_000)
-    let wanted = session.questions.flatMap { question in session.choices(for: question).map { DropTiles.Tile(question: question, answer: $0.value) } }
-    XCTAssertEqual(Set(wanted), Set(tiles.frames.keys))
+    func tilesOf(_ questions: [AskRequest.Question]) -> Set<DropTiles.Tile> {
+      Set(questions.flatMap { question in session.choices(for: question).map { DropTiles.Tile(question: question, answer: $0.value) } })
+    }
+    XCTAssertEqual(tilesOf(session.shownQuestions), Set(tiles.frames.keys), "what is folded takes nothing")
+    XCTAssertNotNil(tiles.more)
+    tiles.openMore()
+    try await Task.sleep(nanoseconds: 800_000_000)
+    XCTAssertEqual(tilesOf(session.questions), Set(tiles.frames.keys))
+    XCTAssertNil(tiles.more, "or an opened menu would go on opening")
   }
 
   /// Anywhere on the screen, letting go at once is letting go outside it.
