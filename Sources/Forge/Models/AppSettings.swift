@@ -42,6 +42,8 @@ struct AppSettings: Codable, Sendable, Equatable {
   var lighterRecordings: Bool = false
   /// Turn HEIC, WebP and AVIF downloads into JPEGs.
   var friendlyDownloads: Bool = false
+  /// Make a file renamed to another extension into that kind of file.
+  var convertsRenames: Bool = false
 
   // MARK: - In hand
 
@@ -145,7 +147,7 @@ extension AppSettings {
   private enum CodingKeys: String, CodingKey {
     case maxConcurrentNative, createBackupBeforeOverwrite, notifyWhenFinished, whenFinished
     case defaultFitMode, defaultQuality, privacy, nameTemplate, appearance
-    case lighterClipboard, lighterRecordings, friendlyDownloads
+    case lighterClipboard, lighterRecordings, friendlyDownloads, convertsRenames
     case dragMenu, dragMenuKeys, dragMenuIgnored, menuPresets, spokenLanguage
   }
 
@@ -167,6 +169,7 @@ extension AppSettings {
     lighterClipboard = try c.decodeIfPresent(Bool.self, forKey: .lighterClipboard) ?? fresh.lighterClipboard
     lighterRecordings = try c.decodeIfPresent(Bool.self, forKey: .lighterRecordings) ?? fresh.lighterRecordings
     friendlyDownloads = try c.decodeIfPresent(Bool.self, forKey: .friendlyDownloads) ?? fresh.friendlyDownloads
+    convertsRenames = try c.decodeIfPresent(Bool.self, forKey: .convertsRenames) ?? fresh.convertsRenames
     dragMenu = try c.decodeIfPresent(Bool.self, forKey: .dragMenu) ?? fresh.dragMenu
     dragMenuKeys = try c.decodeIfPresent(HoldKeys.self, forKey: .dragMenuKeys) ?? fresh.dragMenuKeys
     dragMenuIgnored = try c.decodeIfPresent([String].self, forKey: .dragMenuIgnored) ?? fresh.dragMenuIgnored

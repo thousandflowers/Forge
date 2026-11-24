@@ -48,6 +48,7 @@ final class AppModel: ObservableObject {
   private var watchers: [UUID: MonitoredFolderWatcher] = [:]
   private var memories: [UUID: RenameMemory] = [:]
   private let turns = Turns()
+  private let handRenames = HandRenames()
 
   /// Files Forge has just written. A watched folder that also receives the
   /// output would otherwise convert its own results forever.
@@ -562,6 +563,12 @@ final class AppModel: ObservableObject {
       clipboard.stop()
     }
 
+    if settings.convertsRenames {
+      handRenames.start { [weak self] url, before in Task { await self?.renamedByHand(url, before: before) } }
+    } else {
+      handRenames.stop()
+    }
+
     for place in Automatic.Place.allCases {
       guard place.isWanted(settings) else {
         automatic.removeValue(forKey: place)?.stop()
@@ -580,6 +587,48 @@ final class AppModel: ObservableObject {
         report(error, doing: "watching “\(folder.displayName)”")
       }
     }
+  }
+
+  /// Given another extension in the Finder. In a watched folder that is the
+  /// folder's to hear.
+  func renamedByHand(_ url: URL, before: String) async {
+    let isWatched = folders.contains { folder in
+      guard folder.isActive else { return false }
+      let parent = url.deletingLastPathComponent().standardizedFileURL.path, root = folder.url.standardizedFileURL.path
+      return parent == root || folder.includeSubfolders && parent.hasPrefix(root + "/")
+    }
+    guard !isWatched, let job = await Task.detached(operation: { Retype.wanted(of: url, before: before) }).value else { return }
+    do {
+      let entry = try await turns.take(of: settings.maxConcurrentNative) { [weak self] in try await self?.becomes(url, job) }
+      await refreshHistory()
+      guard let entry, let output = entry.outputURL else { return }
+      let size = { (file: URL) in ((try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? Int64) ?? 0 }
+      results.show(ResultCard(title: output.lastPathComponent, file: output, before: 0, after: size(output), undo: { [weak self] in
+        self?.undo(entry) ?? false
+      }))
+    } catch is CancellationError {
+      await refreshHistory()
+    } catch {
+      report(error, doing: "converting “\(url.lastPathComponent)”")
+      await refreshHistory()
+    }
+  }
+
+  /// Where it is, as whoever renamed it there expects.
+  private func becomes(_ url: URL, _ job: Retype, puttingBack: (URL) -> Void = { _ in }) async throws -> ProcessingHistory? {
+    // Its turn may have been a while coming, and it may be called something else.
+    guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+    let file = try job.putBack(url)
+    puttingBack(file)
+    remember(file)
+    let snapshot = settings
+    await coordinator.update(settings: snapshot)
+    let entry = try await coordinator.processFile(
+      try ProcessableFile(url: file), with: job.preset,
+      destinationMode: Automatic.mode(for: snapshot), destinationURL: file.deletingLastPathComponent()
+    ) { _ in }
+    entry.outputs.forEach(remember)
+    return entry
   }
 
   private func takeAutomatically(_ url: URL, in place: Automatic.Place) async {
@@ -733,23 +782,18 @@ final class AppModel: ObservableObject {
   }
 
   private func retypeNow(_ url: URL, _ job: Retype, in folder: MonitoredFolder) async throws {
-    // Its turn may have been a while coming, and it may be called something else.
-    guard let folder = folders.first(where: { $0.id == folder.id }), folder.isActive,
-          FileManager.default.fileExists(atPath: url.path) else { return }
-    let file = try job.putBack(url)
-    memories[folder.id]?.know(file)
-    remember(file)
-    let outputs = try await convertArrival(try ProcessableFile(url: file), with: job.preset, in: folder, inPlace: true)
-    outputs.forEach { memories[folder.id]?.know($0) }
+    guard let folder = folders.first(where: { $0.id == folder.id }), folder.isActive else { return }
+    let memory = memories[folder.id]
+    try await becomes(url, job) { memory?.know($0) }?.outputs.forEach { memory?.know($0) }
   }
 
-  private func convertArrival(_ file: ProcessableFile, with preset: RulePreset, in folder: MonitoredFolder, inPlace: Bool = false) async throws -> [URL] {
+  private func convertArrival(_ file: ProcessableFile, with preset: RulePreset, in folder: MonitoredFolder) async throws -> [URL] {
     // The same answer about backups here and there, or an original could be
     // replaced by somebody who thinks it is kept.
     let snapshot = settings
     await coordinator.update(settings: snapshot)
     // A folder watched for names was never asked how: it does what is safe now.
-    let isForNames = inPlace || folder.ruleId == Self.noPreset
+    let isForNames = folder.ruleId == Self.noPreset
     let entry = try await coordinator.processFile(
       file,
       with: preset,
