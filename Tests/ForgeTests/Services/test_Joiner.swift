@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 import AVFoundation
 import PDFKit
 import UniformTypeIdentifiers
@@ -128,5 +129,50 @@ final class HandyToolTests: ToolTestCase {
     XCTAssertEqual(session.answers, [.join: .join(.pdf)])
     await session.run()
     XCTAssertEqual(joined, ["a.png", "b.png", "pdf"])
+  }
+}
+
+@MainActor
+final class ResultHandTests: BaseTestCase {
+  func test_neverOverWhatIsThere() throws {
+    let file = path("a.txt"), home = try folder("home")
+    try Data("new".utf8).write(to: file)
+    try Data("old".utf8).write(to: home.appendingPathComponent("a.txt"))
+    try ResultHand.place([file], in: home, moving: false)
+    XCTAssertEqual(contents(of: home), ["a 2.txt", "a.txt"])
+    XCTAssertTrue(exists(file))
+    try ResultHand.place([file], in: home, moving: true)
+    XCTAssertEqual(contents(of: home), ["a 2.txt", "a 3.txt", "a.txt"])
+    XCTAssertFalse(exists(file))
+    XCTAssertEqual(try String(contentsOf: home.appendingPathComponent("a.txt"), encoding: .utf8), "old")
+  }
+
+  func test_copying() {
+    let pasteboard = NSPasteboard(name: .init("forge-test-\(UUID().uuidString)"))
+    defer { pasteboard.releaseGlobally() }
+    ResultHand.copyPaths([URL(fileURLWithPath: "/tmp/a b.txt"), URL(fileURLWithPath: "/tmp/c.txt")], to: pasteboard)
+    XCTAssertEqual(pasteboard.string(forType: .string), "/tmp/a b.txt\n/tmp/c.txt")
+    ResultHand.copy([URL(fileURLWithPath: "/tmp/a b.txt")], to: pasteboard)
+    XCTAssertEqual(pasteboard.readObjects(forClasses: [NSURL.self])?.count, 1)
+  }
+}
+
+@MainActor
+final class CutFromTheMenuTests: ToolTestCase {
+  func test_cuttingOpensAWindowAndLeavesTheMenu() async throws {
+    let a = try Fixture.image(at: path("a.png"))
+    var opened: [String] = [], closed = 0
+    let session = AskSession(request: AskRequest(word: .everything, over: nil), file: try ProcessableFile(url: a), convert: { _, _ in XCTFail("nothing was chosen"); return [] })
+    XCTAssertFalse(session.questions.contains(.cut))
+    session.cut = { opened.append($0.fileName) }
+    session.onClose = { closed += 1 }
+    XCTAssertTrue(session.questions.contains(.cut))
+    session.choose(.cut, for: .cut)
+    XCTAssertEqual(opened, ["a.png"])
+    XCTAssertEqual(closed, 1)
+    XCTAssertTrue(session.answers.isEmpty)
+    let two = try Fixture.image(at: path("b.png"))
+    session.files.append(try ProcessableFile(url: two))
+    XCTAssertFalse(session.questions.contains(.cut), "one at a time")
   }
 }

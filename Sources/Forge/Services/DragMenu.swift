@@ -22,6 +22,7 @@ final class DragMenu {
   var convert: AskCenter.Convert = { _, _ in [] }
   var preview: AskCenter.Preview?
   var join: AskCenter.Join?
+  var cut: (@MainActor (ProcessableFile) -> Void)?
 
   /// The menu this drag brought up, until the drag is over.
   private(set) var session: AskSession?
@@ -113,7 +114,7 @@ final class DragMenu {
     session = nil
     if let tile {
       dropped.choose(tile.answer, for: tile.question)
-      dropped.start()
+      if tile.answer != .cut { dropped.start() }
     }
     return true
   }
@@ -140,6 +141,10 @@ final class DragMenu {
     )
     session.files = files
     session.join = join
+    session.cut = cut
+    session.onClose = { [weak self, weak session] in
+      if let session { self?.close(session) }
+    }
     // The one before, let go of a moment ago and not yet gone.
     if let before = self.session { close(before) }
     self.session = session

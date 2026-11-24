@@ -106,6 +106,8 @@ struct ForgeCommands: Commands {
         .disabled(model.presetEditor != nil)
       Button("Add Files…") { addFiles() }
         .keyboardShortcut("o")
+      Button("Cut…") { cut() }
+        .keyboardShortcut("t")
     }
     // Where every Mac app keeps it, as well as in the sidebar.
     CommandGroup(replacing: .appSettings) {
@@ -130,6 +132,14 @@ struct ForgeCommands: Commands {
   }
 
   static let helpURL = URL(string: "https://github.com/thousandflowers/Forge#readme")!
+
+  private func cut() {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [.image, .movie, .audio]
+    panel.message = "Choose a film, a recording or a picture to cut."
+    guard panel.runModal() == .OK, let url = panel.url, let file = try? ProcessableFile(url: url) else { return }
+    model.cut(file)
+  }
 
   /// Files picked here arrive the way files dropped on the Dock icon do.
   private func addFiles() {

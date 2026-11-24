@@ -16,6 +16,7 @@ final class AppModel: ObservableObject {
   let results = ResultCenter()
   private lazy var clipboard = ClipboardLighter(coordinator: coordinator)
   private let dragMenu = DragMenu()
+  private let cuts = CutCenter()
   private var inHand: Set<String> = []
   private var automatic: [Automatic.Place: MonitoredFolderWatcher] = [:]
 
@@ -478,6 +479,7 @@ final class AppModel: ObservableObject {
     guard settings.dragMenu else { return dragMenu.stop() }
     dragMenu.keys = settings.dragMenuKeys
     dragMenu.convert = { [weak self] file, preset in try await self?.convertInHand(file, with: preset) ?? [] }
+    dragMenu.cut = { [weak self] file in self?.cut(file) }
     dragMenu.join = { [weak self] files, kind in
       guard let self else { throw CancellationError() }
       let made = try await self.coordinator.join(files, as: kind)
@@ -486,6 +488,11 @@ final class AppModel: ObservableObject {
       return made
     }
     dragMenu.start()
+  }
+
+  /// Open a window to cut this file in.
+  func cut(_ file: ProcessableFile) {
+    cuts.open(file) { [weak self] file, preset in try await self?.convertInHand(file, with: preset) ?? [] }
   }
 
   /// Beside the original, which stays.

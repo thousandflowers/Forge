@@ -80,6 +80,8 @@ final class AskSession: ObservableObject {
   private let preview: AskCenter.Preview?
   /// Nil where files come one at a time, and are never all of them together.
   var join: AskCenter.Join?
+  /// Nil where there is no window to cut in.
+  var cut: (@MainActor (ProcessableFile) -> Void)?
   private var measuring: Task<Void, Never>?
   private var working: Task<Void, Never>?
   private let scratch = FileManager.default.temporaryDirectory
@@ -108,7 +110,7 @@ final class AskSession: ObservableObject {
 
   /// The questions these files can really be asked.
   var questions: [AskRequest.Question] {
-    request.questions.filter { ($0 != .join || join != nil) && !choices(for: $0).isEmpty }
+    request.questions.filter { ($0 != .join || join != nil) && ($0 != .cut || cut != nil) && !choices(for: $0).isEmpty }
   }
 
   /// Files of one kind are asked about; of several, nothing suits them all.
@@ -120,12 +122,21 @@ final class AskSession: ObservableObject {
   var canRun: Bool { request.answered(with: answers).actions != request.preset.actions || !request.preset.actions.isEmpty }
 
   func choose(_ answer: AskRequest.Answer?, for question: AskRequest.Question) {
+    if answer == .cut { return openTheCutter() }
     answers[question] = answer
     // Made into one they are not made into anything else as well.
     if question == .join, answer != nil { answers = answers.filter { $0.key == .join } }
     if question != .join, answer != nil { answers[.join] = nil }
     // What the other choices come to has just changed.
     if questions.count > 1 { measure() }
+  }
+
+  /// What is cut is cut somewhere else, and this has no more to ask.
+  private func openTheCutter() {
+    guard let file = files.first, let cut else { return }
+    stop()
+    cut(file)
+    onClose()
   }
 
   /// Run the answer, where closing the panel can stop it.
@@ -185,7 +196,7 @@ final class AskSession: ObservableObject {
     guard let preview, let file = files.first, ConvertKind(fileType: file.fileType) == .image else { return }
     measuring?.cancel()
     measured = [:]
-    let asked = questions.filter { $0 != .privacy && $0 != .join }
+    let asked = questions.filter { $0 != .privacy && $0 != .join && $0 != .cut }
     let given = answers
     measuring = Task { [weak self] in
       for question in asked {

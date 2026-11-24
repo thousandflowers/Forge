@@ -79,6 +79,7 @@ private struct ResultCardView: View {
         .font(.callout).monospacedDigit()
       }
       Spacer(minLength: 4)
+      ResultActions(urls: [card.file])
       if isTooLate {
         Text("Too late to undo").font(.caption).foregroundStyle(.secondary)
       } else {

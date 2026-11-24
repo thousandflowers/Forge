@@ -197,7 +197,7 @@ struct AskView: View {
         ))
         .toggleStyle(.checkbox)
         .dropTile(.init(question: question, answer: .flag(true)))
-      } else {
+      } else if question != .cut || !questions.contains(.tool) {
         VStack(alignment: .leading, spacing: 8) {
           Text(question.title).font(.callout.weight(.semibold)).foregroundStyle(.secondary)
           grid(question, numbered: index == 0)
@@ -217,11 +217,14 @@ struct AskView: View {
 
   private func grid(_ question: AskRequest.Question, numbered: Bool) -> some View {
     let choices = session.choices(for: question)
+    // Cutting by hand is one more thing to do to it.
+    let byHand = question == .tool && session.questions.contains(.cut) ? session.choices(for: .cut) : []
     return VStack(alignment: .leading, spacing: 8) {
       LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
         ForEach(Array(choices.enumerated()), id: \.element.id) { index, choice in
           button(choice, for: question, number: numbered && index < 9 ? index + 1 : nil)
         }
+        ForEach(byHand) { button($0, for: .cut, number: nil) }
       }
       if question.kind != nil {
         TextField("Something else: \(hint(question))", text: Binding(get: { typed[question] ?? "" }, set: { typed[question] = $0 }))
@@ -273,7 +276,7 @@ struct AskView: View {
 
   private func pick(_ answer: AskRequest.Answer, for question: AskRequest.Question) {
     session.choose(session.answers[question] == answer ? nil : answer, for: question)
-    if session.answersAtOnce { go() }
+    if session.answersAtOnce, answer != .cut { go() }
   }
 
   private func submit(_ question: AskRequest.Question) {
@@ -300,7 +303,10 @@ struct AskView: View {
         Text(weight(outputs)).font(.callout).foregroundStyle(.green) }
       }
       Spacer(minLength: 8)
-      if !outputs.isEmpty { Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(outputs); close() }.controlSize(.small) }
+      if !outputs.isEmpty {
+        ResultActions(urls: outputs)
+        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(outputs); close() }.controlSize(.small)
+      }
     }
     .task {
       try? await Task.sleep(nanoseconds: Self.linger)
