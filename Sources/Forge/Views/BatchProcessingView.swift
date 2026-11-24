@@ -5,10 +5,12 @@ import UniformTypeIdentifiers
 
 struct BatchProcessingView: View {
   @EnvironmentObject private var model: AppModel
-  @StateObject private var vm = BatchViewModel()
+  /// Owned by the window, not by this screen: a screen is made again every time
+  /// it is come back to, and the files, the results and a batch still running
+  /// went with it.
+  @ObservedObject var vm: BatchViewModel
   @ObservedObject private var installer = ToolInstaller.shared
 
-  @State private var choice = ConvertChoice()
   /// Empty until a column header is clicked: the list keeps the order the
   /// files were added in, which is also the order they convert in.
   @State private var sortOrder: [KeyPathComparator<ProcessableFile>] = []
@@ -18,11 +20,6 @@ struct BatchProcessingView: View {
   /// The conversions worth one question, one per kind. Empty means there is
   /// nothing to ask.
   @State private var asking: [ConfirmationGroup] = []
-  /// A chain handed to this screen rather than chosen on it - a row in history
-  /// asking to be run again. It is not one of the saved presets, so it cannot
-  /// be looked up by id, and it stands until the user opens the sheet and says
-  /// something else.
-  @State private var adhoc: RulePreset?
   /// The file being looked through for things to cover up. Redaction is not
   /// part of a conversion: it is irreversible, it needs a person to agree to
   /// every region, and it writes a copy of its own.
@@ -38,7 +35,7 @@ struct BatchProcessingView: View {
     vm.files.reduce(0) { $0 + $1.fileSize }
   }
 
-  private var preset: RulePreset? { adhoc ?? choice.resolved(against: model.presets) }
+  private var preset: RulePreset? { vm.adhoc ?? vm.choice.resolved(against: model.presets) }
 
   var body: some View {
     VStack(spacing: 0) {
@@ -129,7 +126,7 @@ struct BatchProcessingView: View {
         kinds: kinds,
         sources: vm.files,
         presets: offeredPresets,
-        choice: $choice,
+        choice: $vm.choice,
         sameAsLast: LastConversions.offer(for: vm.files),
         onSameAsLast: sameAsLast,
         onMore: openMaker,
@@ -154,7 +151,7 @@ struct BatchProcessingView: View {
       )
     }
     .confirmationDialog(summaryTitle, isPresented: $confirming) {
-      Button(choice.destinationMode == .overwrite ? "Replace Files" : "Move Files", role: .destructive) {
+      Button(vm.choice.destinationMode == .overwrite ? "Replace Files" : "Move Files", role: .destructive) {
         start()
       }
       Button("Cancel", role: .cancel) {}
@@ -294,7 +291,7 @@ struct BatchProcessingView: View {
       // batch's choice is one press away, as "Same as Last", instead of
       // riding along where it may not fit - a film's MOV · 1280×720 · HEVC
       // showed on the next song.
-      choice = choice.cleared()
+      vm.choice = vm.choice.cleared()
     }
     route()
   }
@@ -317,7 +314,7 @@ struct BatchProcessingView: View {
     guard preset != nil else { openOptions(); return }
 
     let plans = vm.files.map {
-      ConversionPlan(file: $0, preset: preset, destinationMode: choice.destinationMode)
+      ConversionPlan(file: $0, preset: preset, destinationMode: vm.choice.destinationMode)
     }
 
     switch ConfirmationLevel.forBatch(plans) {
@@ -369,7 +366,7 @@ struct BatchProcessingView: View {
           count: group.count,
           preset: preset,
           plan: group.plan,
-          destination: choice.destinationURL
+          destination: vm.choice.destinationURL
         )
       }
       .sorted { $0.kind.rawValue < $1.kind.rawValue }
@@ -387,32 +384,32 @@ struct BatchProcessingView: View {
 
   private func clear() {
     vm.clear()
-    adhoc = nil
+    vm.adhoc = nil
   }
 
   /// The sheet is the place where the user says what they want, so opening it
   /// puts them back in charge of the chain.
   private func openOptions() {
-    adhoc = nil
-    choice = choice.cleared()
+    vm.adhoc = nil
+    vm.choice = vm.choice.cleared()
     showingOptions = true
   }
 
   /// Overwrite and Move both change what is already on disk, so they are worth
   /// a sentence before rather than an apology after.
   private func convert() {
-    if choice.destinationMode == .copyTo { start() } else { confirming = true }
+    if vm.choice.destinationMode == .copyTo { start() } else { confirming = true }
   }
 
   /// The maker with these files in it, and back here however it is left.
   private func openMaker() {
     model.presetEditor = PresetEditorRequest(
-      preset: choice.draftForMaker,
+      preset: vm.choice.draftForMaker,
       conversion: EditorConversion(
         sources: vm.files,
         fitMode: model.settings.defaultFitMode,
-        mode: choice.destinationMode,
-        destination: choice.destinationURL,
+        mode: vm.choice.destinationMode,
+        destination: vm.choice.destinationURL,
         onBack: { take($0); showingOptions = true },
         onConvert: { take($0); convert() }
       )
@@ -420,9 +417,9 @@ struct BatchProcessingView: View {
   }
 
   private func take(_ outcome: EditorConversion.Outcome) {
-    choice = choice.edited(outcome.chain)
-    choice.destinationMode = outcome.mode
-    choice.destinationURL = outcome.destination
+    vm.choice = vm.choice.edited(outcome.chain)
+    vm.choice.destinationMode = outcome.mode
+    vm.choice.destinationURL = outcome.destination
   }
 
   /// The last conversion of this kind, run on these files: the same chain and
@@ -430,9 +427,9 @@ struct BatchProcessingView: View {
   /// originals.
   private func sameAsLast() {
     guard let last = LastConversions.offer(for: vm.files) else { return }
-    adhoc = last.preset
-    choice.destinationMode = last.mode
-    choice.destinationURL = last.destination
+    vm.adhoc = last.preset
+    vm.choice.destinationMode = last.mode
+    vm.choice.destinationURL = last.destination
     if last.mode == .copyTo { start() } else { confirming = true }
   }
 
@@ -452,9 +449,9 @@ struct BatchProcessingView: View {
     // dropped on a preset join what is already here.
     if pending.replacesList, !vm.isProcessing { vm.clear() }
     vm.add(pending.files)
-    adhoc = pending.preset
-    choice.destinationMode = pending.mode
-    choice.destinationURL = pending.destination
+    vm.adhoc = pending.preset
+    vm.choice.destinationMode = pending.mode
+    vm.choice.destinationURL = pending.destination
     model.pending = nil
     guard !vm.files.isEmpty else { return }
     route()
@@ -463,21 +460,21 @@ struct BatchProcessingView: View {
   private func start() {
     guard let preset else { return }
     LastConversions.record(
-      LastConversion(preset: preset, mode: choice.destinationMode, destination: choice.destinationURL),
+      LastConversion(preset: preset, mode: vm.choice.destinationMode, destination: vm.choice.destinationURL),
       for: kinds
     )
     Task {
       await vm.convert(
         model: model,
         preset: preset,
-        mode: choice.destinationMode,
-        destination: choice.destinationURL
+        mode: vm.choice.destinationMode,
+        destination: vm.choice.destinationURL
       )
     }
   }
 
   private var summaryTitle: String {
-    choice.destinationMode == .overwrite
+    vm.choice.destinationMode == .overwrite
       ? (vm.files.count == 1 ? "Replace this file?" : "Replace these \(vm.files.count) files?")
       : (vm.files.count == 1 ? "Move this file?" : "Move these \(vm.files.count) files?")
   }
@@ -494,7 +491,7 @@ struct BatchProcessingView: View {
       if !chain.isEmpty { lines.append(chain) }
     }
 
-    switch choice.destinationMode {
+    switch vm.choice.destinationMode {
     case .overwrite:
       lines.append(
         model.settings.createBackupBeforeOverwrite
@@ -522,6 +519,13 @@ struct BatchProcessingView: View {
 @MainActor
 final class BatchViewModel: ObservableObject {
   @Published var files: [ProcessableFile] = []
+  /// What they should become, kept with them.
+  @Published var choice = ConvertChoice()
+  /// A chain handed to the screen rather than chosen on it - a row in history
+  /// asking to be run again. It is not one of the saved presets, so it cannot
+  /// be looked up by id, and it stands until the user opens the sheet and says
+  /// something else.
+  @Published var adhoc: RulePreset?
   @Published var statusMap: [UUID: ProcessingStatus] = [:]
   /// Why a file failed, as the engine said it. The row used to say "Failed"
   /// and nothing else, with the reason thrown away.

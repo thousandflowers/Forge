@@ -4,14 +4,20 @@ import AppKit
 struct ForgeApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
   @StateObject private var model = AppModel()
+  /// Here rather than in the window, so a closed window keeps its files.
+  @StateObject private var batch = BatchViewModel()
 
   var body: some Scene {
     Window("Forge", id: MenuBarView.windowID) {
-      ContentView()
+      ContentView(batch: batch)
         .environmentObject(model)
         .frame(minWidth: 880, minHeight: 600)
         .onAppear { delegate.inbox.deliver = { model.open($0) } }
     }
+    // Files opened from outside come through the delegate, to the window there
+    // is. Left to itself SwiftUI opens the scene again for each: the window
+    // faded out and came back.
+    .handlesExternalEvents(matching: [])
     .commands {
       SidebarCommands()
       ForgeCommands(model: model)
@@ -24,8 +30,25 @@ struct ForgeApp: App {
         .environmentObject(model)
     } label: {
       // The symbol's own name was what VoiceOver read: "Build" ("Compilazione").
-      Image(systemName: "hammer").accessibilityLabel(Text("Forge"))
+      MenuBarLabel(model: model, delegate: delegate)
     }
+  }
+}
+
+/// The menu bar's icon, which is there from launch whether or not a window is:
+/// so it is what says where files from outside go.
+private struct MenuBarLabel: View {
+  let model: AppModel
+  let delegate: AppDelegate
+  @Environment(\.openWindow) private var openWindow
+
+  var body: some View {
+    Image(systemName: "hammer")
+      .accessibilityLabel(Text("Forge"))
+      .onAppear {
+        model.showWindow = { openWindow(id: MenuBarView.windowID) }
+        delegate.inbox.deliver = { model.open($0) }
+      }
   }
 }
 

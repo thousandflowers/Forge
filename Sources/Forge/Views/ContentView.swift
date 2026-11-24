@@ -2,6 +2,8 @@ import SwiftUI
 
 struct ContentView: View {
   @EnvironmentObject private var model: AppModel
+  let batch: BatchViewModel
+  @Environment(\.openWindow) private var openWindow
 
   var body: some View {
     NavigationSplitView {
@@ -20,6 +22,7 @@ struct ContentView: View {
     // that reads the window that way.
     .accessibilityHidden(model.presetEditor != nil)
     .task { await model.bootstrap() }
+    .onAppear { model.showWindow = { openWindow(id: MenuBarView.windowID) } }
     .preferredColorScheme(model.settings.appearance.colorScheme)
     // A preset is a program, and a program is not written in a sheet: the
     // editor takes the window, sidebar included, the way Shortcuts does.
@@ -57,7 +60,7 @@ struct ContentView: View {
   @ViewBuilder
   private var detail: some View {
     switch model.section ?? .process {
-    case .process:  BatchProcessingView()
+    case .process:  BatchProcessingView(vm: batch)
     case .presets:  PresetsView()
     case .gallery:  GalleryView()
     case .folders:  MonitoredFoldersView()
