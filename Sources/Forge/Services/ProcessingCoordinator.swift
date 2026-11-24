@@ -729,6 +729,16 @@ actor ProcessingCoordinator {
     return candidate
   }
 
+  func claim(_ desired: URL) throws -> URL { try reserveUniqueURL(desired) }
+
+  func record(_ entry: ProcessingHistory) async {
+    do {
+      try await persistence.appendHistory(entry)
+    } catch {
+      NSLog("Forge: converted %@ but could not record it in History: %@", entry.fileURL.lastPathComponent, error.localizedDescription)
+    }
+  }
+
   /// The first name in the `name`, `name 2`, `name 3` sequence that is free.
   private static func freeURL(_ desired: URL) throws -> URL {
     let fileManager = FileManager.default

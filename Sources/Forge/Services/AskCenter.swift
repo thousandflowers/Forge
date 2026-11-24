@@ -9,6 +9,7 @@ import SwiftUI
 @MainActor
 final class AskCenter: ObservableObject {
   typealias Convert = @MainActor (ProcessableFile, RulePreset) async throws -> [URL]
+  typealias Join = @MainActor ([ProcessableFile], Joiner.Kind) async throws -> URL
   typealias Preview = @MainActor (ProcessableFile, RulePreset, URL) async throws -> ProcessingResult
 
   @Published private(set) var current: AskSession?
@@ -77,6 +78,8 @@ final class AskSession: ObservableObject {
 
   private let convert: AskCenter.Convert
   private let preview: AskCenter.Preview?
+  /// Nil where files come one at a time, and are never all of them together.
+  var join: AskCenter.Join?
   private var measuring: Task<Void, Never>?
   private var working: Task<Void, Never>?
   private let scratch = FileManager.default.temporaryDirectory
@@ -104,7 +107,9 @@ final class AskSession: ObservableObject {
   }
 
   /// The questions these files can really be asked.
-  var questions: [AskRequest.Question] { request.questions.filter { !choices(for: $0).isEmpty } }
+  var questions: [AskRequest.Question] {
+    request.questions.filter { ($0 != .join || join != nil) && !choices(for: $0).isEmpty }
+  }
 
   /// Files of one kind are asked about; of several, nothing suits them all.
   var isMixed: Bool { Set(files.map { ConvertKind(fileType: $0.fileType) }).count > 1 }
@@ -116,6 +121,9 @@ final class AskSession: ObservableObject {
 
   func choose(_ answer: AskRequest.Answer?, for question: AskRequest.Question) {
     answers[question] = answer
+    // Made into one they are not made into anything else as well.
+    if question == .join, answer != nil { answers = answers.filter { $0.key == .join } }
+    if question != .join, answer != nil { answers[.join] = nil }
     // What the other choices come to has just changed.
     if questions.count > 1 { measure() }
   }
@@ -132,6 +140,12 @@ final class AskSession: ObservableObject {
     var outputs: [URL] = []
     var failures: [String] = []
     state = .working(0)
+    if case .join(let kind)? = answers[.join], let join {
+      do { state = .done([try await join(files, kind)]) } catch is CancellationError {
+        state = .failed("Stopped before it finished.")
+      } catch { state = .failed(error.localizedDescription) }
+      return
+    }
     for (index, file) in files.enumerated() {
       do {
         outputs += try await convert(file, preset)
@@ -171,7 +185,7 @@ final class AskSession: ObservableObject {
     guard let preview, let file = files.first, ConvertKind(fileType: file.fileType) == .image else { return }
     measuring?.cancel()
     measured = [:]
-    let asked = questions.filter { $0 != .privacy }
+    let asked = questions.filter { $0 != .privacy && $0 != .join }
     let given = answers
     measuring = Task { [weak self] in
       for question in asked {

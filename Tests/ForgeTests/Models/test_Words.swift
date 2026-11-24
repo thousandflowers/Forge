@@ -68,7 +68,7 @@ final class ArrivalTests: XCTestCase {
   func test_theBuiltInWordsAsk() throws {
     let expected: [String: [AskRequest.Question]] = [
       "goose_asksize.heic": [.size], "goose_askwidth.heic": [.width], "goose_askquality.heic": [.quality],
-      "goose_askformat.heic": [.format], "goose_ask.heic": [.format, .size, .privacy],
+      "goose_askformat.heic": [.format], "goose_ask.heic": [.join, .format, .tool, .size, .privacy],
     ]
     for (name, questions) in expected {
       guard case .ask(let request) = arrival(name, renamedOnly: true) else { XCTFail(name); continue }
@@ -153,7 +153,7 @@ final class AskOptionsTests: BaseTestCase {
   }
 
   func test_anAnswerBecomesTheStepItStandsFor() {
-    let request = AskRequest(preset: blank, questions: [.format, .size, .privacy])
+    let request = AskRequest(preset: blank, questions: [.join, .format, .tool, .size, .privacy])
     let run = request.answered(with: [.format: .format(.png), .size: .bytes(100_000), .privacy: .flag(true)])
     XCTAssertEqual(run.actions, [.convertFormat(to: .png), .limitSize(bytes: 100_000), .stripMetadata(policy: .stripAll)])
   }

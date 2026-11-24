@@ -478,6 +478,13 @@ final class AppModel: ObservableObject {
     guard settings.dragMenu else { return dragMenu.stop() }
     dragMenu.keys = settings.dragMenuKeys
     dragMenu.convert = { [weak self] file, preset in try await self?.convertInHand(file, with: preset) ?? [] }
+    dragMenu.join = { [weak self] files, kind in
+      guard let self else { throw CancellationError() }
+      let made = try await self.coordinator.join(files, as: kind)
+      self.remember(made)
+      Task { await self.refreshHistory() }
+      return made
+    }
     dragMenu.start()
   }
 

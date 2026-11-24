@@ -34,6 +34,8 @@ enum Arrival: Equatable {
 struct AskRequest: Equatable {
   enum Question: Hashable {
     case format, size, width, quality, privacy
+    /// Something done to it, and several made into one.
+    case tool, join
     /// One the preset asks, under its own key.
     case parameter(PresetParameter)
 
@@ -44,13 +46,15 @@ struct AskRequest: Equatable {
       case .width: return .width
       case .quality: return .quality
       case .parameter(let parameter): return parameter.kind
-      case .format, .privacy: return nil
+      case .format, .privacy, .tool, .join: return nil
       }
     }
 
     var title: String {
       switch self {
       case .format: return "Comes out as"
+      case .tool: return "Do this to it"
+      case .join: return "All of them together"
       case .privacy: return "Remove location and camera details"
       case .parameter(let parameter) where !parameter.label.isEmpty: return parameter.label
       case .size, .width, .quality, .parameter:
@@ -68,6 +72,8 @@ struct AskRequest: Equatable {
     case bytes(Int)
     case number(Double)
     case flag(Bool)
+    case tool(Tool)
+    case join(Joiner.Kind)
   }
 
   var preset: RulePreset
@@ -90,7 +96,7 @@ struct AskRequest: Equatable {
     base.nameTrigger = word.rawValue
     preset = base
     switch word {
-    case .everything: questions = [.format, .size, .privacy]
+    case .everything: questions = [.join, .format, .tool, .size, .privacy]
     case .format: questions = [.format]
     case .size: questions = [.size]
     case .width: questions = [.width]
@@ -107,6 +113,8 @@ struct AskRequest: Equatable {
       case (.format, .format(let type)):
         run.actions.removeAll(where: \.isFormat)
         run.actions.insert(.convertFormat(to: type), at: 0)
+      case (.tool, .tool(let tool)):
+        run.actions = run.actions.adding(tool)
       case (.privacy, .flag(true)):
         run = run.replacing(.stripMetadata(policy: .stripAll))
       case (.parameter(let parameter), .number(let value)):
@@ -165,6 +173,12 @@ enum AskOptions {
         .compactMap { format in format.type.map { Choice(label: format.label, value: .format($0)) } }
     case .privacy:
       return [Choice(label: question.title, value: .flag(true))]
+    case .tool:
+      return Tool.handy(for: kind)
+        .filter { tool in files.allSatisfy { tool.suits($0.fileType) } }
+        .map { Choice(label: $0.title, value: .tool($0)) }
+    case .join:
+      return Joiner.kinds(for: files).map { Choice(label: $0.title, value: .join($0)) }
     case .size, .width, .quality, .parameter:
       switch question.kind {
       case .maxFileSize:

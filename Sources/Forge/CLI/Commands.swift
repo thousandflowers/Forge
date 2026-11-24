@@ -114,6 +114,51 @@ struct Convert: AsyncParsableCommand {
   }
 }
 
+// MARK: - join
+
+extension ForgeCommand {
+  @available(macOS 13, *)
+  struct Join: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "Make several files into one, in the order given.",
+      discussion: """
+        PDFs and pictures become one PDF, films one film, recordings one recording.
+
+          forge join cover.pdf chapter*.pdf --out ~/Desktop
+          forge join *.jpg --as film --name holiday --out .
+        """
+    )
+
+    @Argument(help: "Files to join.", completion: .file())
+    var files: [String]
+
+    @Option(name: .customLong("as"), help: "What to make: pdf, film, sound. Without it, what the files suggest.")
+    var kind: Joiner.Kind?
+
+    @Option(name: [.customShort("o"), .long], help: "Folder to write into. Without it, beside the first file.")
+    var out: String?
+
+    @Option(help: "What to call it, without an extension.")
+    var name: String?
+
+    func run() async throws {
+      let sources = try files.map { path in
+        do { return try ProcessableFile(url: URL(fileURLWithPath: path)) } catch {
+          throw CLIError("\(path): \(error.localizedDescription)")
+        }
+      }
+      let possible = Joiner.kinds(for: sources)
+      guard let chosen = kind ?? possible.first, possible.contains(chosen) else {
+        throw CLIError(sources.count < 2 ? "Give at least two files to join." : "These files cannot be made into one together.")
+      }
+      let coordinator = ProcessingCoordinator(settings: AppSettings.load())
+      print(try await coordinator.join(sources, as: chosen, into: out.map { URL(fileURLWithPath: $0) }, named: name).path)
+    }
+  }
+}
+
+extension Joiner.Kind: ExpressibleByArgument {}
+
 // MARK: - the presets the tool knows
 
 extension ForgeCommand {

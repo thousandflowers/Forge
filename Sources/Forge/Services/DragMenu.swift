@@ -21,6 +21,7 @@ final class DragMenu {
   var keys = HoldKeys.usual
   var convert: AskCenter.Convert = { _, _ in [] }
   var preview: AskCenter.Preview?
+  var join: AskCenter.Join?
 
   /// The menu this drag brought up, until the drag is over.
   private(set) var session: AskSession?
@@ -138,6 +139,7 @@ final class DragMenu {
       request: AskRequest(word: .everything, over: nil), file: files[0], convert: convert, preview: preview
     )
     session.files = files
+    session.join = join
     // The one before, let go of a moment ago and not yet gone.
     if let before = self.session { close(before) }
     self.session = session

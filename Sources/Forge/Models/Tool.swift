@@ -310,6 +310,17 @@ extension Tool {
     }
   }
 
+  /// What people reach for, by what is in their hand.
+  static func handy(for kind: ConvertKind) -> [Tool] {
+    let words: [ConvertKind: [String]] = [
+      .image: ["nobg", "crop1x1", "rotate90"],
+      .video: ["mute", "speed2x", "normalize", "rotate90", "crop1x1", "crop9x16"],
+      .audio: ["normalize", "speed1.5x", "split2"],
+      .document: ["splitpages", "rotate90", "crop1x1"],
+    ]
+    return (words[kind] ?? []).compactMap(Tool.init(word:))
+  }
+
   /// What another step of takes its place: a turn one way is instead of a turn
   /// another way, and not instead of a mirror.
   var slot: String {
