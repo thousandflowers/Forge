@@ -35,8 +35,8 @@ struct MCPServer {
         return reply(["content": [["type": "text", "text": text]], "isError": false])
       } catch {
         // A mistake the assistant can read and put right, not a broken server.
-        let said = (error as? CustomStringConvertible).map(String.init(describing:))
-        return reply(["content": [["type": "text", "text": (error as? LocalizedError)?.errorDescription ?? said ?? error.localizedDescription]], "isError": true])
+        let said = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+        return reply(["content": [["type": "text", "text": said]], "isError": true])
       }
     default:
       return ["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "Forge has no method called \(method)"]]
@@ -57,7 +57,8 @@ struct MCPServer {
           "files": files, "out": out,
           "to": ["type": "string", "description": "Format to write, by extension: jpeg, mp4, txt, pdf…"],
           "do": ["type": "array", "items": ["type": "string"], "description": "Things to do to each, in order: \(words)."],
-          "preset": ["type": "string", "description": "Name of a saved preset, instead of to and do."],
+          "preset": ["type": "string", "description": "Name of a saved preset, as the presets tool lists them. It is the whole recipe: give it without to, do and maxBytes."],
+          "answers": ["type": "object", "additionalProperties": ["type": "number"], "description": "Answers to what the preset asks, by key. What is not answered takes its usual value."],
           "maxBytes": ["type": "integer", "description": "Come out no larger than this."],
         ] as Object],
       ],
@@ -76,9 +77,20 @@ struct MCPServer {
     switch name {
     case "convert": return try await convert(arguments)
     case "join": return try await join(arguments)
-    case "presets": return try await presets().map { "\($0.name): \($0.actions.map(ForgeCommand.Presets.describe).joined(separator: " · "))" }.joined(separator: "\n")
+    case "presets": return try await presets().map(Self.describe).joined(separator: "\n")
     default: throw CLIError("Forge has no tool called “\(name)”.")
     }
+  }
+
+  /// What it does, which files it is for, and what it asks.
+  private static func describe(_ preset: RulePreset) -> String {
+    var line = "\(preset.name) (\(preset.inputFormats?.joined(separator: ", ") ?? preset.category.title.lowercased())): "
+      + preset.actions.map(ForgeCommand.Presets.describe).joined(separator: " · ")
+    for question in preset.parameters {
+      let range = question.kind.range
+      line += ". Asks \(question.key): \(question.label), \(Tool.text(range.lowerBound)) to \(Tool.text(range.upperBound)) \(question.kind.unit), usually \(Tool.text(question.defaultValue))"
+    }
+    return line
   }
 
   private func convert(_ arguments: Object) async throws -> String {
@@ -88,13 +100,14 @@ struct MCPServer {
     for path in try paths(arguments) {
       do {
         let file = try ProcessableFile(url: URL(fileURLWithPath: path))
+        guard preset.accepts(file.url) else { throw CLIError("“\(preset.name)” is not for this kind of file") }
         let entry = try await coordinator.processFile(
           file, with: preset, destinationMode: .copyTo, destinationURL: folder(arguments) ?? file.url.deletingLastPathComponent()
         ) { _ in }
         lines += entry.outputs.map(\.path)
       } catch {
         failed += 1
-        lines.append("failed \(path): \(error.localizedDescription)")
+        lines.append("failed \(path): \((error as? LocalizedError)?.errorDescription ?? String(describing: error))")
       }
     }
     // Some of them done is an answer; none of them is not.
@@ -117,8 +130,13 @@ struct MCPServer {
       guard let found = try await presets().first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
         throw CLIError("No preset is called “\(name)”.")
       }
-      return found
+      // A preset is the whole recipe. What is beside it would be dropped without
+      // a word, which reads as if it had been done.
+      let beside = ["to", "do", "maxBytes"].filter { arguments[$0] != nil }
+      guard beside.isEmpty else { throw CLIError("A preset is the whole recipe. Give it without \(beside.joined(separator: ", ")).") }
+      return found.answered(with: try answers(arguments, to: found))
     }
+    guard arguments["answers"] == nil else { throw CLIError("Answers are to a preset's questions, and no preset was given.") }
     var made = RulePreset(name: "Asked by an assistant", description: "", category: .custom)
     if let format = arguments["to"] as? String {
       made = try RecipeOptions.parse(["--to", format]).resolve(saved: [])
@@ -131,6 +149,21 @@ struct MCPServer {
     if let bytes = (arguments["maxBytes"] as? NSNumber)?.intValue, bytes > 0 { made.actions.append(.limitSize(bytes: bytes)) }
     guard made.doesSomething else { throw CLIError("Say what to do: to, do, preset or maxBytes.") }
     return made
+  }
+
+  private func answers(_ arguments: Object, to preset: RulePreset) throws -> [String: Double] {
+    var answers: [String: Double] = [:]
+    for (key, value) in arguments["answers"] as? Object ?? [:] {
+      guard let asked = preset.parameters.first(where: { $0.key == key }) else {
+        let keys = preset.parameters.map(\.key).joined(separator: ", ")
+        throw CLIError("“\(preset.name)” does not ask for “\(key)”. It asks for: \(keys.isEmpty ? "nothing" : keys).")
+      }
+      guard let number = (value as? NSNumber)?.doubleValue, asked.kind.range.contains(number) else {
+        throw CLIError("\(key) is \(Tool.text(asked.kind.range.lowerBound)) to \(Tool.text(asked.kind.range.upperBound)).")
+      }
+      answers[key] = number
+    }
+    return answers
   }
 
   private func paths(_ arguments: Object) throws -> [String] {
