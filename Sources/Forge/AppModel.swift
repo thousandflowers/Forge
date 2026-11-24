@@ -10,6 +10,12 @@ final class AppModel: ObservableObject {
   @Published var history: [ProcessingHistory] = []
   @Published var settings: AppSettings
 
+  /// The questions files ask by their names, one at a time.
+  let asks = AskCenter()
+
+  /// Brings the window back, once there has been one.
+  var showWindow: (() -> Void)?
+
   /// The last thing that went wrong, for the UI to show. Saving a preset or
   /// starting a watcher used to fail in silence, leaving the screen claiming
   /// everything had worked.
@@ -46,7 +52,9 @@ final class AppModel: ObservableObject {
     let loaded = AppSettings.load()
     self.settings = loaded
     self.persistence = persistence
-    self.coordinator = ProcessingCoordinator(settings: loaded, persistence: persistence)
+    let coordinator = ProcessingCoordinator(settings: loaded, persistence: persistence)
+    self.coordinator = coordinator
+    asks.preview = { file, preset, folder in try await coordinator.preview(file, with: preset, into: folder) }
   }
 
   /// Load persisted state on launch; seed default presets on first run.
@@ -189,7 +197,10 @@ final class AppModel: ObservableObject {
 
   // MARK: - Folders
 
-  func addFolder(url: URL, presetID: UUID, mode: DestinationMode, destination: URL?, includeSubfolders: Bool) {
+  func addFolder(
+    url: URL, presetID: UUID, mode: DestinationMode, destination: URL?,
+    includeSubfolders: Bool, onlyWhenRenamed: Bool = false
+  ) {
     // Two watchers on one folder convert everything twice, and the second copy
     // arrives named "photo 2.jpeg" with nothing to say where it came from.
     let path = url.standardizedFileURL.path
@@ -211,7 +222,8 @@ final class AppModel: ObservableObject {
       destinationMode: mode,
       destinationURL: destination,
       isActive: true,
-      includeSubfolders: includeSubfolders
+      includeSubfolders: includeSubfolders,
+      onlyWhenRenamed: onlyWhenRenamed
     )
     folders.append(folder)
     persistFolders()
@@ -223,6 +235,12 @@ final class AppModel: ObservableObject {
     folders[index].isActive = active
     persistFolders()
     if active { startWatcher(folders[index]) } else { stopWatcher(folders[index]) }
+  }
+
+  func setOnlyWhenRenamed(_ folder: MonitoredFolder, _ on: Bool) {
+    guard let index = folders.firstIndex(where: { $0.id == folder.id }) else { return }
+    folders[index].onlyWhenRenamed = on
+    persistFolders()
   }
 
   func deleteFolders(at offsets: IndexSet) {
@@ -326,6 +344,9 @@ final class AppModel: ObservableObject {
   func open(_ urls: [URL]) {
     guard !urls.isEmpty else { return }
     opened += urls
+    // A file handed over with the window closed has nowhere to be seen.
+    let isShown = NSApp?.windows.contains { $0.isVisible && $0.identifier?.rawValue == MenuBarView.windowID } ?? true
+    if !isShown { showWindow?() }
   }
 
   /// Run the same chain on the same files.
@@ -461,30 +482,35 @@ final class AppModel: ObservableObject {
 
   private func processIncoming(_ url: URL, folder: MonitoredFolder) async {
     guard !wroteThis(url) else { return }
-    // A file renamed to carry a preset's word asks for that preset by name;
-    // otherwise the folder's own preset takes it.
-    let triggered = presets.first { $0.isEnabled && $0.isTriggered(by: url) }
-    guard let preset = triggered ?? presets.first(where: { $0.id == folder.ruleId }) else { return }
-    // A preset that names its formats leaves everything else in the folder alone.
-    guard preset.accepts(url) else { return }
+    // Asked of the folder as it is now: the watcher was handed a copy, and the
+    // settings may have changed since.
+    guard let folder = folders.first(where: { $0.id == folder.id }), folder.isActive else { return }
+    let arrival = Arrival.of(
+      url,
+      folderPreset: presets.first { $0.id == folder.ruleId },
+      presets: presets,
+      onlyWhenRenamed: folder.onlyWhenRenamed
+    )
+    guard arrival != .leave, let file = try? ProcessableFile(url: url) else {
+      return // nothing asked for, or not something Forge converts
+    }
 
-    let file: ProcessableFile
-    do {
-      file = try ProcessableFile(url: url)
-    } catch {
-      return // not something Forge converts; nothing to report
+    let preset: RulePreset
+    switch arrival {
+    case .leave: return
+    case .run(let chosen): preset = chosen
+    case .ask(let request):
+      asks.ask(request, from: folder.id, about: file) { [weak self] file, preset in
+        // Where it goes is asked when it goes: the question may have been up
+        // for minutes, and the folder switched off or pointed elsewhere since.
+        guard let self, let now = self.folders.first(where: { $0.id == folder.id }), now.isActive else { return [] }
+        return try await self.convertArrival(file, with: preset, in: now)
+      }
+      return
     }
 
     do {
-      let entry = try await coordinator.processFile(
-        file,
-        with: preset,
-        destinationMode: folder.destinationMode,
-        destinationURL: folder.destinationURL
-      ) { _ in }
-      // Every file it wrote, not only the first: the second one lands in the
-      // same watched folder and would be converted again.
-      entry.outputs.forEach(remember)
+      _ = try await convertArrival(file, with: preset, in: folder)
     } catch is CancellationError {
       // nothing to say
     } catch ProcessingError.unreadableFormat, ProcessingError.unsupportedConversion, ProcessingError.unknownType,
@@ -497,6 +523,20 @@ final class AppModel: ObservableObject {
     }
 
     await refreshHistory()
+  }
+
+  private func convertArrival(_ file: ProcessableFile, with preset: RulePreset, in folder: MonitoredFolder) async throws -> [URL] {
+    let entry = try await coordinator.processFile(
+      file,
+      with: preset,
+      destinationMode: folder.destinationMode,
+      destinationURL: folder.destinationURL
+    ) { _ in }
+    // Every file it wrote, not only the first: the second one lands in the
+    // same watched folder and would be converted again.
+    entry.outputs.forEach(remember)
+    Task { await refreshHistory() }
+    return entry.outputs
   }
 
   /// Remember a file Forge wrote, keeping the set from growing without bound.

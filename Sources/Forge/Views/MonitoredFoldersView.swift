@@ -65,6 +65,7 @@ private struct FolderRow: View {
       .help(folder.isActive ? "Stop watching" : "Watch again")
       Menu {
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder.url]) }
+        onlyWhenRenamed
         Divider()
         Button("Remove…", role: .destructive) { confirmingRemoval = true }
       } label: { Image(systemName: "ellipsis.circle") }
@@ -74,6 +75,7 @@ private struct FolderRow: View {
     .padding(.vertical, 6)
     .contextMenu {
       Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder.url]) }
+      onlyWhenRenamed
       Button("Remove…", role: .destructive) { confirmingRemoval = true }
     }
     // Deleting a preset asks; so does clearing the history. This went at once.
@@ -83,6 +85,13 @@ private struct FolderRow: View {
     } message: {
       Text("Forge stops converting what arrives in it. The folder and everything in it stay where they are.")
     }
+  }
+
+  private var onlyWhenRenamed: some View {
+    Toggle("Only when renamed", isOn: Binding(
+      get: { folder.onlyWhenRenamed },
+      set: { model.setOnlyWhenRenamed(folder, $0) }
+    ))
   }
 
   private func remove() {
@@ -99,6 +108,7 @@ private struct AddFolderSheet: View {
   @State private var mode: DestinationMode = .copyTo
   @State private var destinationURL: URL?
   @State private var includeSubfolders = false
+  @State private var onlyWhenRenamed = false
 
   private var canAdd: Bool {
     folderURL != nil && presetID != nil && (mode == .overwrite || destinationURL != nil)
@@ -112,6 +122,10 @@ private struct AddFolderSheet: View {
             Label(folderURL?.path ?? "Choose folder…", systemImage: "folder").lineLimit(1)
           }
           Toggle("Include subfolders", isOn: $includeSubfolders)
+          Toggle(isOn: $onlyWhenRenamed) {
+            Text("Only when renamed")
+            Text("Leaves every file alone until its name says what it wants: photo_2MB, photo_privacy, photo_ask, or a preset’s own word.")
+          }
         }
         Section("Apply") {
           Picker("Preset", selection: $presetID) {
@@ -140,7 +154,8 @@ private struct AddFolderSheet: View {
               presetID: presetID,
               mode: mode,
               destination: destinationURL,
-              includeSubfolders: includeSubfolders
+              includeSubfolders: includeSubfolders,
+              onlyWhenRenamed: onlyWhenRenamed
             )
           }
           dismiss()
@@ -151,7 +166,7 @@ private struct AddFolderSheet: View {
       }
       .padding()
     }
-    .frame(width: 460, height: 420)
+    .frame(width: 460, height: 480)
     .translucentSheet()
     .onAppear { if presetID == nil { presetID = model.presets.first?.id } }
   }

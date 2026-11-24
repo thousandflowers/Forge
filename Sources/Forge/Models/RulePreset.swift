@@ -169,6 +169,13 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
     return answered
   }
 
+  /// The same preset with nothing left to ask. A question nobody was there to
+  /// answer - in a watched folder, from the command line - takes its default;
+  /// it used to be dropped, default and all.
+  var settled: RulePreset {
+    parameters.isEmpty || !parameterValues.isEmpty ? self : answered(with: [:])
+  }
+
   /// A copy with `action` put in place of the one of its kind already there,
   /// or added if there is none.
   ///

@@ -16,14 +16,16 @@ actor WatchRunner {
   /// The other saved presets: a file renamed to carry one's trigger word asks
   /// for that preset, here as in the app.
   private let others: [RulePreset]
+  private let onlyWhenRenamed: Bool
   private var running: [UUID: Task<Void, Never>] = [:]
   private var folderIsGone = false
 
   init(
     preset: RulePreset, mode: DestinationMode, destination: URL?, settings: AppSettings,
-    others: [RulePreset] = []
+    others: [RulePreset] = [], onlyWhenRenamed: Bool = false
   ) {
     self.others = others
+    self.onlyWhenRenamed = onlyWhenRenamed
     self.preset = preset
     self.mode = mode
     self.destination = destination
@@ -75,10 +77,21 @@ actor WatchRunner {
     let path = url.standardizedFileURL.path
     guard !produced.contains(path) else { return }
 
-    // A file named for another preset's word goes to that preset; a preset
-    // that says which files it is for leaves the rest of the folder alone.
-    let preset = others.first { $0.isEnabled && $0.isTriggered(by: url) } ?? preset
-    guard preset.accepts(url) else { return }
+    let preset: RulePreset
+    switch Arrival.of(url, folderPreset: self.preset, presets: others, onlyWhenRenamed: onlyWhenRenamed) {
+    case .leave: return
+    case .run(let chosen): preset = chosen
+    case .ask(let request):
+      // There is no window here to ask in. A preset's questions have defaults
+      // to fall back on; a bare `_asksize` has nothing to go on.
+      guard !request.preset.parameters.isEmpty else {
+        FileHandle.standardError.write(
+          Data("left       \(url.lastPathComponent): it asks, and only the app can put the question\n".utf8)
+        )
+        return
+      }
+      preset = request.preset
+    }
     guard let file = try? ProcessableFile(url: url) else { return }
 
     do {

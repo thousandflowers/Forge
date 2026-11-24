@@ -43,6 +43,7 @@ actor ProcessingCoordinator {
     counter: Int? = nil,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingHistory {
+    let preset = preset.settled
     let fileId = file.id
 
     let started = Date()
@@ -130,7 +131,7 @@ actor ProcessingCoordinator {
   ) async throws -> ProcessingResult {
     try await run(
       file: file,
-      preset: preset,
+      preset: preset.settled,
       destinationMode: .copyTo,
       destinationURL: folder,
       counter: nil,

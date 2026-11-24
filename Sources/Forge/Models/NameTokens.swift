@@ -13,6 +13,15 @@ import Foundation
 /// the end.
 enum NameTokens {
 
+  /// The words that open a menu instead of deciding: `goose_asksize.jpg`.
+  enum Ask: String, CaseIterable, Sendable {
+    case everything = "ask"
+    case size = "asksize"
+    case width = "askwidth"
+    case quality = "askquality"
+    case format = "askformat"
+  }
+
   struct Read: Equatable {
     /// A ceiling on the finished file, in bytes.
     var ceiling: Int?
@@ -22,8 +31,10 @@ enum NameTokens {
     var width: Int?
     /// `_q80` — the quality to write at.
     var quality: Int?
+    /// `_asksize` — put the question to whoever renamed it.
+    var ask: Ask?
 
-    var isEmpty: Bool { ceiling == nil && privacy == nil && width == nil && quality == nil }
+    var isEmpty: Bool { ceiling == nil && privacy == nil && width == nil && quality == nil && ask == nil }
   }
 
   /// What the name asks for.
@@ -42,6 +53,8 @@ enum NameTokens {
         // Typed by hand, about this one file: the most thorough level, since
         // "privacy" is not a request for half of it.
         read.privacy = .stripAll
+      } else if let ask = Ask(rawValue: token) {
+        read.ask = ask
       } else if let bytes = SizeInName.bytes(in: token) {
         read.ceiling = bytes
       } else if token.hasSuffix("px"), let width = Int(token.dropLast(2)), width > 0 {

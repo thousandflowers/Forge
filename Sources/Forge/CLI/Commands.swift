@@ -258,6 +258,7 @@ struct Watch: AsyncParsableCommand {
         ignored, so the destination may sit inside the watched folder.
 
           forge watch ~/Desktop/incoming --preset "Web JPEG" --out ~/Desktop/web
+          forge watch ~/Desktop --preset "Web JPEG" --out ~/Desktop --only-renamed
         """
     )
 
@@ -269,6 +270,9 @@ struct Watch: AsyncParsableCommand {
 
     @Flag(help: "Also watch subfolders.")
     var recursive = false
+
+    @Flag(help: "Leave every file alone but the ones whose names say what they want: photo_2MB.heic, photo_privacy.heic, or a preset's own word.")
+    var onlyRenamed = false
 
     func run() async throws {
       let watched = URL(fileURLWithPath: folder)
@@ -291,7 +295,8 @@ struct Watch: AsyncParsableCommand {
         mode: mode,
         destination: outputURL,
         settings: destination.settings,
-        others: saved
+        others: saved,
+        onlyWhenRenamed: onlyRenamed
       )
       try await runner.run(
         folder: MonitoredFolder(
