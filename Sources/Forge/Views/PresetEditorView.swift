@@ -591,9 +591,9 @@ struct PresetEditorView: View {
     guard let entry = LibraryEntry.all(for: category).first(where: { $0.id == payload }), available(entry) else { return }
     switch entry.kind {
     case .step(let kind):
-      let step = blank(kind)
-      if !steps.insert(step, at: spot, root: Self.rootID) { steps.append(step) }
-      steps.ensureJoins()
+      land(blank(kind), at: spot)
+    case .tool(let kind):
+      land(Action(.tool(kind.blank)), at: spot)
     case .formats where spot.target != Self.rootID && !steps.contains(where: { $0.id == spot.target }):
       // Dropped into an arm: that copy gets a format of its own.
       if let type = offeredFormats.first?.type {
@@ -605,6 +605,11 @@ struct PresetEditorView: View {
     }
   }
 
+
+  private func land(_ step: Action, at spot: DropSpot) {
+    if !steps.insert(step, at: spot, root: Self.rootID) { steps.append(step) }
+    steps.ensureJoins()
+  }
 
   func setDropTarget(_ spot: DropSpot, _ on: Bool) {
     if on { dropTarget = spot } else if dropTarget == spot { dropTarget = nil }
@@ -725,7 +730,7 @@ struct PresetEditorView: View {
     switch entry.kind {
     case .formats: return !showsFormats || trailingSplit != nil
     case .template: return !showsTemplate
-    case .question, .step: return true
+    case .question, .step, .tool: return true
     }
   }
 
@@ -735,6 +740,7 @@ struct PresetEditorView: View {
     case .template: showsTemplate = true
     case .question(let kind): add(kind)
     case .step(let kind): steps.append(blank(kind))
+    case .tool(let kind): steps.append(Action(.tool(kind.blank)))
     }
   }
 

@@ -97,6 +97,9 @@ struct RecipeOptions: ParsableArguments {
   @Option(help: "Answer a question the preset asks, as key=value, e.g. width=640. Unanswered questions take their default.")
   var answer: [String] = []
 
+  @Option(name: .customLong("do"), help: "Something to do to it: mute, speed2x, trim10-45, rotate90, crop1x1, nobg, pages2-5, split4… The same words work in a file's name. Repeat it for more than one.")
+  var tools: [Tool] = []
+
   /// The languages asked for, whether given one option each or in one list.
   var languages: [String] {
     ocrLanguages.flatMap { $0.split(separator: ",") }.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
@@ -113,6 +116,7 @@ struct RecipeOptions: ParsableArguments {
       let beside = [
         format.map { _ in "--to" }, resize.map { _ in "--resize" }, quality.map { _ in "--quality" },
         fit.map { _ in "--fit" }, filter.isEmpty ? nil : "--filter", codec.map { _ in "--codec" },
+        tools.isEmpty ? nil : "--do",
       ].compactMap { $0 }
       guard beside.isEmpty else {
         throw ValidationError(
@@ -139,8 +143,8 @@ struct RecipeOptions: ParsableArguments {
       throw ValidationError("--fit says how to fit a new size, and no --resize was given.")
     }
 
-    guard format != nil || resize != nil || quality != nil || !filter.isEmpty || !ocrLanguages.isEmpty || codec != nil else {
-      throw ValidationError("Nothing to do: pass --preset, or one of --to, --resize, --quality, --filter.")
+    guard format != nil || resize != nil || quality != nil || !filter.isEmpty || !ocrLanguages.isEmpty || codec != nil || !tools.isEmpty else {
+      throw ValidationError("Nothing to do: pass --preset, or one of --to, --do, --resize, --quality, --filter.")
     }
 
     var preset = RulePreset(
@@ -153,6 +157,7 @@ struct RecipeOptions: ParsableArguments {
       category: .custom,
       ocrLanguages: languages
     )
+    for tool in tools { preset.actions = preset.actions.adding(tool) }
     // The extension as typed, where the format goes by more than one.
     if let format { preset.outputExtension = format.lowercased() }
     if let codec {
@@ -264,6 +269,9 @@ struct RecipeOptions: ParsableArguments {
 
 extension ResizeFitMode: ExpressibleByArgument {}
 extension FilterType: ExpressibleByArgument {}
+extension Tool: ExpressibleByArgument {
+  init?(argument: String) { self.init(word: argument) }
+}
 
 /// Entry point for the command-line side.
 ///

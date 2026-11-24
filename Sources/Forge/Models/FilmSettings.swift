@@ -273,22 +273,23 @@ struct FilmSettings: Codable, Hashable, Sendable {
   var inputArguments: [String] { from.map { ["-ss", "\($0)"] } ?? [] }
 
   /// - Parameters:
-  ///   - size: the scale filter a resize step asked for.
+  ///   - picture: the filters the rest of the chain asked for, in its order.
+  ///   - sound: the same, for what is heard.
   ///   - bars: what `.blackBars` came to.
-  func outputArguments(for container: String, size: String?, bars: String?) -> [String] {
+  func outputArguments(for container: String, picture: [String] = [], sound: [String] = [], bars: String?) -> [String] {
     var arguments: [String] = []
     if let to { arguments += ["-t", "\(max(1, to - (from ?? 0)))"] }
-    let filters = filters(size: size, bars: bars)
+    let filters = filters(picture: picture, bars: bars)
     if !filters.isEmpty { arguments += ["-vf", filters.joined(separator: ",")] }
     if let framesPerSecond { arguments += ["-r", "\(framesPerSecond)"] }
-    arguments += videoArguments(for: container) + soundArguments(for: container)
+    arguments += videoArguments(for: container) + soundArguments(for: container, filters: sound)
     if ["mp4", "m4v", "mov"].contains(container) { arguments += ["-movflags", "+faststart"] }
     return arguments
   }
 
   /// Noise before shape, shape before sharpness: each is worse at its job
   /// after the next.
-  private func filters(size: String?, bars: String?) -> [String] {
+  private func filters(picture: [String], bars: String?) -> [String] {
     var filters = [interlacing.filter, noise.filter, smoothsBlocks ? "deblock" : nil].compactMap { $0 }
     switch crop {
     case .none: break
@@ -297,7 +298,8 @@ struct FilmSettings: Codable, Hashable, Sendable {
       let sides = [top, bottom, left, right].map { max(0, $0) }
       filters.append("crop=iw-\(sides[2] + sides[3]):ih-\(sides[0] + sides[1]):\(sides[2]):\(sides[0])")
     }
-    filters += [size, turn.filter, sharpness.filter, isGrey ? "hue=s=0" : nil, isRec709 ? "colorspace=all=bt709:iall=bt601-6-625" : nil].compactMap { $0 }
+    filters += picture
+    filters += [turn.filter, sharpness.filter, isGrey ? "hue=s=0" : nil, isRec709 ? "colorspace=all=bt709:iall=bt601-6-625" : nil].compactMap { $0 }
     // Encoders want even sides, and a crop or a turn may leave them odd.
     return filters.isEmpty ? [] : filters + ["crop=trunc(iw/2)*2:trunc(ih/2)*2"]
   }
@@ -325,16 +327,18 @@ struct FilmSettings: Codable, Hashable, Sendable {
     return arguments
   }
 
-  private func soundArguments(for container: String) -> [String] {
+  private func soundArguments(for container: String, filters: [String]) -> [String] {
     guard sound != .none else { return ["-an"] }
     var arguments: [String] = []
     // A copy cannot be changed, and what has to change is encoded.
-    let changes = evensLoudness || channels != .asIs
+    let changes = evensLoudness || channels != .asIs || !filters.isEmpty
     if let name = sound.name, !(sound == .asItIs && changes) { arguments += ["-c:a", name] }
     if sound.takesRate, let soundKilobits { arguments += ["-b:a", "\(min(max(soundKilobits, 16), 640))k"] }
     if let count = channels.count { arguments += ["-ac", "\(count)"] }
     // Evened out it comes back at 192 kHz, which no player expects.
-    if evensLoudness { arguments += ["-af", "loudnorm", "-ar", "48000"] }
+    let all = filters + (evensLoudness && !filters.contains { $0.hasPrefix("loudnorm") } ? ["loudnorm"] : [])
+    if !all.isEmpty { arguments += ["-af", all.joined(separator: ",")] }
+    if all.contains(where: { $0.hasPrefix("loudnorm") }) { arguments += ["-ar", "48000"] }
     return arguments
   }
 }

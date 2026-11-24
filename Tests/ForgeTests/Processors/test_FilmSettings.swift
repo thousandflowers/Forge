@@ -8,7 +8,7 @@ final class FilmSettingsTests: BaseTestCase {
   private func arguments(_ change: (inout FilmSettings) -> Void, _ container: String = "mp4") -> [String] {
     var settings = FilmSettings()
     change(&settings)
-    return settings.outputArguments(for: container, size: nil, bars: nil)
+    return settings.outputArguments(for: container, bars: nil)
   }
 
   private func value(after flag: String, _ arguments: [String]) -> String? {
@@ -42,7 +42,7 @@ final class FilmSettingsTests: BaseTestCase {
     settings.sharpness = .light
     settings.crop = .edges(top: 10, bottom: 20, left: 4, right: 6)
     settings.turn = .right
-    let filter = value(after: "-vf", settings.outputArguments(for: "mp4", size: "scale=640:-2", bars: nil)) ?? ""
+    let filter = value(after: "-vf", settings.outputArguments(for: "mp4", picture: ["scale=640:-2"], bars: nil)) ?? ""
     let places = ["bwdif", "hqdn3d", "crop=iw-10:ih-30:4:10", "scale=640", "transpose", "unsharp", "trunc"].map { filter.range(of: $0)?.lowerBound }
     XCTAssertFalse(places.contains(nil), filter)
     XCTAssertEqual(places.compactMap { $0 }, places.compactMap { $0 }.sorted(), filter)
@@ -150,7 +150,7 @@ final class FilmSettingsTests: BaseTestCase {
         settings.speed = .fast
         settings.sound = container == "webm" ? .opus : .automatic
         let output = path("\(encoder.rawValue).\(container)")
-        XCTAssertNoThrow(try ExternalTools.run(ffmpeg, ["-loglevel", "error", "-y", "-i", source.path] + settings.outputArguments(for: container, size: nil, bars: nil) + [output.path]), "\(encoder) \(container)")
+        XCTAssertNoThrow(try ExternalTools.run(ffmpeg, ["-loglevel", "error", "-y", "-i", source.path] + settings.outputArguments(for: container, bars: nil) + [output.path]), "\(encoder) \(container)")
       }
     }
   }

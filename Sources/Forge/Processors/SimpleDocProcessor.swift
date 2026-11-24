@@ -70,6 +70,21 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
 
     let outputType = Self.outputUTI(for: output, operations: operations, fallback: .jpeg)
 
+    // The pages asked for, the way they were asked for, and then whatever it
+    // is to become.
+    var input = input
+    let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("forge-pages-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: scratch) }
+    if inputType.conforms(to: .pdf), PDFTools.change(operations) {
+      if outputType.conforms(to: .pdf), let pdf = PDFDocument(url: input) {
+        try PDFTools.refuseIfSigned(pdf, named: input.lastPathComponent)
+      }
+      try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+      let changed = scratch.appendingPathComponent(input.lastPathComponent)
+      try PDFTools.apply(operations, to: input, writing: changed)
+      input = changed
+    }
+
     // Text asked for audio is spoken, not converted - a PDF included, which is
     // why this comes before the PDF branch rather than after it.
     if FormatCatalog.audioFormatID(for: outputType) != nil {
@@ -265,7 +280,8 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     as uti: UTType,
     operations: [Operation]
   ) async throws -> (width: Int, height: Int) {
-    let bounds = page.bounds(for: .mediaBox)
+    // What is seen of the page, which a crop makes less than there is of it.
+    let bounds = page.bounds(for: .cropBox)
     let turned = page.rotation % 180 != 0
     let shown = CGSize(width: turned ? bounds.height : bounds.width, height: turned ? bounds.width : bounds.height)
     // 2x the PDF's 72 dpi so text stays readable, but capped: a poster-sized
@@ -275,7 +291,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     let renderScale = longestSide > 0 ? min(2, maximumSide / longestSide) : 1
     let size = CGSize(width: shown.width * renderScale, height: shown.height * renderScale)
 
-    let thumbnail = page.thumbnail(of: size, for: .mediaBox)
+    let thumbnail = page.thumbnail(of: size, for: .cropBox)
     guard let cgImage = thumbnail.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
       throw ProcessingError.conversionFailed(reason: "Cannot rasterise page")
     }
@@ -293,8 +309,13 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
 
     // The format is said outright: the chain may name another (PDF to PDF
     // redraws into PDF pages whatever the preset's own target).
-    let steps = operations.filter { if case .convertFormat = $0 { return false } else { return true } }
-      + [.convertFormat(to: uti)]
+    // And what is done to the page has been done to it.
+    let steps = operations.filter { operation in
+      switch operation {
+      case .convertFormat, .tool: return false
+      default: return true
+      }
+    } + [.convertFormat(to: uti)]
     let result = try await images.process(drawn, to: destination, with: steps) { _ in }
     return result.outputDimensions ?? (cgImage.width, cgImage.height)
   }

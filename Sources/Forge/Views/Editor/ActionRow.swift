@@ -104,6 +104,9 @@ struct ActionRow: View {
     case .film(let settings):
       FilmSettingsView(settings: Binding(get: { settings }, set: { action.operation = .film($0) }))
 
+    case .tool(let tool):
+      ToolRow(tool: Binding(get: { tool }, set: { action.operation = .tool($0) }))
+
     case .when, .split:
       EmptyView()
 

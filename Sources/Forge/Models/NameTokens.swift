@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 /// The instructions somebody wrote into a file's own name.
 ///
@@ -33,23 +34,49 @@ enum NameTokens {
     var quality: Int?
     /// `_asksize` — put the question to whoever renamed it.
     var ask: Ask?
+    /// `_mute`, `_speed2x` — in the order they are written.
+    var tools: [Tool] = []
 
-    var isEmpty: Bool { ceiling == nil && privacy == nil && width == nil && quality == nil && ask == nil }
+    var isEmpty: Bool { ceiling == nil && privacy == nil && width == nil && quality == nil && ask == nil && tools.isEmpty }
+  }
+
+  /// The name once its tools have been used. Run a second time a size is the
+  /// same size, but a rotation is another rotation.
+  static func spent(_ fileName: String) -> String {
+    let stem = (fileName as NSString).deletingPathExtension
+    let (said, instructions) = parse(fileName)
+    guard !said.tools.isEmpty else { return stem }
+    let type = UTType(filenameExtension: (fileName as NSString).pathExtension)
+    var pieces = stem.split(separator: "_").map(String.init)
+    let last = pieces.count - instructions
+    pieces = Array(pieces[..<last]) + pieces[last...].filter { tool($0, for: type) == nil }
+    return pieces.joined(separator: "_")
+  }
+
+  /// A word that means nothing for that kind of file is part of its name.
+  private static func tool(_ piece: String, for type: UTType?) -> Tool? {
+    guard let tool = Tool(word: piece), let type, tool.suits(type) else { return nil }
+    return tool
   }
 
   /// What the name asks for.
-  static func read(_ fileName: String) -> Read {
+  static func read(_ fileName: String) -> Read { parse(fileName).read }
+
+  /// - Returns: and how many pieces, from the end, are instructions.
+  private static func parse(_ fileName: String) -> (read: Read, pieces: Int) {
     let stem = (fileName as NSString).deletingPathExtension
+    let type = UTType(filenameExtension: (fileName as NSString).pathExtension)
     let pieces = stem.split(separator: "_").map(String.init)
     // No underscore means no instruction: the whole name is the name.
-    guard pieces.count > 1 else { return Read() }
+    guard pieces.count > 1 else { return (Read(), 0) }
 
     var read = Read()
+    var instructions = 0
     // Never the first piece: a name made only of instructions is a name, and
     // `10MB.jpg` is a file about ten megabytes.
     for piece in pieces.reversed().dropLast() {
       let token = piece.lowercased()
-      if token == "privacy" {
+      if token == "privacy" || token == "nometa" {
         // Typed by hand, about this one file: the most thorough level, since
         // "privacy" is not a request for half of it.
         read.privacy = .stripAll
@@ -63,14 +90,17 @@ enum NameTokens {
         // Two digits at least: `report_q3.pdf` is a quarter, not a request
         // to write it at quality three.
         read.quality = quality
+      } else if let tool = tool(token, for: type) {
+        read.tools.insert(tool, at: 0)
       } else {
         // Anything else ends the run. Without this, a date or a word in the
         // middle of a name would be stepped over and whatever came before it
         // read as an instruction.
         break
       }
+      instructions += 1
     }
-    return read
+    return (read, instructions)
   }
 
   /// The chain with the name's instructions in it.
@@ -98,6 +128,7 @@ enum NameTokens {
       result.removeAll { if case .quality = $0 { return true } else { return false } }
       result.append(.quality(level: quality))
     }
-    return result
+    for tool in read.tools { result = result.adding(tool) }
+    return read.tools.isEmpty ? result : result.settlingFormat(overriding: true)
   }
 }

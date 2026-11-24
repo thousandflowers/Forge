@@ -370,8 +370,13 @@ enum ExternalBridge {
 
     if !wantsSomethingStill, sourceIsTimeBased, let ffmpeg = ExternalTools.locate("ffmpeg") {
       // Only where the film itself is what is written.
-      let film = wantsTheSubtitles || (targetType.map(MediaProcessor.isSoundOnly) ?? false) ? nil : operations.film
-      var arguments = ["-hide_banner", "-loglevel", "error", "-y"] + (film?.inputArguments ?? []) + ["-i", input.path]
+      let isSound = targetType.map(MediaProcessor.isSoundOnly) ?? false
+      let edit = MediaEdit(operations)
+      var film = wantsTheSubtitles || isSound ? nil : operations.film
+      // A part named on the file is the part.
+      if edit.part != nil { film?.from = nil; film?.to = nil }
+      if edit.isMuted { film?.sound = .none }
+      var arguments = ["-hide_banner", "-loglevel", "error", "-y"] + edit.ffmpegInput + (film?.inputArguments ?? []) + ["-i", input.path]
       if wantsTheSubtitles {
         // The first subtitle track, and nothing else: without a map, ffmpeg
         // would try to carry the picture and the sound into a .srt.
@@ -386,11 +391,11 @@ enum ExternalBridge {
         // choice of one of each. The question marks let a film without one
         // through.
         // A capital V leaves out a cover, which no encoder of films takes.
-        arguments += ["-map", film == nil ? "0:v?" : "0:V?", "-map", "0:a?"]
+        arguments += ["-map", film == nil && edit.ffmpegPicture.isEmpty ? "0:v?" : "0:V?"] + (edit.isMuted ? ["-an"] : ["-map", "0:a?"])
         // Subtitles only where the container has a way to hold them: an MP4 or
         // a MOV as mov_text, Matroska and WebM as text of their own. Mapped into
         // anything else - an MXF, an AVI - ffmpeg stopped looking for an encoder.
-        let keepsSubtitles = film?.keepsSubtitles ?? true
+        let keepsSubtitles = (film?.keepsSubtitles ?? true) && edit.keepsSubtitles
         if keepsSubtitles, ["mp4", "m4v", "mov"].contains(target) { arguments += ["-map", "0:s?", "-c:s", "mov_text"] }
         if keepsSubtitles, target == "mkv" { arguments += ["-map", "0:s?", "-c:s", "srt"] }
         if keepsSubtitles, target == "webm" { arguments += ["-map", "0:s?", "-c:s", "webvtt"] }
@@ -406,9 +411,18 @@ enum ExternalBridge {
       if target == "mxf" { arguments += ["-ar", "48000"] }
       if let film {
         let bars = film.crop == .blackBars ? Self.blackBars(of: input, ffmpeg: ffmpeg) : nil
-        arguments += film.outputArguments(for: target, size: Self.scaling(in: operations), bars: bars)
-      } else if let filter = Self.scaling(in: operations) {
-        arguments += ["-vf", filter]
+        arguments += film.outputArguments(for: target, picture: edit.ffmpegPicture, sound: edit.ffmpegSound, bars: bars)
+      } else {
+        // Encoders want even sides, and a crop or a turn may leave them odd.
+        let picture = edit.ffmpegPicture
+        if !picture.isEmpty, !isSound, !wantsTheSubtitles {
+          let mayBeOdd = operations.tools.contains { $0.kind == .crop || $0.kind == .turn }
+          arguments += ["-vf", (picture + (mayBeOdd ? ["crop=trunc(iw/2)*2:trunc(ih/2)*2"] : [])).joined(separator: ",")]
+        }
+        // Evened out it comes back at 192 kHz, which no player expects.
+        if !edit.ffmpegSound.isEmpty, !edit.isMuted, !wantsTheSubtitles {
+          arguments += ["-af", edit.ffmpegSound.joined(separator: ",")] + (edit.isEvened ? ["-ar", "48000"] : [])
+        }
       }
       // The encoder that was asked for, and how hard to squeeze: both were
       // dropped on this path, so a codec chosen for an MKV made no difference.
@@ -503,24 +517,20 @@ enum ExternalBridge {
 
   /// The new size as ffmpeg's scale filter, honouring the fit. A bare scale to
   /// both sides stretched every film, whatever fit had been chosen.
-  private static func scaling(in operations: [Operation]) -> String? {
-    for operation in operations {
-      guard case .resize(let width, let height, let mode) = operation, width != nil || height != nil else { continue }
-      // -2 rather than -1 for a side that follows: some encoders refuse an odd
-      // number of pixels, and this rounds to an even one.
-      guard let width, let height else { return "scale=\(width ?? -2):\(height ?? -2)" }
-      switch mode {
-      case .stretch:
-        return "scale=\(width):\(height)"
-      case .proportional:
-        return "scale=\(width):\(height):force_original_aspect_ratio=decrease:force_divisible_by=2"
-      case .cropCenter:
-        return "scale=\(width):\(height):force_original_aspect_ratio=increase,crop=\(width):\(height)"
-      case .pad:
-        return "scale=\(width):\(height):force_original_aspect_ratio=decrease,pad=\(width):\(height):(ow-iw)/2:(oh-ih)/2"
-      }
+  static func scaling(width: Int?, height: Int?, mode: ResizeFitMode) -> String {
+    // -2 rather than -1 for a side that follows: some encoders refuse an odd
+    // number of pixels, and this rounds to an even one.
+    guard let width, let height else { return "scale=\(width ?? -2):\(height ?? -2)" }
+    switch mode {
+    case .stretch:
+      return "scale=\(width):\(height)"
+    case .proportional:
+      return "scale=\(width):\(height):force_original_aspect_ratio=decrease:force_divisible_by=2"
+    case .cropCenter:
+      return "scale=\(width):\(height):force_original_aspect_ratio=increase,crop=\(width):\(height)"
+    case .pad:
+      return "scale=\(width):\(height):force_original_aspect_ratio=decrease,pad=\(width):\(height):(ow-iw)/2:(oh-ih)/2"
     }
-    return nil
   }
 
   /// Who wrote a document and what it is called, where the system reads them
@@ -648,6 +658,11 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
       throw ProcessingError.conversionFailed(reason: refusal)
     }
 
+    let edit = MediaEdit(operations)
+    if let refusal = edit.ffmpegRefusal, outputType.conforms(to: .audiovisualContent) {
+      throw ProcessingError.conversionFailed(reason: refusal)
+    }
+
     guard let plan = ExternalBridge.plan(from: input, to: output, operations: operations) else {
       throw ProcessingError.unsupportedConversion(from: inputType, to: outputType)
     }
@@ -667,7 +682,7 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
     do {
       if let film = operations.film, plan.toolName == "ffmpeg" {
         let length = (try? await AVURLAsset(url: input).load(.duration).seconds) ?? 0
-        let follower = FilmProgress(length: film.kept(of: length), report: progress)
+        let follower = FilmProgress(length: edit.changesTime ? edit.length(of: length) : film.kept(of: length), report: progress)
         defer { follower.finish() }
         try ExternalTools.run(plan.tool, follower.arguments + plan.arguments)
       } else {

@@ -69,6 +69,22 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       )
     }
 
+    // What is done to it before it becomes anything else: cut, sped up, muted.
+    let edit = MediaEdit(operations)
+    let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("forge-edit-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: scratch) }
+    func edited() async throws -> AVAsset {
+      guard !edit.isNothing else { return asset }
+      try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+      return try await MediaRender.prepare(asset, edit, in: scratch).asset
+    }
+    /// The sound to listen to, or to write: the file itself while nothing in
+    /// it is changed.
+    func heard(_ input: URL) async throws -> URL {
+      guard edit.changesSound else { return input }
+      return try await MediaRender.firstSound(of: try await edited(), like: input, in: scratch) ?? input
+    }
+
     // Media asked for text is transcribed, whether the words are in a
     // recording or in the soundtrack of a video.
     let wanted = Self.outputType(for: output, operations: operations, fallback: .mpeg4Movie)
@@ -97,12 +113,12 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       guard !audioTracks.isEmpty else {
         throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no sound to turn into subtitles")
       }
-      return try await transcribeCues(input, to: output, operations: operations, start: start, progress: progress)
+      return try await transcribeCues(try await heard(input), of: input, to: output, operations: operations, start: start, progress: progress)
     }
 
     if Self.isWords(wanted), !audioTracks.isEmpty {
       return try await transcribe(
-        input, to: output, as: wanted, operations: operations, start: start, progress: progress
+        try await heard(input), of: input, to: output, as: wanted, operations: operations, start: start, progress: progress
       )
     }
     // Words asked of a film with no soundtrack: there is nothing to write down,
@@ -122,14 +138,18 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       )
     }
 
+    if edit.isEvened, audioTracks.isEmpty {
+      throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no sound to even out")
+    }
+
     if videoTracks.isEmpty {
       // Audio asked for a movie container is wrapped rather than converted:
       // the export writes the track into the container as it stands.
       let requestedType = Self.outputType(for: output, operations: operations, fallback: .mpeg4Audio)
       if FormatCatalog.isWritableVideo(requestedType) {
-        return try await handingOn(input, to: output) { try await exportVideoWithinItsCeiling(asset, to: output, operations: operations, start: start, progress: progress) }
+        return try await handingOn(input, to: output) { try await exportVideoWithinItsCeiling(try await edited(), of: asset, to: output, operations: operations, start: start, progress: progress) }
       }
-      return try await handingOn(input, to: output) { try await convertAudio(input, to: output, operations: operations, start: start, progress: progress) }
+      return try await handingOn(input, to: output) { try await convertAudio(try await heard(input), of: input, to: output, operations: operations, start: start, progress: progress) }
     }
 
     // A video asked to become an image is a frame export, not a re-encode:
@@ -138,7 +158,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     let requested = Self.outputType(for: output, operations: operations, fallback: .mpeg4Movie)
     if FormatCatalog.isWritableImage(requested) {
       return try await exportFrames(
-        asset, to: output, as: requested, operations: operations, start: start, progress: progress
+        try await edited(), to: output, as: requested, operations: operations, start: start, progress: progress
       )
     }
 
@@ -149,25 +169,26 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       guard !audioTracks.isEmpty else {
         throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no sound to keep")
       }
-      return try await handingOn(input, to: output) { try await convertAudio(input, to: output, operations: operations, start: start, progress: progress) }
+      return try await handingOn(input, to: output) { try await convertAudio(try await heard(input), of: input, to: output, operations: operations, start: start, progress: progress) }
     }
 
-    return try await handingOn(input, to: output) { try await exportVideoWithinItsCeiling(asset, to: output, operations: operations, start: start, progress: progress) }
+    return try await handingOn(input, to: output) { try await exportVideoWithinItsCeiling(try await edited(), of: asset, to: output, operations: operations, start: start, progress: progress) }
   }
 
   /// A ceiling is a promise about the file, and an export session treats it as
   /// an aim: asked for 500 kB it wrote 554. So it is asked again for less, in
   /// proportion to how far over it went, until what it writes fits.
   private func exportVideoWithinItsCeiling(
-    _ asset: AVURLAsset,
+    _ edited: AVAsset,
+    of asset: AVURLAsset,
     to output: URL,
     operations: [Operation],
     start: Date,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
     guard let ceiling = ImageProcessor.sizeCeiling(from: operations) else {
-      let result = try await exportVideo(asset, to: output, operations: operations, start: start, progress: progress)
-      try await Self.checkNothingWasLeftBehind(from: asset, in: output)
+      let result = try await exportVideo(edited, of: asset, to: output, operations: operations, start: start, progress: progress)
+      try await Self.checkNothingWasLeftBehind(from: asset, in: output, edit: MediaEdit(operations))
       return result
     }
     var aim = ceiling
@@ -178,9 +199,9 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
         return operation
       }
       try? FileManager.default.removeItem(at: output)
-      let result = try await exportVideo(asset, to: output, operations: aimed, start: start, progress: progress)
+      let result = try await exportVideo(edited, of: asset, to: output, operations: aimed, start: start, progress: progress)
       if result.outputSize <= Int64(ceiling) {
-        try await Self.checkNothingWasLeftBehind(from: asset, in: output)
+        try await Self.checkNothingWasLeftBehind(from: asset, in: output, edit: MediaEdit(operations))
         return result
       }
       smallest = min(smallest, result.outputSize)
@@ -200,7 +221,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   /// commentary track or with subtitles came back without them, "converted".
   /// What it left behind is said, and a tool that keeps every track is asked
   /// instead where there is one.
-  private static func checkNothingWasLeftBehind(from asset: AVURLAsset, in output: URL) async throws {
+  private static func checkNothingWasLeftBehind(from asset: AVURLAsset, in output: URL, edit: MediaEdit) async throws {
     func count(_ asset: AVAsset, _ kinds: [AVMediaType]) async -> Int {
       var total = 0
       for kind in kinds { total += ((try? await asset.loadTracks(withMediaType: kind)) ?? []).count }
@@ -213,10 +234,10 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // at all as far as AVFoundation is concerned, so its loss was invisible.
     let soundBefore = max(await count(asset, [.audio]), streams(of: asset.url, kind: "audio"))
     let soundAfter = max(await count(written, [.audio]), streams(of: output, kind: "audio"))
-    if soundAfter < soundBefore {
+    if !edit.isMuted, soundAfter < soundBefore {
       lost.append(soundAfter == 0 ? "its sound" : "\(soundBefore - soundAfter) of its \(soundBefore) soundtracks")
     }
-    if await count(asset, captions) > 0, await count(written, captions) == 0 { lost.append("its subtitles") }
+    if edit.keepsSubtitles, await count(asset, captions) > 0, await count(written, captions) == 0 { lost.append("its subtitles") }
     guard !lost.isEmpty else { return }
 
     try? FileManager.default.removeItem(at: output)
@@ -231,7 +252,8 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   /// song's cover was lost into FLAC and M4B, and an audiobook's chapters into
   /// anything at all. Copied across by ffmpeg where it is installed, without
   /// touching the sound already written.
-  private static func carryCoverAndChapters(from input: URL, to output: URL) {
+  /// - Parameter chapters: not where the time they are in is another.
+  private static func carryCoverAndChapters(from input: URL, to output: URL, chapters carriesChapters: Bool) {
     guard let ffmpeg = ExternalTools.locate("ffmpeg"), let ffprobe = ExternalTools.locate("ffprobe") else { return }
     func probe(_ url: URL, _ arguments: [String]) -> String {
       let process = Process()
@@ -252,7 +274,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       probe(url, ["-show_chapters"]).split(whereSeparator: \.isNewline).count
     }
     let wantsCover = cover(input) && !cover(output) && !["wav", "aiff", "aif", "caf"].contains(output.pathExtension.lowercased())
-    let wantsChapters = chapters(input) > 0 && chapters(output) == 0
+    let wantsChapters = carriesChapters && chapters(input) > 0 && chapters(output) == 0
     guard wantsCover || wantsChapters else { return }
 
     let together = output.deletingLastPathComponent()
@@ -354,7 +376,8 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   }
 
   private func transcribeCues(
-    _ input: URL,
+    _ sound: URL,
+    of input: URL,
     to output: URL,
     operations: [Operation],
     start: Date,
@@ -365,7 +388,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     )
     let heard: Transcription.Heard
     do {
-      heard = try await Transcription.hear(input, locale: Self.spoken(in: operations), progress: progress)
+      heard = try await Transcription.hear(sound, locale: Self.spoken(in: operations), progress: progress)
     } catch where Transcription.isSilence(error) {
       throw silent
     }
@@ -382,14 +405,15 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   }
 
   private func transcribe(
-    _ input: URL,
+    _ sound: URL,
+    of input: URL,
     to output: URL,
     as wanted: UTType,
     operations: [Operation],
     start: Date,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
-    let text = try await Transcription.text(of: input, locale: Self.spoken(in: operations), progress: progress)
+    let text = try await Transcription.text(of: sound, locale: Self.spoken(in: operations), progress: progress)
 
     if wanted.conforms(to: .plainText) {
       try text.write(to: output, atomically: true, encoding: .utf8)
@@ -424,7 +448,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   private static let defaultFrameSide: CGFloat = 640
 
   private func exportFrames(
-    _ asset: AVURLAsset,
+    _ asset: AVAsset,
     to output: URL,
     as type: UTType,
     operations: [Operation],
@@ -440,13 +464,17 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     generator.appliesPreferredTrackTransform = true
     generator.requestedTimeToleranceBefore = .zero
     generator.requestedTimeToleranceAfter = .zero
+    // Turned or cropped, the frames are drawn the way the film would be.
+    if operations.tools.contains(where: { $0.kind == .crop || $0.kind == .turn }) {
+      generator.videoComposition = try await Self.composition(for: asset, operations: operations)
+    }
     generator.maximumSize = try await Self.frameSize(for: operations, asset: asset)
 
     // A whole number of hundredths of a second, because that is the only
     // delay a GIF can state: a twelfth of a second was written as 0.08 and the
     // animation ran four per cent fast. Sampling at what will be written keeps
     // it in time.
-    let step = (100 / Self.framesPerSecond).rounded() / 100
+    let step = Self.interval(in: operations) ?? (100 / Self.framesPerSecond).rounded() / 100
     let times = stride(from: 0, to: duration, by: step).map {
       CMTime(seconds: $0, preferredTimescale: 600)
     }
@@ -499,14 +527,20 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
 
   /// The size to sample at: what the preset asked for, or a readable default
   /// that never enlarges the source.
-  private static func frameSize(for operations: [Operation], asset: AVURLAsset) async throws -> CGSize {
+  private static func frameSize(for operations: [Operation], asset: AVAsset) async throws -> CGSize {
     guard let track = try await asset.loadTracks(withMediaType: .video).first else {
       return CGSize(width: defaultFrameSide, height: defaultFrameSide)
     }
     // As it is shown: a film shot upright is stored on its side with a note to
     // turn it, and measured as stored its frames came out a third the size.
     let stored = try await track.load(.naturalSize)
-    let natural = stored.applying(try await track.load(.preferredTransform))
+    let turned = try await track.load(.preferredTransform)
+    let natural = operations.tools.contains { $0.kind == .crop || $0.kind == .turn }
+      ? try MediaEdit(operations).placement(of: stored, turned: turned)?.size ?? stored : stored.applying(turned)
+    // Pictures of the film rather than a small moving one.
+    if interval(in: operations) != nil, !operations.contains(where: { resizeRequest($0) != nil }) {
+      return CGSize(width: abs(natural.width), height: abs(natural.height))
+    }
     if let asked = operations.compactMap(resizeRequest).first,
        let size = renderSize(natural: CGSize(width: abs(natural.width), height: abs(natural.height)),
                              width: asked.width, height: asked.height, mode: .proportional) {
@@ -516,6 +550,11 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     guard longest > defaultFrameSide else { return natural }
     let scale = defaultFrameSide / longest
     return CGSize(width: abs(natural.width) * scale, height: abs(natural.height) * scale)
+  }
+
+  /// How far apart the pictures were asked to be.
+  private static func interval(in operations: [Operation]) -> Double? {
+    operations.tools.compactMap { if case .frames(let seconds) = $0 { return seconds } else { return nil } }.first
   }
 
   private static func writeFrames(
@@ -547,7 +586,8 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   // MARK: - Video
 
   private func exportVideo(
-    _ asset: AVURLAsset,
+    _ asset: AVAsset,
+    of source: AVURLAsset,
     to output: URL,
     operations: [Operation],
     start: Date,
@@ -562,8 +602,11 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     let available = AVAssetExportSession.allExportPresets()
     // A named codec wins over a size: asking for ProRes and getting H.264
     // because the preset list is sorted by pixels would be the wrong answer.
+    let edit = MediaEdit(operations)
+    // As it was encoded, where a quick cut is all that is asked.
+    let asIs = edit.isFast && edit.speed == 1 && !edit.isReversed && !edit.isEvened && edit.shapes.isEmpty && ImageProcessor.sizeCeiling(from: operations) == nil
     let preferred = Self.chosenCodec(in: operations)?.exportPreset
-      ?? Self.videoPreset(for: operations, available: available)
+      ?? (asIs ? AVAssetExportPresetPassthrough : Self.videoPreset(for: operations, available: available))
     let resizing = try await Self.composition(for: asset, operations: operations)
 
     // Not every preset works with every asset, and the ones that do cannot
@@ -591,6 +634,8 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     session.outputURL = output
     session.outputFileType = fileType
     session.shouldOptimizeForNetworkUse = true
+    // Faster is not higher.
+    session.audioTimePitchAlgorithm = .spectral
 
     // How small: a ceiling that was asked for, or a share of what the film
     // would otherwise weigh for a quality below the top. The session is told
@@ -604,6 +649,12 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       limit = min(limit ?? share, share)
     }
     if let limit, session.presetName != AVAssetExportPresetPassthrough { session.fileLengthLimit = limit }
+    // Left as it was encoded, a part keeps the pictures before it, hidden: a
+    // player is told to skip them, and whoever opens the file can see them.
+    if resizing == nil, edit.part != nil, !edit.isFast, session.presetName != AVAssetExportPresetPassthrough {
+      let hasPicture = !(try await asset.loadTracks(withMediaType: .video)).isEmpty
+      if hasPicture { session.videoComposition = try await AVMutableVideoComposition.videoComposition(withPropertiesOf: asset) }
+    }
     if let resizing {
       guard session.presetName != AVAssetExportPresetPassthrough else {
         throw ProcessingError.conversionFailed(reason: "This video cannot be resized into that container")
@@ -616,6 +667,10 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // session's own filter for the thorough level, since AVFoundation knows
     // what each key means, and the location keys alone otherwise.
     let privacy = PrivacyFilter.policy(in: operations)
+    // What was made out of a film carries nothing of it but the film.
+    if !privacy.removesSomething, !edit.isNothing {
+      session.metadata = try await source.load(.metadata)
+    }
     if privacy.removesSomething {
       if let filter = PrivacyFilter.filter(for: privacy) {
         session.metadataItemFilter = filter
@@ -623,7 +678,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       // Both, at the thorough level: AVFoundation's filter lets the copyright
       // line and the camera through, and that line is usually somebody's name.
       session.metadata = PrivacyFilter.metadata(
-        try await asset.load(.metadata), to: privacy
+        try await source.load(.metadata), to: privacy
       )
     }
     // Metadata is deliberately not set: an export session with none of its own
@@ -736,27 +791,17 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
 
   /// The video drawn at the size asked for, upright, or nil when no size was.
   private static func composition(for asset: AVAsset, operations: [Operation]) async throws -> AVVideoComposition? {
-    guard let asked = operations.compactMap(resizeRequest).first,
-          let track = try await asset.loadTracks(withMediaType: .video).first else { return nil }
-    let natural = try await track.load(.naturalSize)
-    let turned = try await track.load(.preferredTransform)
-    // A phone video is stored sideways with a turn on top; the size asked for
-    // is the size it is watched at.
-    let shown = CGRect(origin: .zero, size: natural).applying(turned)
-    let upright = CGSize(width: abs(shown.width), height: abs(shown.height))
-    guard let render = renderSize(natural: upright, width: asked.width, height: asked.height, mode: asked.mode) else {
-      return nil
-    }
+    guard let track = try await asset.loadTracks(withMediaType: .video).first,
+          // A phone video is stored sideways with a turn on top; the size asked
+          // for is the size it is watched at.
+          let placed = try MediaEdit(operations).placement(
+            of: try await track.load(.naturalSize), turned: try await track.load(.preferredTransform)
+          ) else { return nil }
 
     let composition = try await AVMutableVideoComposition.videoComposition(withPropertiesOf: asset)
-    composition.renderSize = render
+    composition.renderSize = placed.size
     let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
-    layer.setTransform(
-      turned
-        .concatenating(CGAffineTransform(translationX: -shown.minX, y: -shown.minY))
-        .concatenating(placement(of: upright, in: render, mode: asked.mode)),
-      at: .zero
-    )
+    layer.setTransform(placed.transform, at: .zero)
     let instruction = AVMutableVideoCompositionInstruction()
     instruction.timeRange = CMTimeRange(start: .zero, duration: try await asset.load(.duration))
     instruction.layerInstructions = [layer]
@@ -796,7 +841,8 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   // MARK: - Audio
 
   private func convertAudio(
-    _ input: URL,
+    _ sound: URL,
+    of input: URL,
     to output: URL,
     operations: [Operation],
     start: Date,
@@ -819,7 +865,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       throw ProcessingError.unsupportedConversion(from: inputType, to: outputType)
     }
 
-    let inputFile = try AVAudioFile(forReading: input)
+    let inputFile = try AVAudioFile(forReading: sound)
     let sourceFormat = inputFile.processingFormat
 
     // macOS opens some files it cannot measure - FLAC inside Ogg, which is what
@@ -892,7 +938,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     try await Self.carryTags(
       from: input, to: output, type: outputType, privacy: PrivacyFilter.policy(in: operations)
     )
-    Self.carryCoverAndChapters(from: input, to: output)
+    Self.carryCoverAndChapters(from: input, to: output, chapters: sound == input)
     progress(1.0)
 
     // A ceiling is a promise about the result. Where the format gave no way

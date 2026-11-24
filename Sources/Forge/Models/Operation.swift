@@ -27,6 +27,9 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
   /// preset, from a batch, or from the filename - and so history records that
   /// it happened.
   case stripMetadata(policy: PrivacyPolicy)
+  /// Cut, turned, sped up, taken apart: what is done to it, rather than what
+  /// it becomes.
+  case tool(Tool)
   /// One of two chains, decided per file: too big goes one way, the rest the
   /// other.
   case when(Condition, then: [Operation], otherwise: [Operation])
@@ -56,6 +59,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .film: return "Film settings"
     case .limitSize: return "Max file size"
     case .stripMetadata: return "Remove metadata"
+    case .tool(let tool): return tool.title
     }
   }
 
@@ -70,6 +74,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .film: return "film"
     case .limitSize: return "arrow.down.right.and.arrow.up.left"
     case .stripMetadata(let policy): return policy.symbol
+    case .tool(let tool): return tool.kind.symbol
     case .when: return "arrow.triangle.branch"
     case .split: return "square.split.2x1"
     case .join: return "arrow.triangle.merge"
@@ -88,6 +93,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .film: return "film"
     case .limitSize: return "limitSize"
     case .stripMetadata: return "privacy"
+    case .tool(let tool): return "tool.\(tool.slot)"
     case .when: return "when"
     case .split: return "split"
     case .join: return "join"
@@ -374,12 +380,12 @@ private extension String {
 
 extension Operation {
   private enum CodingKeys: String, CodingKey {
-    case kind, format, width, height, fitMode, level, filter, languages, codec, bytes, privacy, film
+    case kind, format, width, height, fitMode, level, filter, languages, codec, bytes, privacy, film, word
     case condition, then, otherwise, branches, mergeKind
   }
 
   private enum Kind: String, Codable {
-    case convertFormat, resize, quality, filter, recognizeText, encode, film, limitSize, stripMetadata
+    case convertFormat, resize, quality, filter, recognizeText, encode, film, limitSize, stripMetadata, tool
     case when, split, join, merge
   }
 
@@ -408,6 +414,12 @@ extension Operation {
       self = .limitSize(bytes: try container.decode(Int.self, forKey: .bytes))
     case .stripMetadata:
       self = .stripMetadata(policy: try container.decode(PrivacyPolicy.self, forKey: .privacy))
+    case .tool:
+      let word = try container.decode(String.self, forKey: .word)
+      guard let tool = Tool(word: word) else {
+        throw DecodingError.dataCorruptedError(forKey: .word, in: container, debugDescription: "No tool is called “\(word)”")
+      }
+      self = .tool(tool)
     case .when:
       self = .when(
         try container.decode(Condition.self, forKey: .condition),
@@ -455,6 +467,9 @@ extension Operation {
     case .stripMetadata(let policy):
       try container.encode(Kind.stripMetadata, forKey: .kind)
       try container.encode(policy, forKey: .privacy)
+    case .tool(let tool):
+      try container.encode(Kind.tool, forKey: .kind)
+      try container.encode(tool.word, forKey: .word)
     case .when(let condition, let then, let otherwise):
       try container.encode(Kind.when, forKey: .kind)
       try container.encode(condition, forKey: .condition)

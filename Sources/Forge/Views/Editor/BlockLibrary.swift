@@ -30,6 +30,7 @@ struct LibraryEntry: Identifiable {
     case template
     case question(PresetParameter.Kind)
     case step(ActionKind)
+    case tool(Tool.Kind)
   }
 
   let kind: Kind
@@ -56,7 +57,16 @@ struct LibraryEntry: Identifiable {
     entries += ActionKind.allCases.filter { $0.suits(category) }.map {
       LibraryEntry(kind: .step($0), group: $0.libraryGroup, title: $0.title, symbol: $0.symbol, summary: $0.summary)
     }
+    entries += Tool.Kind.allCases.filter { $0.suits(category) }.map {
+      LibraryEntry(kind: .tool($0), group: .transform, title: $0.title, symbol: $0.symbol, summary: $0.summary)
+    }
     return entries
+  }
+}
+
+extension Tool.Kind {
+  func suits(_ category: PresetCategory) -> Bool {
+    category == .custom || kinds.contains { $0.presetCategory == category }
   }
 }
 

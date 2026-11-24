@@ -230,6 +230,8 @@ struct PresetCard: View {
       return codec.title
     case .film(let settings):
       return settings.encoder.title
+    case .tool(let tool):
+      return tool.title
     case .limitSize(let bytes):
       return "≤\(Int64(bytes).formatted(.byteCount(style: .file)))"
     }

@@ -175,7 +175,18 @@ actor ProcessingCoordinator {
     // Every `if` decided for this file, every split fanned out: what is left
     // is one flat chain per output, and the processors only ever see those.
     let resolution = preset.actions.resolved(for: file)
-    let chains = resolution.chains
+    // What is written into the file's own name beats the preset, because
+    // somebody typed it onto that file for this conversion.
+    var chains: [(branch: String?, actions: [Operation])] = []
+    for chain in resolution.chains {
+      let actions = NameTokens.applying(to: chain.actions, from: file.fileName).settlingFormat()
+      try Self.refuseToolsThatDoNotSuit(file, in: actions)
+      guard let parts = try await Division.chains(for: actions, of: file) else {
+        chains.append((chain.branch, actions))
+        continue
+      }
+      chains += parts.map { ([chain.branch, $0.label].compactMap { $0 }.joined(separator: "-"), $0.actions) }
+    }
     guard chains.count > 1 || chains.first?.branch != nil || resolution.merge != nil else {
       var flat = preset
       flat.actions = chains.first?.actions ?? []
@@ -256,6 +267,13 @@ actor ProcessingCoordinator {
       additionalOutputs: [],
       appliedQuality: combined.appliedQuality
     )
+  }
+
+  /// A tool that does nothing to a file is said, not skipped.
+  private static func refuseToolsThatDoNotSuit(_ file: ProcessableFile, in actions: [Operation]) throws {
+    guard let tool = actions.tools.first(where: { !$0.suits(file.fileType) }) else { return }
+    let what = ConvertKind(fileType: file.fileType)?.plural ?? "this kind of file"
+    throw ProcessingError.conversionFailed(reason: "“\(tool.title)” is not something done to \(file.fileType.conforms(to: .pdf) ? "PDFs" : what).")
   }
 
   /// The name template for one branch of a split: `{branch}` becomes the
@@ -387,11 +405,9 @@ actor ProcessingCoordinator {
     }
     try Completeness.refuseIfIncomplete(file.url)
 
-    // A preset says what it cares about; Settings says the rest; and what is
-    // written into the file's own name beats both, because somebody typed it
-    // onto that file for this conversion.
+    // A preset says what it cares about; Settings says the rest.
     let operations = settings.applyingDefaults(
-      to: NameTokens.applying(to: preset.actions, from: file.fileName),
+      to: preset.actions,
       writing: preset.targetFormat ?? file.fileType
     )
 
@@ -764,7 +780,7 @@ actor ProcessingCoordinator {
     }.first
 
     return NameTemplate.Static(
-      name: preset.untriggered(stem: (file.fileName as NSString).deletingPathExtension),
+      name: preset.untriggered(stem: NameTokens.spent(file.fileName)),
       parent: file.url.deletingLastPathComponent().lastPathComponent,
       // The file's own date where the filesystem knows one, since a template
       // asking for a date is asking about the photograph, not about now.

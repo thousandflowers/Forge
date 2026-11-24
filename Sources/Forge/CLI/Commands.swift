@@ -15,6 +15,8 @@ struct Convert: AsyncParsableCommand {
           forge convert photo.heic --preset "Web JPEG" --out ~/Desktop
           forge convert clip.mov --to mp4 --resize 1280x720 --out ./out
           forge convert clip.mov --to gif --out ./out
+          forge convert clip.mov --do trim10-45 --do mute --out ./out
+          forge convert thesis.pdf --do pages2-5 --out ./out
           forge convert scan.pdf --to txt --ocr-language it-IT --out ./text
           forge convert *.png --to jpeg --overwrite
         """
@@ -175,6 +177,8 @@ struct Presets: AsyncParsableCommand {
         return codec.title
       case .film(let settings):
         return settings.summary
+      case .tool(let tool):
+        return tool.word
       case .limitSize(let bytes):
         return "under \(Int64(bytes).formatted(.byteCount(style: .file)))"
       case .when(let condition, _, _):

@@ -69,7 +69,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       // picture many times, so only its first frame is read.
       let pages = frames.count > 1 && frames.allSatisfy({ $0.duration == 0 }) ? frames : [frames[0]]
       return try Self.recognizeText(
-        in: try pages.map { try transform($0.image, with: [], orientation: orientation) },
+        in: try pages.map { try transform($0.image, with: operations.filter { if case .tool = $0 { return true } else { return false } }, orientation: orientation) },
         languages: languages(from: operations),
         to: output,
         start: start,
@@ -105,7 +105,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     for (index, frame) in frames.enumerated() {
       try Task.checkCancellation()
       rendered.append(ImageFrame(
-        image: try transform(frame.image, with: operations, orientation: orientation),
+        image: try transform(frame.image, with: operations, orientation: orientation, onWhite: FormatCatalog.isSolid(outputUTI)),
         duration: frame.duration
       ))
       progress(Double(index + 1) / Double(frames.count) * 0.9)
@@ -197,7 +197,8 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
   private func transform(
     _ image: CGImage,
     with operations: [Operation],
-    orientation: CGImagePropertyOrientation = .up
+    orientation: CGImagePropertyOrientation = .up,
+    onWhite: Bool = false
   ) throws -> CGImage {
     var ciImage = CIImage(cgImage: image)
     if orientation != .up {
@@ -209,6 +210,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     for operation in operations {
       ciImage = try applyOperation(operation, to: ciImage)
     }
+    if onWhite, operations.tools.contains(.removeBackground) { ciImage = PictureTools.onWhite(ciImage) }
 
     // Whole pixels only. An extent ending at 533.33 was rendered 534 wide, the
     // last column a third picture and the rest nothing.
@@ -461,6 +463,8 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       return applyResize(image, targetWidth: width, targetHeight: height, mode: mode)
     case .filter(let type):
       return applyFilter(image, type: type)
+    case .tool(let tool):
+      return try PictureTools.apply(tool, to: image)
     }
   }
 

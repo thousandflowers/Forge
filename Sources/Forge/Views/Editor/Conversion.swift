@@ -114,7 +114,7 @@ enum InsertPoint {
       switch (self, entry.kind) {
       case (.question, .question): return true
       case (.question, _), (.step, .template): return false
-      case (.step, .step): return true
+      case (.step, .step), (.step, .tool): return true
       case (.step(let id), .question): return steps.first?.id == id
       case (.step(let id), .formats): return !steps.contains { $0.id == id }
       }
