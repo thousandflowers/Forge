@@ -76,8 +76,10 @@ final class ClaimsTests: ToolTestCase {
     // A number no process has.
     let list = [empty, scratch, full].map(\.path)
     try JSONEncoder().encode(list).write(to: notes.appendingPathComponent("999999-A.json"))
-    XCTAssertEqual(Claims.sweep(root: root), 2)
-    XCTAssertFalse(exists(empty) || exists(scratch))
+    let beside = home.appendingPathComponent(".forge-X.jpeg.sb-c7cd-yex")
+    try Data("half".utf8).write(to: beside)
+    XCTAssertEqual(Claims.sweep(root: root), 3)
+    XCTAssertFalse(exists(empty) || exists(scratch) || exists(beside))
     XCTAssertTrue(exists(full), "it has something in it, and is somebody's")
     XCTAssertEqual(contents(of: notes), [])
   }

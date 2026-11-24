@@ -40,12 +40,21 @@ final class Claims: @unchecked Sendable {
       for path in left {
         let isScratch = (path as NSString).lastPathComponent.hasPrefix(".forge-")
         let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int64
+        if isScratch { swept += sweepBeside(path) }
         guard isScratch || size == 0 else { continue }
         if (try? FileManager.default.removeItem(atPath: path)) != nil { swept += 1 }
       }
       try? FileManager.default.removeItem(at: note)
     }
     return swept
+  }
+
+  /// What macOS keeps beside a file it is writing is named after it, and after
+  /// nothing else: the name is one of Forge's own.
+  private static func sweepBeside(_ path: String) -> Int {
+    let folder = (path as NSString).deletingLastPathComponent, name = (path as NSString).lastPathComponent
+    let beside = ((try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []).filter { $0.hasPrefix(name + ".") || $0.hasPrefix("." + name) }
+    return beside.filter { (try? FileManager.default.removeItem(atPath: (folder as NSString).appendingPathComponent($0))) != nil }.count
   }
 
   private static func isRunning(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 || errno == EPERM }
