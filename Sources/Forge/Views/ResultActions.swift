@@ -12,7 +12,7 @@ struct ResultActions: View {
       Divider()
       Button(urls.count == 1 ? "Copy" : "Copy \(urls.count) Files") { ResultHand.copy(urls) }
       Button(urls.count == 1 ? "Copy Path" : "Copy Paths") { ResultHand.copyPaths(urls) }
-      if ResultHand.canAirDrop(urls) { Button("AirDrop…") { ResultHand.airDrop(urls) } }
+      Button("AirDrop…") { ResultHand.airDrop(urls) }
       Divider()
       Button("Copy To…") { ResultHand.put(urls, moving: false) }
       Button("Move To…") { ResultHand.put(urls, moving: true) }
@@ -40,13 +40,13 @@ enum ResultHand {
     pasteboard.setString(urls.map(\.path).joined(separator: "\n"), forType: .string)
   }
 
-  static func canAirDrop(_ urls: [URL]) -> Bool {
-    NSSharingService(named: .sendViaAirDrop)?.canPerform(withItems: urls) ?? false
-  }
-
   static func airDrop(_ urls: [URL]) {
     NSApp.activate(ignoringOtherApps: true)
-    NSSharingService(named: .sendViaAirDrop)?.perform(withItems: urls)
+    guard let service = NSSharingService(named: .sendViaAirDrop), service.canPerform(withItems: urls) else {
+      NSSound.beep()
+      return
+    }
+    service.perform(withItems: urls)
   }
 
   static func put(_ urls: [URL], moving: Bool) {

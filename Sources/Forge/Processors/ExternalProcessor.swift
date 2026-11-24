@@ -23,6 +23,8 @@ enum ExternalBridge {
     /// A tool that insists on naming its own output writes into this folder,
     /// and whatever lands there is moved to where the conversion wanted it.
     var collectFrom: URL?
+    /// Run before, where one look is not enough.
+    var before: [String]?
   }
 
   /// LibreOffice, which is an application rather than a command on PATH.
@@ -391,7 +393,7 @@ enum ExternalBridge {
         // choice of one of each. The question marks let a film without one
         // through.
         // A capital V leaves out a cover, which no encoder of films takes.
-        arguments += ["-map", film == nil && edit.ffmpegPicture.isEmpty ? "0:v?" : "0:V?"] + (edit.isMuted ? ["-an"] : ["-map", "0:a?"])
+        arguments += ["-map", film == nil && edit.ffmpegPicture.isEmpty ? "0:v?" : "0:V?"] + (edit.isMuted ? ["-an"] : ["-map", film?.track.map { "0:a:\(max(0, $0 - 1))?" } ?? "0:a?"])
         // Subtitles only where the container has a way to hold them: an MP4 or
         // a MOV as mov_text, Matroska and WebM as text of their own. Mapped into
         // anything else - an MXF, an AVI - ffmpeg stopped looking for an encoder.
@@ -450,8 +452,14 @@ enum ExternalBridge {
       case .stripLocation: arguments += ["-metadata", "location=", "-metadata", "location-eng="]
       case .stripAll: arguments += ["-map_metadata", "-1"]
       }
+      var before: [String]?
+      if let film, film.passes > 1 {
+        let log = output.deletingPathExtension().path + "-pass"
+        before = arguments + film.passArguments(1, log: log) + ["-an", "-sn", "-f", "null", "/dev/null"]
+        arguments += film.passArguments(2, log: log)
+      }
       arguments.append(output.path)
-      return Plan(tool: ffmpeg, toolName: "ffmpeg", arguments: arguments)
+      return Plan(tool: ffmpeg, toolName: "ffmpeg", arguments: arguments, before: before)
     }
 
     if let office = libreOffice, libreOfficeWrites(from: source).contains(target) {
@@ -684,6 +692,16 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
         let length = (try? await AVURLAsset(url: input).load(.duration).seconds) ?? 0
         let follower = FilmProgress(length: edit.changesTime ? edit.length(of: length) : film.kept(of: length), report: progress)
         defer { follower.finish() }
+        if let before = plan.before {
+          try ExternalTools.run(plan.tool, before)
+        }
+        defer {
+          // What the first pass wrote down for the second.
+          let folder = output.deletingLastPathComponent(), stem = output.deletingPathExtension().lastPathComponent + "-pass"
+          for left in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where left.hasPrefix(stem) {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(left))
+          }
+        }
         try ExternalTools.run(plan.tool, follower.arguments + plan.arguments)
       } else {
         try ExternalTools.run(plan.tool, plan.arguments)

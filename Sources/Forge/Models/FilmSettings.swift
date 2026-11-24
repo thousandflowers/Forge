@@ -24,6 +24,12 @@ struct FilmSettings: Codable, Hashable, Sendable {
   var channels: Channels = .asIs
   var evensLoudness = false
   var keepsSubtitles = true
+  /// Which soundtrack, counting from one; nil for all of them.
+  var track: Int?
+  /// Looked at once before it is written, where a bit rate is aimed for.
+  var isTwoPass = false
+  /// A .cube file: how every colour is to look.
+  var lut: String?
   /// Seconds in; nil for the beginning and the end.
   var from: Int?
   var to: Int?
@@ -247,6 +253,8 @@ struct FilmSettings: Codable, Hashable, Sendable {
     if interlacing != .leave { parts.append(interlacing == .film ? "detelecine" : "deinterlace") }
     if noise != .leave { parts.append("less noise") }
     if crop != .none { parts.append("crop") }
+    if lut != nil { parts.append("LUT") }
+    if passes > 1 { parts.append("two passes") }
     if from != nil || to != nil { parts.append("part") }
     return parts.joined(separator: " · ")
   }
@@ -260,8 +268,22 @@ struct FilmSettings: Codable, Hashable, Sendable {
     }
     if !encoder.containers.contains(container) { return said(encoder.title, encoder.containers) }
     if let holders = sound.containers, !holders.contains(container) { return said(sound.title, holders) }
+    if let lut, !FileManager.default.isReadableFile(atPath: lut) { return "The LUT \((lut as NSString).lastPathComponent) is not where it was." }
     if let from, let to, to <= from { return "The part to keep ends before it starts." }
     return nil
+  }
+
+  /// A quality is the same in one pass: only a bit rate is shared out better
+  /// for having been looked at first. Apple's encoders take one.
+  var passes: Int {
+    guard isTwoPass, [.h264, .hevc, .vp9].contains(encoder), case .kilobits = rate else { return 1 }
+    return 2
+  }
+
+  /// What each pass is told, beside the rest.
+  /// - Parameter log: where the first writes what it saw.
+  func passArguments(_ pass: Int, log: String) -> [String] {
+    encoder == .hevc ? ["-x265-params", "pass=\(pass):stats=\(log).log"] : ["-pass", "\(pass)", "-passlogfile", log]
   }
 
   /// How much of a film this long is kept, in seconds.
@@ -299,9 +321,22 @@ struct FilmSettings: Codable, Hashable, Sendable {
       filters.append("crop=iw-\(sides[2] + sides[3]):ih-\(sides[0] + sides[1]):\(sides[2]):\(sides[0])")
     }
     filters += picture
+    if let lut { filters.append("lut3d=file=\(Self.plainPath(of: lut))") }
     filters += [turn.filter, sharpness.filter, isGrey ? "hue=s=0" : nil, isRec709 ? "colorspace=all=bt709:iall=bt601-6-625" : nil].compactMap { $0 }
     // Encoders want even sides, and a crop or a turn may leave them odd.
     return filters.isEmpty ? [] : filters + ["crop=trunc(iw/2)*2:trunc(ih/2)*2"]
+  }
+
+  /// The same file where its path has nothing in it that ffmpeg reads as its
+  /// own: a colon or an apostrophe in a folder's name ends a filter.
+  private static func plainPath(of lut: String) -> String {
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent("forge-luts", isDirectory: true)
+    let name = lut.utf8.reduce(into: UInt64(5381)) { $0 = $0 &* 33 &+ UInt64($1) }
+    let plain = home.appendingPathComponent("\(name).cube")
+    try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+    try? FileManager.default.removeItem(at: plain)
+    try? FileManager.default.copyItem(atPath: lut, toPath: plain.path)
+    return plain.path
   }
 
   private func videoArguments(for container: String) -> [String] {
@@ -367,6 +402,9 @@ extension FilmSettings {
     channels = try value(.channels, fresh.channels)
     evensLoudness = try value(.evensLoudness, fresh.evensLoudness)
     keepsSubtitles = try value(.keepsSubtitles, fresh.keepsSubtitles)
+    track = try values.decodeIfPresent(Int.self, forKey: .track)
+    isTwoPass = try value(.isTwoPass, fresh.isTwoPass)
+    lut = try values.decodeIfPresent(String.self, forKey: .lut)
     from = try values.decodeIfPresent(Int.self, forKey: .from)
     to = try values.decodeIfPresent(Int.self, forKey: .to)
   }

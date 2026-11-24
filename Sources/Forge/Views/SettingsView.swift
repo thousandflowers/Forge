@@ -102,6 +102,9 @@ struct SettingsView: View {
       }
       Section("When a batch finishes") {
         Toggle("Notify me", isOn: $model.settings.notifyWhenFinished)
+        Picker("And then", selection: $model.settings.whenFinished) {
+          ForEach(AppSettings.WhenFinished.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
       }
       Section("About") {
         LabeledContent("Version", value: Bundle.main.shortVersion)

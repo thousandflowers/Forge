@@ -17,6 +17,7 @@ final class AppModel: ObservableObject {
   private lazy var clipboard = ClipboardLighter(coordinator: coordinator)
   private let dragMenu = DragMenu()
   private let cuts = CutCenter()
+  let dropZone = DropZone()
   private var inHand: Set<String> = []
   private var automatic: [Automatic.Place: MonitoredFolderWatcher] = [:]
 
@@ -248,6 +249,22 @@ final class AppModel: ObservableObject {
     if active { startWatcher(folders[index]) } else { stopWatcher(folders[index]) }
   }
 
+  /// The Desktop and the downloads, for the names that say what they want and
+  /// for nothing else.
+  func watchForNames() {
+    for place in [FileManager.SearchPathDirectory.desktopDirectory, .downloadsDirectory] {
+      guard let url = FileManager.default.urls(for: place, in: .userDomainMask).first,
+            !folders.contains(where: { $0.url.standardizedFileURL.path == url.standardizedFileURL.path }) else { continue }
+      addFolder(
+        url: url, presetID: Self.noPreset, mode: Automatic.mode(for: settings),
+        destination: settings.createBackupBeforeOverwrite ? nil : url, includeSubfolders: false, onlyWhenRenamed: true
+      )
+    }
+  }
+
+  /// A folder that does what names say and nothing of its own.
+  nonisolated static let noPreset = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+
   func setOnlyWhenRenamed(_ folder: MonitoredFolder, _ on: Bool) {
     guard let index = folders.firstIndex(where: { $0.id == folder.id }) else { return }
     folders[index].onlyWhenRenamed = on
@@ -276,7 +293,8 @@ final class AppModel: ObservableObject {
   }
 
   func presetName(for id: UUID) -> String {
-    presets.first { $0.id == id }?.name ?? "Unknown preset"
+    if id == Self.noPreset { return "What the name says" }
+    return presets.first { $0.id == id }?.name ?? "Unknown preset"
   }
 
   private func persistFolders() {
@@ -477,7 +495,7 @@ final class AppModel: ObservableObject {
   // MARK: - In hand
 
   private func startDragMenu() {
-    guard settings.dragMenu else { return dragMenu.stop() }
+    dropZone.take = { [weak self] in self?.dragMenu.present($0) }
     dragMenu.keys = settings.dragMenuKeys
     dragMenu.ignored = Set(settings.dragMenuIgnored)
     dragMenu.convert = { [weak self] file, preset in try await self?.convertInHand(file, with: preset) ?? [] }
@@ -489,7 +507,7 @@ final class AppModel: ObservableObject {
       Task { await self.refreshHistory() }
       return made
     }
-    dragMenu.start()
+    settings.dragMenu ? dragMenu.start() : dragMenu.stop()
   }
 
   /// Open a window to cut this file in.

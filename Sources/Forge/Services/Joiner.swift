@@ -8,12 +8,16 @@ import UniformTypeIdentifiers
 enum Joiner {
   enum Kind: String, CaseIterable, Sendable {
     case pdf, film, sound
+    /// A film with another file's sound, or with its subtitles.
+    case dubbed, subtitled
 
     var title: String {
       switch self {
       case .pdf: return "One PDF"
       case .film: return "One film"
       case .sound: return "One recording"
+      case .dubbed: return "Film with this sound"
+      case .subtitled: return "Film with these subtitles"
       }
     }
   }
@@ -30,6 +34,8 @@ enum Joiner {
     if arePages { return kinds == [.image] ? [.pdf, .film] : [.pdf] }
     if kinds == [.video] { return [.film, .sound] }
     if kinds == [.audio] { return [.sound] }
+    if files.count == 2, kinds == [.video, .audio] { return [.dubbed] }
+    if files.count == 2, kinds == [.video, .subtitle] { return [.subtitled] }
     return []
   }
 
@@ -38,7 +44,8 @@ enum Joiner {
   static func type(of kind: Kind, from first: UTType) -> UTType {
     switch kind {
     case .pdf: return .pdf
-    case .film: return first == .quickTimeMovie ? .quickTimeMovie : .mpeg4Movie
+    case .film, .dubbed: return first == .quickTimeMovie ? .quickTimeMovie : .mpeg4Movie
+    case .subtitled: return first == .quickTimeMovie || first.preferredFilenameExtension == "mkv" ? first : .mpeg4Movie
     case .sound: return FormatCatalog.audioFormatID(for: first) != nil ? first : UTType("com.apple.m4a-audio") ?? .mpeg4Audio
     }
   }
@@ -54,6 +61,56 @@ enum Joiner {
       let isPictures = files.allSatisfy { ConvertKind(fileType: $0.fileType) == .image }
       try await isPictures ? slides(files, to: output) : film(files, to: output)
     case .sound: try await sound(files, to: output)
+    case .dubbed: try await dub(files[0].url, with: files[1].url, to: output)
+    case .subtitled: try subtitle(files[0], with: files[1], to: output)
+    }
+  }
+
+  // MARK: - A film and something else
+
+  /// The film's picture as it is, and the other's sound for as long as it lasts.
+  private static func dub(_ film: URL, with sound: URL, to output: URL) async throws {
+    let picture = AVURLAsset(url: film), heard = AVURLAsset(url: sound)
+    let composition = AVMutableComposition()
+    guard let shown = try? await picture.loadTracks(withMediaType: .video).first,
+          let track = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+      throw ProcessingError.conversionFailed(reason: "\(film.lastPathComponent) cannot be opened by macOS. Convert it to MP4 first.")
+    }
+    guard let voice = try? await heard.loadTracks(withMediaType: .audio).first,
+          let second = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+      throw ProcessingError.conversionFailed(reason: "\(sound.lastPathComponent) has no sound that macOS can read.")
+    }
+    let range = try await shown.load(.timeRange)
+    try track.insertTimeRange(range, of: shown, at: .zero)
+    track.preferredTransform = try await shown.load(.preferredTransform)
+    let there = try await voice.load(.timeRange)
+    try second.insertTimeRange(CMTimeRange(start: there.start, duration: min(there.duration, range.duration)), of: voice, at: .zero)
+    guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
+      throw ProcessingError.conversionFailed(reason: "The film cannot be written")
+    }
+    session.outputURL = output
+    session.outputFileType = AVFileType((UTType(filenameExtension: output.pathExtension) ?? .mpeg4Movie).identifier)
+    session.metadata = (try? await picture.load(.metadata)) ?? []
+    try await export(session)
+  }
+
+  /// A track that can be turned on and off, in a film otherwise as it is.
+  private static func subtitle(_ film: ProcessableFile, with words: ProcessableFile, to output: URL) throws {
+    guard let ffmpeg = ExternalTools.locate("ffmpeg") else {
+      throw ProcessingError.conversionFailed(reason: "Subtitles are put into a film by ffmpeg: brew install ffmpeg")
+    }
+    let codec = output.pathExtension.lowercased() == "mkv" ? "srt" : "mov_text"
+    do {
+      try ExternalTools.run(ffmpeg, [
+        "-hide_banner", "-loglevel", "error", "-y", "-i", film.url.path, "-i", words.url.path,
+        "-map", "0:v", "-map", "0:a?", "-map", "1:s:0", "-c", "copy", "-c:s", codec, "-movflags", "+faststart", output.path,
+      ])
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      throw ProcessingError.conversionFailed(
+        reason: "\(words.fileName) could not be put into \(film.fileName). Convert the film to MP4 and the subtitles to SRT, and try again."
+      )
     }
   }
 
@@ -234,7 +291,10 @@ enum Joiner {
 extension ProcessingCoordinator {
   /// Several files into one, beside the first or in a folder. Written out of
   /// sight and put where it goes once it is whole, as everything else is.
-  func join(_ files: [ProcessableFile], as kind: Joiner.Kind, into folder: URL? = nil, named name: String? = nil) async throws -> URL {
+  func join(_ given: [ProcessableFile], as kind: Joiner.Kind, into folder: URL? = nil, named name: String? = nil) async throws -> URL {
+    // The film first, whichever of the two was picked up first.
+    let files = kind == .dubbed || kind == .subtitled
+      ? given.sorted { ConvertKind(fileType: $0.fileType) == .video && ConvertKind(fileType: $1.fileType) != .video } : given
     guard let first = files.first, Joiner.kinds(for: files).contains(kind) else {
       throw ProcessingError.conversionFailed(reason: "These files cannot be made into \(kind.title.lowercased()) together.")
     }

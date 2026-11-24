@@ -25,8 +25,9 @@ enum Arrival: Equatable {
       return .ask(AskRequest(word: word, over: folderPreset?.accepts(url) == true ? folderPreset : nil))
     }
     if onlyWhenRenamed, name.isEmpty { return .leave }
-    guard let folderPreset, folderPreset.accepts(url) else { return .leave }
-    return .run(folderPreset)
+    if let folderPreset, folderPreset.accepts(url) { return .run(folderPreset) }
+    // A name that says what it wants needs no preset to say it again.
+    return name.isEmpty ? .leave : .run(RulePreset(name: "From its name", description: "", category: .custom))
   }
 }
 
@@ -161,6 +162,8 @@ enum AskOptions {
 
   static func choices(for question: AskRequest.Question, files: [ProcessableFile]) -> [Choice] {
     let kinds = Set(files.compactMap { ConvertKind(fileType: $0.fileType) })
+    // Different kinds have nothing in common but what they make together.
+    if question == .join { return Joiner.kinds(for: files).map { Choice(label: $0.title, value: .join($0)) } }
     guard kinds.count == 1, let kind = kinds.first else { return [] }
     var made = plain(question, kind: kind, files: files)
 
@@ -193,7 +196,7 @@ enum AskOptions {
       guard files.count == 1, [.image, .video, .audio].contains(kind) else { return [] }
       return [Choice(label: kind == .image ? "Crop…" : "Cut…", value: .cut)]
     case .join:
-      return Joiner.kinds(for: files).map { Choice(label: $0.title, value: .join($0)) }
+      return []
     case .size, .width, .quality, .parameter:
       switch question.kind {
       case .maxFileSize:

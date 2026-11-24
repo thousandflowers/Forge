@@ -9,9 +9,9 @@ struct MonitoredFoldersView: View {
     Group {
       if model.folders.isEmpty {
         EmptyStateView(icon: "folder.badge.gearshape", title: "No monitored folders",
-                       message: "Add a folder and Forge converts new files dropped into it automatically.",
-                       actionTitle: model.usablePresets.isEmpty ? nil : "Add Folder",
-                       action: model.usablePresets.isEmpty ? nil : { showAdd = true })
+                       message: "Rename a file on the Desktop to clip_mute.mp4, and it is done. Or add a folder, and Forge converts what is dropped into it.",
+                       actionTitle: "Watch my Desktop and Downloads for names",
+                       action: { model.watchForNames() })
       } else {
         List {
           ForEach(model.folders) { folder in

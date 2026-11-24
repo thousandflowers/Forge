@@ -14,6 +14,8 @@ struct MediaEdit {
   var isReversed = false
   var isMuted = false
   var isEvened = false
+  /// Seconds the sound comes after the picture.
+  var delay = 0.0
   /// Everything that changes the picture's shape, in the order it was asked.
   private(set) var shapes: [Shape] = []
 
@@ -34,6 +36,7 @@ struct MediaEdit {
       case .tool(.reverse): isReversed = true
       case .tool(.mute): isMuted = true
       case .tool(.normalize): isEvened = true
+      case .tool(.sync(let thousandths)): delay = Double(thousandths) / 1000
       case .tool(.turn(let turn)): shapes.append(.turn(turn))
       case .tool(.crop(let crop)): shapes.append(.crop(crop))
       default: break
@@ -46,7 +49,7 @@ struct MediaEdit {
   var changesSound: Bool { changesTime || isEvened }
   /// Their times are the film's, and nothing puts them right.
   var keepsSubtitles: Bool { speed == 1 && !isReversed }
-  var isNothing: Bool { !changesTime && !isMuted && !isEvened }
+  var isNothing: Bool { !changesTime && !isMuted && !isEvened && delay == 0 }
 
   // MARK: - The system's way
 
@@ -80,10 +83,13 @@ struct MediaEdit {
         if kind == .video { copy.preferredTransform = try await track.load(.preferredTransform) }
         copy.languageCode = try await track.load(.languageCode)
         // A track may begin after the film does, or end before it.
-        let there = try await track.load(.timeRange).intersection(range)
+        // Sound that comes later is, at any moment, what was heard before it.
+        let late = kind == .audio ? CMTime(seconds: delay, preferredTimescale: timescale) : .zero
+        let wanted = CMTimeRange(start: range.start - late, duration: range.duration)
+        let there = try await track.load(.timeRange).intersection(wanted)
         guard there.duration > .zero else { continue }
         for turn in 0..<loops {
-          let at = CMTimeMultiply(range.duration, multiplier: Int32(turn)) + (there.start - range.start)
+          let at = CMTimeMultiply(range.duration, multiplier: Int32(turn)) + (there.start - wanted.start)
           try copy.insertTimeRange(there, of: track, at: at)
         }
       }
@@ -155,6 +161,8 @@ struct MediaEdit {
 
   var ffmpegSound: [String] {
     var filters: [String] = []
+    if delay > 0 { filters.append("adelay=\(Int(delay * 1000)):all=1") }
+    if delay < 0 { filters.append("atrim=start=\(Tool.text(-delay)),asetpts=PTS-STARTPTS") }
     if isReversed { filters.append("areverse") }
     // It takes half to a hundred times; less is half again.
     var left = speed

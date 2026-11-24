@@ -15,6 +15,21 @@ struct AppSettings: Codable, Sendable, Equatable {
 
   /// Post a notification when a batch finishes.
   var notifyWhenFinished: Bool = true
+  /// What happens once everything in the list has been converted.
+  var whenFinished: WhenFinished = .nothing
+
+  enum WhenFinished: String, Codable, CaseIterable, Sendable {
+    case nothing, show, sleep, quit
+
+    var title: String {
+      switch self {
+      case .nothing: return "Nothing"
+      case .show: return "Show the files in the Finder"
+      case .sleep: return "Put the Mac to sleep"
+      case .quit: return "Quit Forge"
+      }
+    }
+  }
 
   // MARK: - Without being asked
   //
@@ -125,7 +140,7 @@ struct AppSettings: Codable, Sendable, Equatable {
 
 extension AppSettings {
   private enum CodingKeys: String, CodingKey {
-    case maxConcurrentNative, createBackupBeforeOverwrite, notifyWhenFinished
+    case maxConcurrentNative, createBackupBeforeOverwrite, notifyWhenFinished, whenFinished
     case defaultFitMode, defaultQuality, privacy, nameTemplate, appearance
     case lighterClipboard, lighterRecordings, friendlyDownloads
     case dragMenu, dragMenuKeys, dragMenuIgnored, spokenLanguage
@@ -140,6 +155,7 @@ extension AppSettings {
     maxConcurrentNative = try c.decodeIfPresent(Int.self, forKey: .maxConcurrentNative) ?? fresh.maxConcurrentNative
     createBackupBeforeOverwrite = try c.decodeIfPresent(Bool.self, forKey: .createBackupBeforeOverwrite) ?? fresh.createBackupBeforeOverwrite
     notifyWhenFinished = try c.decodeIfPresent(Bool.self, forKey: .notifyWhenFinished) ?? fresh.notifyWhenFinished
+    whenFinished = try c.decodeIfPresent(WhenFinished.self, forKey: .whenFinished) ?? fresh.whenFinished
     defaultFitMode = try c.decodeIfPresent(ResizeFitMode.self, forKey: .defaultFitMode) ?? fresh.defaultFitMode
     defaultQuality = try c.decodeIfPresent(Int.self, forKey: .defaultQuality) ?? fresh.defaultQuality
     privacy = try c.decodeIfPresent(PrivacyPolicy.self, forKey: .privacy) ?? fresh.privacy

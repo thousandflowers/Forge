@@ -770,6 +770,8 @@ final class BatchViewModel: ObservableObject {
         failed: finished.filter { $0 == .failed }.count
       )
     }
+    // Stopped by hand is not finished.
+    if !cancellation.withLock({ $0 }) { model.settings.whenFinished.run(outputs.withLock { $0 }) }
   }
 
   /// What the batch cost, compared with what went in. A pure reading of file

@@ -27,6 +27,23 @@ enum Tool: Hashable, Sendable {
   case dropPages(PageList)
   /// A picture of the film every so many seconds.
   case frames(every: Double)
+  /// Its sound this much later, or earlier, in thousandths of a second.
+  case sync(Int)
+  case adjust(Adjustment, Int)
+  /// A frame round it, in pixels.
+  case border(Int, isBlack: Bool = false)
+  /// Words in the corner.
+  case mark(String)
+  case digest(Digest)
+
+  enum Adjustment: String, CaseIterable, Sendable {
+    case brightness, contrast, saturation, blur
+
+    /// Percent either way, but for a blur, which is a radius.
+    var range: ClosedRange<Int> { self == .blur ? 1...200 : -100...100 }
+  }
+
+  enum Digest: String, CaseIterable, Sendable { case sha256, base64 }
 
   enum Division: Hashable, Sendable {
     case every(Double)
@@ -138,10 +155,26 @@ extension Tool {
       guard !match.2.isEmpty || match.3.contains(#/[-,]/#), let list = PageList(String(match.3)) else { return nil }
       return match.1 == nil ? .pages(list) : .dropPages(list)
     },
+    { $0.wholeMatch(of: #/sync([+-]?\d{1,5})ms/#).flatMap { Int($0.1) }.flatMap { $0 != 0 ? .sync($0) : nil } },
+    { word in
+      guard let match = word.wholeMatch(of: #/([a-z]+)([+-]?\d{1,3})/#), let what = Adjustment(rawValue: String(match.1)), let much = Int(match.2),
+            // Signed, or it reads as one of several: `blur5` is a size and `contrast2` a second try.
+            what == .blur || match.2.hasPrefix("+") || match.2.hasPrefix("-"), much != 0, what.range.contains(much) else { return nil }
+      return .adjust(what, much)
+    },
+    { $0.wholeMatch(of: #/border(\d{1,4})(black)?/#).flatMap { match in
+      Int(match.1).flatMap { $0 > 0 ? .border($0, isBlack: match.2 != nil) : nil }
+    } },
+    { Digest(rawValue: $0).map(Tool.digest) },
     { $0.wholeMatch(of: #/frames(.*[hms])/#).flatMap { seconds($0.1) }.flatMap { $0 > 0 ? .frames(every: $0) : nil } },
   ]
 
   init?(word: String) {
+    // What is written on it is written as it was written.
+    if let mark = word.wholeMatch(of: #/(?i)mark\((.+)\)/#) {
+      self = .mark(String(mark.1))
+      return
+    }
     let word = word.lowercased()
     guard let tool = Self.readers.lazy.compactMap({ $0(word) }).first else { return nil }
     self = tool
@@ -168,6 +201,11 @@ extension Tool {
     case .pages(let list): return "pages\(list.text)"
     case .dropPages(let list): return "nopages\(list.text)"
     case .frames(let seconds): return "frames\(Self.text(seconds))s"
+    case .sync(let thousandths): return "sync\(thousandths)ms"
+    case .adjust(let what, let much): return what.rawValue + (what == .blur || much < 0 ? "" : "+") + "\(much)"
+    case .border(let width, let isBlack): return "border\(width)\(isBlack ? "black" : "")"
+    case .mark(let text): return "mark(\(text))"
+    case .digest(let digest): return digest.rawValue
     }
   }
 
@@ -209,6 +247,7 @@ extension Tool {
     case crop, turn, removeBackground
     case pages, dropPages
     case lighter
+    case sync, adjust, border, mark, digest
 
     var title: String {
       switch self {
@@ -226,6 +265,11 @@ extension Tool {
       case .pages: return "Keep pages"
       case .dropPages: return "Remove pages"
       case .lighter: return "Make lighter"
+      case .sync: return "Move the sound"
+      case .adjust: return "Adjust"
+      case .border: return "Border"
+      case .mark: return "Watermark"
+      case .digest: return "Fingerprint"
       }
     }
 
@@ -244,7 +288,12 @@ extension Tool {
       case .removeBackground: return "person.crop.rectangle"
       case .pages: return "doc.text.magnifyingglass"
       case .dropPages: return "minus.rectangle.portrait"
-      case .lighter: return "feather"
+      case .lighter: return "leaf"
+      case .sync: return "waveform.path"
+      case .adjust: return "slider.horizontal.3"
+      case .border: return "square.dashed"
+      case .mark: return "signature"
+      case .digest: return "number"
       }
     }
 
@@ -264,6 +313,11 @@ extension Tool {
       case .pages: return "These pages, in this order"
       case .dropPages: return "All the pages but these"
       case .lighter: return "Less weight, looking the same"
+      case .sync: return "Later or earlier, to match the picture"
+      case .adjust: return "Brightness, contrast, saturation or blur"
+      case .border: return "A frame round it, in white or black"
+      case .mark: return "Words in the corner"
+      case .digest: return "SHA-256 or Base64, as text"
       }
     }
 
@@ -284,6 +338,11 @@ extension Tool {
       case .pages: return .pages(PageList("1-2")!)
       case .dropPages: return .dropPages(PageList("1")!)
       case .lighter: return .lighter
+      case .sync: return .sync(250)
+      case .adjust: return .adjust(.brightness, 10)
+      case .border: return .border(40)
+      case .mark: return .mark("©")
+      case .digest: return .digest(.sha256)
       }
     }
 
@@ -297,6 +356,9 @@ extension Tool {
       case .removeBackground: return [.image]
       case .pages, .dropPages: return [.document]
       case .lighter: return [.image, .video, .audio, .document]
+      case .sync: return [.video]
+      case .adjust, .border, .mark: return [.image]
+      case .digest: return Set(ConvertKind.allCases)
       }
     }
   }
@@ -317,6 +379,11 @@ extension Tool {
     case .dropPages: return .dropPages
     case .frames: return .frames
     case .lighter: return .lighter
+    case .sync: return .sync
+    case .adjust: return .adjust
+    case .border: return .border
+    case .mark: return .mark
+    case .digest: return .digest
     }
   }
 
@@ -335,6 +402,8 @@ extension Tool {
   /// another way, and not instead of a mirror.
   var slot: String {
     if case .turn(let turn) = self, turn == .mirror || turn == .flip { return turn.rawValue }
+    // And brighter is not instead of more contrast.
+    if case .adjust(let what, _) = self { return what.rawValue }
     return kind.rawValue
   }
 
@@ -343,6 +412,7 @@ extension Tool {
       if case .pages = division { return type.conforms(to: .pdf) }
       return ConvertKind(fileType: type).map([.audio, .video].contains) ?? false
     }
+    if case .digest = self { return true }
     guard let kind = ConvertKind(fileType: type), self.kind.kinds.contains(kind) else { return false }
     // A PDF has a way to say it is turned, and none to say it is mirrored.
     return kind != .document || (type.conforms(to: .pdf) && self != .turn(.mirror) && self != .turn(.flip))
@@ -364,6 +434,11 @@ extension Tool {
     case .pages(let list): return "Pages \(list.text)"
     case .dropPages(let list): return "Without pages \(list.text)"
     case .frames(let seconds): return "A frame every \(Self.text(seconds)) s"
+    case .sync(let thousandths): return "Sound \(abs(thousandths)) ms \(thousandths < 0 ? "earlier" : "later")"
+    case .adjust(let what, let much): return "\(what.rawValue.capitalized) \(what == .blur || much < 0 ? "" : "+")\(much)"
+    case .border(let width, let isBlack): return "\(isBlack ? "Black" : "White") border, \(width) px"
+    case .mark(let text): return "Watermark “\(text)”"
+    case .digest(let digest): return digest == .sha256 ? "SHA-256" : "Base64"
     case .mute, .normalize, .reverse, .removeBackground, .lighter: return kind.title
     }
   }
@@ -409,6 +484,8 @@ extension [Operation] {
       wanted = (.png, { !FormatCatalog.isSolid($0) })
     } else if tools.contains(where: { $0.kind == .frames }) {
       wanted = (.jpeg, FormatCatalog.isWritableImage)
+    } else if tools.contains(where: { $0.kind == .digest }) {
+      wanted = (.plainText, { $0 == .plainText })
     } else {
       return self
     }

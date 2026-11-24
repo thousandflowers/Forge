@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Everything a film can be told. The first lines are the ones people come
 /// for; the rest is folded away under what it is about.
@@ -80,6 +81,9 @@ struct FilmSettingsView: View {
         )
         .accessibilityLabel(Text("Kilobits a second"))
         Text("kb/s").foregroundStyle(.secondary)
+        if [.h264, .hevc, .vp9].contains(settings.encoder) {
+          Toggle("Two passes", isOn: $settings.isTwoPass).help("Twice as long, and the bits go where they are needed")
+        }
       }
     }
   }
@@ -96,12 +100,26 @@ struct FilmSettingsView: View {
       choice("Sharpness", $settings.sharpness, title: \.title)
       crop
       choice("Turn", $settings.turn, title: \.title)
+      line("Look") {
+        if let lut = settings.lut {
+          Text((lut as NSString).lastPathComponent).lineLimit(1).truncationMode(.middle)
+          Button("Remove") { settings.lut = nil }.controlSize(.small)
+        }
+        Button("Choose a LUT…", action: chooseLUT).controlSize(.small)
+      }
       line("Also") {
         Toggle("Smooth blocks", isOn: $settings.smoothsBlocks)
         Toggle("Grey", isOn: $settings.isGrey)
         Toggle("PAL to HD colours", isOn: $settings.isRec709).help("For an old PAL tape: from Rec. 601 to the Rec. 709 screens expect")
       }
     }
+  }
+
+  private func chooseLUT() {
+    let panel = NSOpenPanel()
+    panel.message = "Choose a .cube file."
+    panel.allowedContentTypes = [UTType(filenameExtension: "cube")].compactMap { $0 }
+    if panel.runModal() == .OK { settings.lut = panel.url?.path }
   }
 
   private enum CropChoice: String, CaseIterable { case none = "Leave it", blackBars = "Black bars off", edges = "By hand" }
@@ -162,6 +180,10 @@ struct FilmSettingsView: View {
       }
       if settings.sound != .none {
         choice("Channels", $settings.channels, title: \.title)
+        line("Track") {
+          NumberToken(value: $settings.track, placeholder: "all", range: 1...32, startingFrom: 1)
+            .accessibilityLabel(Text("Soundtrack to keep"))
+        }
         line("Also") { Toggle("Even out the loudness", isOn: $settings.evensLoudness) }
       }
       line("Subtitles") { Toggle("Keep them", isOn: $settings.keepsSubtitles) }

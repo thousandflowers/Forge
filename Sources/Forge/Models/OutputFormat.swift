@@ -31,6 +31,7 @@ struct OutputFormat: Identifiable, Hashable {
     if ExternalTools.locate("cwebp") != nil, let webp = UTType("org.webmproject.webp") {
       types.insert(webp)
     }
+    if ExternalTools.locate("potrace") != nil { types.insert(.svg) }
     return Self.sorted(types)
   }
 

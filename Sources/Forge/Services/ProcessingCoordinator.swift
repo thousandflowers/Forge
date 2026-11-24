@@ -462,7 +462,12 @@ actor ProcessingCoordinator {
     // URL, which truncated the source mid-read and destroyed the original.
     var attempt: ProcessingResult?
     var declined: Error?
-    for candidate in processors where candidate.canProcess(file) {
+    if let digest = operations.tools.compactMap({ tool -> Tool.Digest? in
+      if case .digest(let digest) = tool { return digest } else { return nil }
+    }).first {
+      attempt = try DigestProcessor.write(digest, of: file.url, to: plan.workURL, progress: progress)
+    }
+    for candidate in processors where attempt == nil && candidate.canProcess(file) {
       do {
         attempt = try await candidate.process(
           file.url,

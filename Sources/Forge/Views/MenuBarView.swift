@@ -30,6 +30,7 @@ struct MenuBarView: View {
         }
       }
 
+      Button(model.dropZone.isShown ? "Hide Drop Zone" : "Show Drop Zone") { model.dropZone.toggle() }
       Button("Open Forge") {
         NSApp.activate(ignoringOtherApps: true)
         openWindow(id: MenuBarView.windowID)

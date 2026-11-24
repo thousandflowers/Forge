@@ -84,6 +84,7 @@ enum Conversions {
     DataProcessor(),
     SimpleDocProcessor(),
     ModelProcessor(),
+    ArchiveProcessor(),
     // Last: a conversion macOS can do itself is still done by macOS, and a
     // tool the user installed is only asked about what is left over.
     ExternalProcessor(),

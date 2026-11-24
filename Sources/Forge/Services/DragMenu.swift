@@ -170,6 +170,24 @@ final class DragMenu {
     session.measure()
   }
 
+  /// The menu for files let go of somewhere, rather than held.
+  func present(_ urls: [URL]) {
+    Task {
+      let files = await Task.detached { urls.compactMap { try? ProcessableFile(url: $0) }.filter { ConvertKind(fileType: $0.fileType) != nil } }.value
+      guard !files.isEmpty else { NSSound.beep(); return }
+      let session = AskSession(request: AskRequest(word: .everything, over: nil), file: files[0], convert: convert, preview: preview)
+      session.files = files
+      session.join = join
+      session.cut = cut
+      session.onClose = { [weak self, weak session] in if let session { self?.close(session) } }
+      guard shows else { return open.append((session, nil)) }
+      let panel = AskPanel(session: session) { [weak self, weak session] in if let session { self?.close(session) } }
+      open.append((session, panel))
+      panel.appear()
+      session.measure()
+    }
+  }
+
   private func close(_ session: AskSession) {
     if self.session === session { self.session = nil }
     session.stop()

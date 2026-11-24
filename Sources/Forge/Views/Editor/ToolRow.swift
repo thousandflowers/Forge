@@ -45,6 +45,39 @@ struct ToolRow: View {
         moment("Seconds apart", seconds, none: "5") { if let value = $0, value > 0 { tool = .frames(every: value) } }
         Text("seconds").foregroundStyle(.secondary)
       }
+    case .sync(let thousandths):
+      HStack(spacing: 6) {
+        NumberToken(value: Binding(get: { thousandths }, set: { if let value = $0, value != 0 { tool = .sync(value) } }), placeholder: "250", range: -10_000...10_000, startingFrom: thousandths)
+        Text("thousandths of a second later").foregroundStyle(.secondary)
+      }
+    case .adjust(let what, let much):
+      HStack(spacing: 6) {
+        Picker("", selection: Binding(get: { what }, set: { tool = .adjust($0, min(max(much, $0.range.lowerBound), $0.range.upperBound)) })) {
+          ForEach(Tool.Adjustment.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
+        }
+        .labelsHidden().frame(maxWidth: 120)
+        .accessibilityLabel(Text("Adjust"))
+        NumberToken(value: Binding(get: { much }, set: { if let value = $0, value != 0 { tool = .adjust(what, value) } }), placeholder: "10", range: what.range, startingFrom: much)
+      }
+    case .border(let width, let isBlack):
+      HStack(spacing: 6) {
+        NumberToken(value: Binding(get: { width }, set: { tool = .border($0 ?? width, isBlack: isBlack) }), placeholder: "40", range: 1...9999, startingFrom: width)
+        Text("px").foregroundStyle(.secondary)
+        Toggle("Black", isOn: Binding(get: { isBlack }, set: { tool = .border(width, isBlack: $0) })).toggleStyle(.checkbox)
+      }
+    case .mark(let text):
+      TypedField(label: "Words", placeholder: "© Your name", text: text, width: 200) { typed in
+        let tidy = typed.trimmingCharacters(in: .whitespaces)
+        guard !tidy.isEmpty else { return false }
+        tool = .mark(tidy)
+        return true
+      }
+    case .digest(let digest):
+      Picker("", selection: Binding(get: { digest }, set: { tool = .digest($0) })) {
+        ForEach(Tool.Digest.allCases, id: \.self) { Text(Tool.digest($0).title).tag($0) }
+      }
+      .labelsHidden().frame(maxWidth: 120, alignment: .leading)
+      .accessibilityLabel(Text("Fingerprint"))
     case .mute, .normalize, .reverse, .removeBackground, .lighter:
       Text(tool.kind.summary).font(.callout).foregroundStyle(.secondary)
     }

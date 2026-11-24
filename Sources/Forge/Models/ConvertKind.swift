@@ -21,6 +21,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
   case model
   case subtitle
   case font
+  case archive
 
   init?(fileType: UTType) {
     // Subtitles first, and before the media check on purpose: AVFoundation
@@ -45,6 +46,8 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
       self = .document
     } else if FormatCatalog.isReadableModel(fileType) {
       self = .model
+    } else if ArchiveProcessor.reads(fileType) {
+      self = .archive
     } else if ExternalBridge.canHandle(fileType) {
       // Nothing on the machine reads this, but a tool the user installed does.
       // It is filed by what it is, so the sheet offers the right controls.
@@ -66,6 +69,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
     case .model: return "3D model"
     case .subtitle: return "subtitle"
     case .font: return "font"
+    case .archive: return "archive"
     }
   }
 
@@ -79,6 +83,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
     case .model: return "3D models"
     case .subtitle: return "subtitles"
     case .font: return "fonts"
+    case .archive: return "archives"
     }
   }
 
@@ -92,6 +97,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
     case .model: return "cube"
     case .subtitle: return "captions.bubble"
     case .font: return "textformat"
+    case .archive: return "doc.zipper"
     }
   }
 
@@ -107,6 +113,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
     case .model: return .model
     case .subtitle: return .subtitle
     case .font: return .font
+    case .archive: return .custom
     }
   }
 
@@ -122,7 +129,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
   var supportsResize: Bool {
     switch self {
     case .image, .video, .document: return true
-    case .audio, .data, .model, .subtitle, .font: return false
+    case .audio, .data, .model, .subtitle, .font, .archive: return false
     }
   }
 
@@ -130,7 +137,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
   var supportsQuality: Bool {
     switch self {
     case .image, .video, .document: return true
-    case .audio, .data, .model, .subtitle, .font: return false
+    case .audio, .data, .model, .subtitle, .font, .archive: return false
     }
   }
 
@@ -138,7 +145,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
   var supportsFilter: Bool {
     switch self {
     case .image, .document: return true
-    case .video, .audio, .data, .model, .subtitle, .font: return false
+    case .video, .audio, .data, .model, .subtitle, .font, .archive: return false
     }
   }
 
@@ -147,7 +154,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
   var supportsCodec: Bool {
     switch self {
     case .video, .audio: return true
-    case .image, .document, .data, .model, .subtitle, .font: return false
+    case .image, .document, .data, .model, .subtitle, .font, .archive: return false
     }
   }
 
@@ -156,7 +163,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
   var supportsSizeLimit: Bool {
     switch self {
     case .image: return true
-    case .video, .audio, .document, .data, .model, .subtitle, .font: return false
+    case .video, .audio, .document, .data, .model, .subtitle, .font, .archive: return false
     }
   }
 
@@ -166,7 +173,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
     switch self {
     case .image, .document, .video, .audio: return true
     case .subtitle: return true
-    case .data, .model, .font: return false
+    case .data, .model, .font, .archive: return false
     }
   }
 
@@ -179,7 +186,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
   /// there is nothing to look at in a sound file.
   var previewCost: PreviewCost {
     switch self {
-    case .image, .document, .data, .model, .subtitle, .font: return .runIt
+    case .image, .document, .data, .model, .subtitle, .font, .archive: return .runIt
     case .video: return .oneFrame
     case .audio: return .describeIt
     }
@@ -234,6 +241,8 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
       ]
     case .font:
       return [OutputGroup("Fonts", OutputFormat.fonts)]
+    case .archive:
+      return [OutputGroup("Archives", ArchiveProcessor.writable.map { OutputFormat(type: $0) })]
     case .audio:
       return [
         OutputGroup("Audio", OutputFormat.audio),
@@ -311,7 +320,7 @@ extension ConvertKind {
     case .video: return ["MP4", "MOV", "GIF", "MP3", "M4A", "SRT", "TXT", "JPEG"]
     case .audio: return ["M4A", "MP3", "WAV", "FLAC", "TXT", "SRT"]
     case .document: return ["PDF", "DOCX", "RTF", "HTML", "TXT", "JPEG", "PNG", "M4A"]
-    case .data, .model, .subtitle, .font: return []
+    case .data, .model, .subtitle, .font, .archive: return []
     }
   }
 

@@ -182,6 +182,8 @@ enum FormatCatalog {
       // variant, which describes the type database rather than the file: what
       // gets written is plain AAC in an MP4 container.
       (UTType("com.apple.protected-mpeg-4-audio-b"), kAudioFormatMPEG4AAC),
+      // An iPhone's ringtone, which is an M4A by another name.
+      (UTType("com.apple.mpeg-4-ringtone"), kAudioFormatMPEG4AAC),
     ]
     // Apple Lossless and Opus are both encodable on macOS but deliberately
     // absent: ALAC shares the .m4a container with AAC and Opus is written into

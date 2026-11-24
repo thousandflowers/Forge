@@ -865,7 +865,7 @@ final class ConvertKindTests: XCTestCase {
   }
 
   func test_aTypeNothingReadsIsNil() {
-    XCTAssertNil(ConvertKind(fileType: .zip))
+    XCTAssertNil(ConvertKind(fileType: .diskImage))
   }
 
   /// The controls each kind admits to, taken from what the processors read.
