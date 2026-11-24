@@ -17,6 +17,7 @@ final class AskCenter: ObservableObject {
   private let shows: Bool
   private var panel: AskPanel?
   var preview: Preview?
+  var cut: (@MainActor (ProcessableFile) -> Void)?
 
   var waiting: Int { queue.count }
 
@@ -31,6 +32,7 @@ final class AskCenter: ObservableObject {
       return
     }
     let session = AskSession(request: request, scope: scope, file: file, convert: convert, preview: preview)
+    session.cut = cut
     session.onClose = { [weak self, weak session] in
       guard let self, self.current === session else { return }
       self.dismiss()

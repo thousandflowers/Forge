@@ -63,6 +63,7 @@ final class AppModel: ObservableObject {
     self.coordinator = coordinator
     asks.preview = { file, preset, folder in try await coordinator.preview(file, with: preset, into: folder) }
     dragMenu.preview = asks.preview
+    asks.cut = { [weak self] file in self?.cut(file) }
   }
 
   /// Load persisted state on launch; seed default presets on first run.

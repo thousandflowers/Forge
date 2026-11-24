@@ -10,7 +10,7 @@ enum ReadyWords {
       actions: formats.compactMap { UTType(filenameExtension: $0) }.map { .convertFormat(to: $0) } + actions
     )
     preset.nameTrigger = word
-    return PresetGallery.Entry(author: "Forge", summary: "Rename a file with _\(word): \(summary.prefix(1).lowercased() + summary.dropFirst())", preset: preset, tags: ["word"])
+    return PresetGallery.Entry(author: "Forge", summary: "With _\(word) in a file\u{2019}s name: \(summary)", preset: preset, tags: ["word"])
   }
 
   private typealias Ready = (word: String, name: String, summary: String, category: PresetCategory, formats: [String], actions: [Operation])
