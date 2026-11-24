@@ -5,7 +5,7 @@ import SwiftUI
 /// front of the user. Asked where the need is - a file that would not open, a
 /// Convert sheet with formats missing - rather than only on a screen of its own.
 enum ToolOffers {
-  /// Every tool Forge calls and can install, as Capabilities lists them.
+  /// Every tool Forge calls and can fetch, as Capabilities lists them.
   static var all: [ExternalTool] {
     Capabilities.all.compactMap { capability in
       guard case .needsPack(let pack) = capability.status, pack.isWired else { return nil }
@@ -32,27 +32,28 @@ enum ToolOffers {
   }
 }
 
-/// Installs a tool with Homebrew and follows it to the end. One for the whole
-/// app, so an install started in the Convert sheet is still visible, and still
-/// running, in Capabilities - and the other way round.
+/// Fetches a tool and follows it to the end. One for the whole app, so a
+/// download started in the Convert sheet is still visible, and still running,
+/// in Capabilities - and the other way round.
 @MainActor
 final class ToolInstaller: ObservableObject {
   static let shared = ToolInstaller()
 
   enum State: Equatable {
     case idle
-    /// The last line Homebrew printed, shown so it is plainly doing something.
-    case running(String)
+    /// How much of it is in; nil while it is unpacked and tried.
+    case running(Double?)
     case failed(String)
     case installed
   }
 
   @Published private(set) var states: [String: State] = [:]
-  /// The tool whose install is waiting for the user to say yes.
+  /// The tool whose download is waiting for the user to say yes.
   @Published var confirming: ExternalTool?
 
   /// What to do once each tool is in: files that were turned away are tried again.
   private var afterwards: [String: () -> Void] = [:]
+  private var fetching: [String: Task<Void, Never>] = [:]
 
   func state(of binary: String) -> State { states[binary] ?? .idle }
 
@@ -63,51 +64,86 @@ final class ToolInstaller: ObservableObject {
 
   func install(_ tool: ExternalTool) {
     confirming = nil
-    states[tool.binary] = .running("")
+    guard let release = tool.release, fetching[tool.binary] == nil else { return }
+    states[tool.binary] = .running(0)
 
-    Task { [weak self] in
+    fetching[tool.binary] = Task { [weak self] in
       // Bound once, strongly: a weak capture is a mutable reference, and one
       // cannot be read again from inside the progress closure's own task.
       guard let self else { return }
       do {
-        try await ExternalTools.install(tool) { [self] line in
+        try await Toolbox.shared.fetch(tool.name, release) { [self] share in
           Task { @MainActor in
-            self.states[tool.binary] = .running(line)
+            // A step that arrives after the end is not a step back.
+            if case .running = self.states[tool.binary] { self.states[tool.binary] = .running(share) }
           }
         }
         self.states[tool.binary] = .installed
         self.afterwards.removeValue(forKey: tool.binary)?()
       } catch {
-        self.states[tool.binary] = .failed(error.localizedDescription)
+        // Stopped on purpose, under whichever name it comes back.
+        let stopped = error is CancellationError || (error as? URLError)?.code == .cancelled
+        self.states[tool.binary] = stopped ? .idle : .failed(error.localizedDescription)
       }
+      self.fetching[tool.binary] = nil
+    }
+  }
+
+  func stop(_ tool: ExternalTool) { fetching[tool.binary]?.cancel() }
+
+  func remove(_ tool: ExternalTool) {
+    do {
+      try Toolbox.shared.remove(tool.name)
+      states[tool.binary] = .idle
+    } catch {
+      states[tool.binary] = .failed(error.localizedDescription)
     }
   }
 }
 
 extension View {
-  /// The question asked before anything is installed: the exact command, once.
+  /// The question asked before anything is fetched: what, from where, how much.
   func confirmsToolInstalls(with installer: ToolInstaller) -> some View {
     confirmationDialog(
-      installer.confirming.map { "Install \($0.formula)?" } ?? "",
+      installer.confirming.map { "Download \($0.name)?" } ?? "",
       isPresented: Binding(
         get: { installer.confirming != nil },
         set: { if !$0 { installer.confirming = nil } }
       )
     ) {
       if let tool = installer.confirming {
-        Button("Install") { installer.install(tool) }
+        Button("Download") { installer.install(tool) }
         Button("Cancel", role: .cancel) { installer.confirming = nil }
       }
     } message: {
-      if let tool = installer.confirming {
-        Text("Forge will run “\(tool.installCommand)”. Homebrew installs it on your Mac; Forge neither ships nor hosts it.")
+      if let tool = installer.confirming, let release = tool.release {
+        Text("\(tool.name) \(release.version), \(tool.weight), from \(release.build.url.host ?? ""). Licence: \(release.licence). Forge checks it is the one it expects and keeps it in its own folder.")
       }
     }
   }
 }
 
-/// One line about a tool that is not here: what it would add, and a button
-/// that installs it - or, without Homebrew, where to get that first.
+/// A download on its way, and the button that stops it.
+struct ToolProgress: View {
+  let tool: ExternalTool
+  let share: Double?
+
+  var body: some View {
+    HStack(spacing: 8) {
+      if let share {
+        ProgressView(value: share).frame(maxWidth: 140)
+        Text("\(Int(share * 100))% of \(tool.weight)").font(.caption).foregroundStyle(.secondary).monospacedDigit()
+        Button("Stop") { ToolInstaller.shared.stop(tool) }.controlSize(.small)
+      } else {
+        ProgressView().controlSize(.small)
+        Text("Unpacking…").font(.caption).foregroundStyle(.secondary)
+      }
+    }
+  }
+}
+
+/// One line about a tool that is not here: what it would add, and the button
+/// that fetches it.
 struct ToolOfferRow: View {
   let tool: ExternalTool
   /// The sentence before the button: what the tool would do here.
@@ -130,21 +166,10 @@ struct ToolOfferRow: View {
   @ViewBuilder
   private var status: some View {
     switch installer.state(of: tool.binary) {
-    case .running(let line):
-      HStack(spacing: 6) {
-        ProgressView().controlSize(.small)
-        Text(line.isEmpty ? "Installing \(tool.formula)…" : line)
-          .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-      }
-    case .failed(let reason):
-      Text(reason).font(.caption).foregroundStyle(.red).lineLimit(2)
-    case .installed:
-      Text("Installed.").font(.caption).foregroundStyle(.green)
-    case .idle:
-      if !ExternalTools.hasHomebrew {
-        Text("Forge installs it with Homebrew, which is not on this Mac. Installing Homebrew asks for your password, so it is a step for you: brew.sh has the one line.")
-          .font(.caption).foregroundStyle(.secondary)
-      }
+    case .running(let share): ToolProgress(tool: tool, share: share)
+    case .failed(let reason): Text(reason).font(.caption).foregroundStyle(.red).lineLimit(2)
+    case .installed: Text("Ready.").font(.caption).foregroundStyle(.green)
+    case .idle: EmptyView()
     }
   }
 
@@ -156,11 +181,7 @@ struct ToolOfferRow: View {
     case .failed:
       Button("Try Again") { installer.ask(tool, then: then) }.controlSize(.small)
     case .idle:
-      if ExternalTools.hasHomebrew {
-        Button("Install \(tool.formula)…") { installer.ask(tool, then: then) }.controlSize(.small)
-      } else {
-        Link("brew.sh", destination: URL(string: "https://brew.sh")!).controlSize(.small)
-      }
+      Button("Download, \(tool.weight)…") { installer.ask(tool, then: then) }.controlSize(.small)
     }
   }
 }

@@ -28,10 +28,16 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
     // lists WebVTT among the types it opens, so a .vtt was being filed as a
     // video - shown with video controls, and failing with "contains no audio
     // or video tracks" when anybody used them.
-    if Subtitles.reads(fileType.preferredFilenameExtension ?? "") {
+    if fileType.goes(by: Subtitles.readableExtensions) {
       self = .subtitle
-    } else if ExternalBridge.Fonts.handles(fileType.preferredFilenameExtension ?? "") {
+    } else if fileType.goes(by: FontProcessor.readable) {
       self = .font
+    // Before the rest: a glTF is JSON and a COLLADA is XML, and neither is
+    // what anybody means by one.
+    } else if FormatCatalog.isReadableModel(fileType) {
+      self = .model
+    } else if fileType.goes(by: MidiProcessor.readable) {
+      self = .audio
     } else if FormatCatalog.isReadableImage(fileType) {
       self = .image
     } else if FormatCatalog.isReadableMedia(fileType) {
@@ -40,12 +46,10 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
       // while the sheet is being drawn, and it is right for anything with a
       // normal name; a mislabelled file simply gets one control too many.
       self = fileType.conforms(to: .audio) ? .audio : .video
-    } else if DataProcessor.readable.contains(where: { fileType.conforms(to: $0) }) {
+    } else if DataProcessor.handles(fileType) {
       self = .data
-    } else if SimpleDocProcessor.readableTypes.contains(where: { fileType.conforms(to: $0) }) {
+    } else if SimpleDocProcessor.readableTypes.contains(where: { fileType.conforms(to: $0) }) || fileType.goes(by: ComicProcessor.readable) {
       self = .document
-    } else if FormatCatalog.isReadableModel(fileType) {
-      self = .model
     } else if ArchiveProcessor.reads(fileType) {
       self = .archive
     } else if ExternalBridge.canHandle(fileType) {
@@ -261,9 +265,13 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
         OutputGroup("With your tools", OutputFormat.withTools(for: .document)),
       ]
     case .data:
-      return [OutputGroup("Data", OutputFormat.data)]
+      return [
+        OutputGroup("Data", OutputFormat.data),
+        OutputGroup("Documents", OutputFormat.dataPages),
+        OutputGroup("With your tools", OutputFormat.withTools(for: .data)),
+      ]
     case .model:
-      return [OutputGroup("3D", OutputFormat.models)]
+      return [OutputGroup("3D", OutputFormat.models), OutputGroup("Images", OutputFormat.images)]
     }
   }
 }
@@ -319,8 +327,10 @@ extension ConvertKind {
     case .image: return ["JPEG", "PNG", "HEIC", "WEBP", "TIFF", "PDF", "GIF", "AVIF"]
     case .video: return ["MP4", "MOV", "GIF", "MP3", "M4A", "SRT", "TXT", "JPEG"]
     case .audio: return ["M4A", "MP3", "WAV", "FLAC", "TXT", "SRT"]
-    case .document: return ["PDF", "DOCX", "RTF", "HTML", "TXT", "JPEG", "PNG", "M4A"]
-    case .data, .model, .subtitle, .font, .archive: return []
+    case .document: return ["PDF", "DOCX", "EPUB", "RTF", "HTML", "TXT", "JPEG", "PNG", "M4A"]
+    case .data: return ["CSV", "JSON", "XLSX", "YAML", "XML", "HTML"]
+    case .model: return ["OBJ", "STL", "GLB", "USDZ", "3MF", "PNG"]
+    case .subtitle, .font, .archive: return []
     }
   }
 

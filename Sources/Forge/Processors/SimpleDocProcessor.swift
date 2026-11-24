@@ -35,6 +35,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     types.append(contentsOf: Array(DocumentText.readable.keys))
     if let markdown = DocumentText.markdown { types.append(markdown) }
     if let email = Email.type { types.append(email) }
+    if let epub = Book.type { types.append(epub) }
     return types
   }()
 

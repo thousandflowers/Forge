@@ -158,7 +158,7 @@ enum Joiner {
   /// A track that can be turned on and off, in a film otherwise as it is.
   private static func subtitle(_ film: ProcessableFile, with words: ProcessableFile, to output: URL, privacy: PrivacyPolicy) throws {
     guard let ffmpeg = ExternalTools.locate("ffmpeg") else {
-      throw ProcessingError.conversionFailed(reason: "Subtitles are put into a film by ffmpeg: brew install ffmpeg")
+      throw ProcessingError.conversionFailed(reason: "Subtitles are put into a film by ffmpeg, which Forge downloads: see Capabilities.")
     }
     let codec = output.pathExtension.lowercased() == "mkv" ? "srt" : "mov_text"
     do {

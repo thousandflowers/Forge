@@ -30,13 +30,13 @@ enum InputFormats {
     // ponytail: unclassified dyn types get no chip; "Any" still takes them.
     let video = media.filter { $0.conforms(to: .movie) }
     let documents = Set(DocumentText.readable.keys).union(SimpleDocProcessor.readableTypes)
-    let fonts = ["ttf", "otf", "woff", "woff2"].filter(ExternalBridge.Fonts.handles)
+    let fonts = FontProcessor.readable.sorted()
     return [
       Group(kind: .image, extensions: extensions(FormatCatalog.readableImageTypes)),
       Group(kind: .video, extensions: extensions(video)),
       Group(kind: .audio, extensions: extensions(audio)),
-      Group(kind: .document, extensions: extensions(documents)),
-      Group(kind: .data, extensions: extensions(DataProcessor.readable)),
+      Group(kind: .document, extensions: (extensions(documents) + ComicProcessor.readable).sorted()),
+      Group(kind: .data, extensions: Set(extensions(DataProcessor.readable) + DataFormats.written + DataFormats.binary).sorted()),
       Group(kind: .model, extensions: extensions(FormatCatalog.readableModelTypes)),
       Group(kind: .subtitle, extensions: Subtitles.readableExtensions.sorted()),
       Group(kind: .font, extensions: fonts),

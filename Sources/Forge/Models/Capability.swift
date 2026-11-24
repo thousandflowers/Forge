@@ -75,7 +75,7 @@ struct Capability: Identifiable, Hashable {
 /// The inventory, computed from what the system reports.
 enum Capabilities {
 
-  static var all: [Capability] { native + notYetBuilt + wouldNeedAPack + outOfReach }
+  static var all: [Capability] { native + wouldNeedAPack }
 
   /// Capabilities macOS will extend on demand.
   static var installable: [Capability] {
@@ -129,16 +129,16 @@ enum Capabilities {
       Capability(
         id: "documents",
         title: "Documents",
-        summary: "HTML, RTF, DOCX, ODT, Markdown and text, to each other and to PDF.",
+        summary: "Word, ODT, RTF, HTML, EPUB, Markdown and text, to each other and to PDF.",
         symbol: "doc.richtext",
-        status: .available(detail: "PDF, DOCX, RTF, HTML, TXT")
+        status: .available(detail: names(OutputFormat.documents))
       ),
       Capability(
         id: "data",
         title: "Data files",
-        summary: "CSV, TSV, JSON and Property List, between each other.",
+        summary: "Spreadsheets, records, places and contacts, to each other.",
         symbol: "tablecells",
-        status: .available(detail: "CSV, TSV, JSON, PLIST")
+        status: .available(detail: names(OutputFormat.data))
       ),
       Capability(
         id: "ocr",
@@ -172,25 +172,44 @@ enum Capabilities {
       Capability(
         id: "models",
         title: "3D models",
-        summary: "Convert between the mesh formats ModelIO handles.",
+        summary: "From one mesh format to another, or a picture of it.",
         symbol: "cube",
         status: .available(detail: writable(FormatCatalog.writableModelTypes))
       ),
-    ]
-  }
-
-  // MARK: - Possible, not built
-
-  private static var notYetBuilt: [Capability] {
-    [
-
-
+      Capability(
+        id: "fonts",
+        title: "Fonts",
+        summary: "TrueType and OpenType to the web formats and back, collections taken apart.",
+        symbol: "textformat",
+        status: .available(detail: names(OutputFormat.fonts))
+      ),
       Capability(
         id: "subtitles",
         title: "Subtitles",
-        summary: "Pull the subtitle tracks out of a video.",
+        summary: "From one subtitle format to another, or the words on their own.",
         symbol: "captions.bubble",
-        status: .planned
+        status: .available(detail: names(OutputFormat.subtitles))
+      ),
+      Capability(
+        id: "archives",
+        title: "Archives",
+        summary: "ZIP, 7z, RAR, TAR, ISO and more, repacked.",
+        symbol: "archivebox",
+        status: .available(detail: names(ArchiveProcessor.writable.map { OutputFormat(type: $0) }))
+      ),
+      Capability(
+        id: "vector",
+        title: "Vector tracing",
+        summary: "A picture as outlines, in SVG.",
+        symbol: "scribble.variable",
+        status: .available(detail: "SVG")
+      ),
+      Capability(
+        id: "midi",
+        title: "MIDI",
+        summary: "Music written down, played and recorded.",
+        symbol: "pianokeys",
+        status: .available(detail: writable(Set(FormatCatalog.writableAudioTypes.keys)))
       ),
     ]
   }
@@ -208,7 +227,7 @@ enum Capabilities {
           name: "Extra image encoders",
           requires: "an encoder macOS does not ship",
           approximateSize: "a few megabytes",
-          tool: ExternalTool(binary: "cwebp", formula: "webp", adds: "writing WebP", serves: [.image]),
+          tool: ExternalTool(binary: "cwebp", name: "webp", adds: "writing WebP", serves: [.image]),
           isWired: true
         )),
         evidence: ["webp", "jxl"]
@@ -222,7 +241,7 @@ enum Capabilities {
           name: "Extra video codecs",
           requires: "a codec library the size of FFmpeg",
           approximateSize: "tens of megabytes",
-          tool: ExternalTool(binary: "ffmpeg", formula: "ffmpeg", adds: "MKV, WebM, AVI, MP3, OGG, WMV and dozens more", serves: [.video, .audio]),
+          tool: ExternalTool(binary: "ffmpeg", name: "ffmpeg", adds: "MKV, WebM, AVI, MP3, OGG, WMV and dozens more", serves: [.video, .audio]),
           isWired: true
         )),
         evidence: ["wmv", "mxf", "flv", "avi", "mkv", "webm"]
@@ -236,10 +255,10 @@ enum Capabilities {
           name: "Office and ebook formats",
           requires: "a document engine of its own",
           approximateSize: "hundreds of megabytes",
-          tool: ExternalTool(binary: "pandoc", formula: "pandoc", adds: "EPUB, ODT, PPTX, Markdown and dozens more", serves: [.document]),
+          tool: ExternalTool(binary: "pandoc", name: "pandoc", adds: "EPUB, ODT, PPTX, Markdown and dozens more", serves: [.document]),
           isWired: true
         )),
-        evidence: ["epub", "mobi", "azw3", "odt", "rst", "org", "tex", "ipynb"]
+        evidence: ["rst", "org", "tex", "ipynb"]
       ),
       Capability(
         id: "office-suite",
@@ -251,70 +270,54 @@ enum Capabilities {
           requires: "a whole office suite, which reads what nothing else does",
           approximateSize: "about a gigabyte",
           tool: ExternalTool(
-            binary: "soffice", formula: "libreoffice", adds: "DOC, XLS, PPT, XLSX, PPTX, Pages, Numbers and Keynote",
-            isCask: true, insideApplications: "LibreOffice.app/Contents/MacOS/soffice", serves: [.document]
+            binary: "soffice", name: "LibreOffice", adds: "DOC, XLS, PPT, XLSX, PPTX, Pages, Numbers and Keynote",
+            insideApplications: "LibreOffice.app/Contents/MacOS/soffice", serves: [.document]
           ),
           isWired: true
         )),
-        evidence: ["doc", "xls", "ppt", "xlsx", "pptx", "pages", "numbers", "key", "ods", "odp", "wpd"]
+        evidence: ["xls", "ppt", "pptx", "pages", "numbers", "key", "odp", "wpd"]
       ),
       Capability(
-        id: "fonts",
-        title: "Fonts",
-        summary: "Convert between TrueType, OpenType and the web formats.",
-        symbol: "textformat",
+        id: "ebooks",
+        title: "Kindle books",
+        summary: "MOBI, AZW3, FB2, LIT and the other e-book formats, to each other.",
+        symbol: "book",
         status: .needsPack(.init(
-          name: "Font tools",
-          requires: "a font writer - CoreText reads font tables but cannot write one",
-          approximateSize: "a few megabytes",
-          tool: ExternalTool(binary: "ttx", formula: "fonttools", adds: "writing TrueType, OpenType, WOFF", serves: [.font]),
-          // ExternalBridge.Fonts calls it (ttf/otf to woff2 and back); the card
-          // said "Forge does not call it yet" over a conversion that works.
+          name: "E-book formats",
+          requires: "an e-book converter",
+          approximateSize: "hundreds of megabytes",
+          tool: .calibre,
           isWired: true
         )),
-        evidence: ["ttf", "otf", "woff", "woff2"]
+        evidence: ["mobi", "azw", "azw3", "fb2", "lit", "lrf", "pdb", "prc", "chm"]
       ),
       Capability(
-        id: "ocr-more-languages",
-        title: "More OCR languages",
-        summary: "Greek and the others Vision does not recognise.",
-        symbol: "character.book.closed",
+        id: "parquet",
+        title: "Parquet",
+        summary: "The data format of analysts, to and from CSV and JSON.",
+        symbol: "cylinder.split.1x2",
         status: .needsPack(.init(
-          name: "Extra recognition languages",
-          requires: "a second recognition engine and its language data",
-          approximateSize: "tens of megabytes per language",
-          tool: ExternalTool(binary: "tesseract", formula: "tesseract-lang", adds: "the languages Vision does not read"),
+          name: "Parquet",
+          requires: "a database engine",
+          approximateSize: "tens of megabytes",
+          tool: ExternalTool(binary: "duckdb", name: "DuckDB", adds: "Parquet", serves: [.data]),
           isWired: true
         )),
-        evidence: []
-      ),
-    ]
-  }
-
-  // MARK: - Not reachable from here
-
-  private static var outOfReach: [Capability] {
-    [
-      Capability(
-        id: "archives",
-        title: "Archives",
-        summary: "ZIP, TAR and friends.",
-        symbol: "archivebox",
-        status: .unavailable(reason: "macOS exposes no archive API; only Apple Archive, which nothing else reads.")
+        evidence: ["parquet"]
       ),
       Capability(
-        id: "config",
-        title: "YAML and TOML",
-        summary: "Configuration formats.",
-        symbol: "curlybraces",
-        status: .unavailable(reason: "No parser in Foundation or any Apple framework.")
-      ),
-      Capability(
-        id: "vector",
-        title: "Vector tracing",
-        summary: "Turning an image into SVG.",
-        symbol: "scribble.variable",
-        status: .unavailable(reason: "macOS has no tracer, and there is nothing to wrap.")
+        id: "typst",
+        title: "Typst",
+        summary: "Typst documents, set as PDF, PNG or SVG.",
+        symbol: "doc.plaintext",
+        status: .needsPack(.init(
+          name: "Typst",
+          requires: "a typesetter",
+          approximateSize: "tens of megabytes",
+          tool: ExternalTool(binary: "typst", name: "Typst", adds: "PDF, PNG and SVG from Typst documents", serves: [.document]),
+          isWired: true
+        )),
+        evidence: ["typ"]
       ),
     ]
   }
@@ -327,6 +330,8 @@ enum Capabilities {
       .compactMap { FormatCatalog.fileExtension(for: $0)?.uppercased() }
       .sorted()
   }
+
+  private static func names(_ formats: [OutputFormat]) -> String { formats.map(\.label).joined(separator: ", ") }
 
   private static func writable(_ types: Set<UTType>) -> String {
     types

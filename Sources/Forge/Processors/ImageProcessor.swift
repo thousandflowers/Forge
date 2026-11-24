@@ -30,7 +30,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     // Text is a reading job; WebP is written by cwebp where it is installed.
     if target.conforms(to: .plainText) { return true }
     if Self.isWebP(target), ExternalTools.locate("cwebp") != nil { return true }
-    if target == .svg, file.fileType != .svg, ExternalTools.locate("potrace") != nil { return true }
+    if target == .svg, file.fileType != .svg { return true }
     return FormatCatalog.isWritableImage(target) || FormatCatalog.isWritableVideo(target)
   }
 
@@ -97,11 +97,10 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       )
     }
 
-    // Outlines of it, traced by potrace where it is installed.
-    if outputUTI == .svg, let potrace = ExternalTools.locate("potrace") {
+    if outputUTI == .svg {
       let image = try transform(frames[0].image, with: operations, orientation: orientation, onWhite: true)
       progress(0.5)
-      try Self.trace(image, to: output, using: potrace)
+      try Tracer.svg(of: image).write(to: output, atomically: true, encoding: .utf8)
       progress(1)
       return ProcessingResult(
         outputURL: output, outputSize: Int64(try Self.fileSize(of: output)), outputDimensions: (image.width, image.height),
@@ -377,26 +376,6 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       scratch.path,
       "-o", output.path,
     ])
-  }
-
-  /// Black on white, as potrace sees things: it has no greys, so what is darker
-  /// than half is a shape and the rest is paper.
-  private static func trace(_ image: CGImage, to output: URL, using potrace: URL) throws {
-    let width = image.width, height = image.height
-    guard let context = CGContext(
-      data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width,
-      space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue
-    ) else { throw ProcessingError.conversionFailed(reason: "Cannot stage the image for potrace") }
-    context.setFillColor(gray: 1, alpha: 1)
-    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-    guard let pixels = context.data else { throw ProcessingError.conversionFailed(reason: "Cannot stage the image for potrace") }
-    var staged = Data("P5 \(width) \(height) 255\n".utf8)
-    staged.append(Data(bytes: pixels, count: width * height))
-    let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("forge-\(UUID().uuidString).pgm")
-    defer { try? FileManager.default.removeItem(at: scratch) }
-    try staged.write(to: scratch)
-    try ExternalTools.run(potrace, ["--svg", "--output", output.path, scratch.path])
   }
 
   static func sizeCeiling(from operations: [Operation]) -> Int? {

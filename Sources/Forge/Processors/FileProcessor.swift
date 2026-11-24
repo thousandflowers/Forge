@@ -74,6 +74,12 @@ enum Conversions {
     // `readableImageTypes` and then hand ImageIO a file it cannot decode.
     VectorProcessor(),
     ImageProcessor(),
+    FontProcessor(),
+    // Before data and film: a glTF is JSON, and macOS calls a COLLADA
+    // audiovisual.
+    ModelProcessor(),
+    // Before the media path, which is handed a sound and finds sheet music.
+    MidiProcessor(),
     // Before the media path: AVFoundation lists WebVTT among the types it
     // opens, and then finds no tracks in one, so a subtitle handed to it fails
     // with "contains no audio or video tracks" rather than being converted.
@@ -83,7 +89,7 @@ enum Conversions {
     // system is concerned, and the document reader would take them.
     DataProcessor(),
     SimpleDocProcessor(),
-    ModelProcessor(),
+    ComicProcessor(),
     ArchiveProcessor(),
     // Last: a conversion macOS can do itself is still done by macOS, and a
     // tool the user installed is only asked about what is left over.

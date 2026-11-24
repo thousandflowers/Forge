@@ -33,7 +33,7 @@ struct Signature {
       ext: "mp4", also: ["mov", "qt", "m4v", "m4a", "m4r", "m4b", "3gp"],
       begins: any(at(4, "ftyp"), at(4, "moov"), at(4, "mdat"), at(4, "wide"), at(4, "free"))
     ),
-    Signature(ext: "zip", also: ["docx", "xlsx", "pptx", "odt", "ods", "odp", "epub", "cbz", "usdz", "key", "pages", "numbers"], begins: at(0, "PK\u{03}\u{04}")),
+    Signature(ext: "zip", also: ["docx", "xlsx", "pptx", "odt", "ods", "odp", "epub", "cbz", "usdz", "key", "pages", "numbers", "3mf", "kmz"], begins: at(0, "PK\u{03}\u{04}")),
     Signature(ext: "doc", also: ["xls", "ppt"], begins: at(0, "\u{D0}\u{CF}\u{11}\u{E0}")),
     Signature(ext: "7z", begins: at(0, "7z\u{BC}\u{AF}")),
     Signature(ext: "rar", begins: at(0, "Rar!")),
@@ -42,6 +42,9 @@ struct Signature {
     Signature(ext: "otf", begins: at(0, "OTTO")),
     Signature(ext: "woff", begins: at(0, "wOFF")),
     Signature(ext: "woff2", begins: at(0, "wOF2")),
+    Signature(ext: "mid", also: ["midi", "kar"], begins: at(0, "MThd")),
+    Signature(ext: "sqlite", also: ["sqlite3", "db"], begins: at(0, "SQLite format 3")),
+    Signature(ext: "parquet", begins: at(0, "PAR1")),
     Signature(ext: "glb", begins: at(0, "glTF")),
   ]
 

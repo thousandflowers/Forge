@@ -1,13 +1,11 @@
 import Foundation
 import UniformTypeIdentifiers
 
-/// Tabular and structured data: CSV, JSON, Property List and TOML.
+/// Tabular and structured data.
 ///
-/// The first three are Foundation's. TOML is not - nothing on the machine
-/// reads it - so `Toml` reads and writes the part of it a configuration file
-/// is made of, and refuses the rest rather than guessing. YAML is still not
-/// here: its specification is large enough that a subset would quietly
-/// misread files that look ordinary.
+/// JSON, CSV and Property List are Foundation's. Nothing on the machine reads
+/// the rest, so `Toml`, `Yaml` and `DataFormats` read the part of each that
+/// people's files are made of, and refuse what is beyond it rather than guess.
 final class DataProcessor: FileProcessor, @unchecked Sendable {
   let name = "Data Processor"
 
@@ -19,12 +17,30 @@ final class DataProcessor: FileProcessor, @unchecked Sendable {
     [.json, .propertyList, csv, tsv, toml].compactMap { $0 }
   }
 
-  func canProcess(_ file: ProcessableFile) -> Bool {
-    Toml.handles(file.url.pathExtension) || Self.readable.contains { file.fileType.conforms(to: $0) }
+  // Who may become what: a list of contacts is a table, and a table of sales is
+  // no list of contacts, but nobody can tell which it is until it is asked for.
+  static let records = ["json", "jsonl", "ndjson", "yaml", "yml", "toml", "plist", "xml"]
+  static let tables = ["csv", "tsv", "xlsx", "ods", "sql"]
+  static let settings = ["ini", "strings"]
+  static let places = ["geojson", "gpx", "kml", "kmz"]
+  static let cards = ["vcf", "ics"]
+
+  static func handles(_ type: UTType) -> Bool {
+    readable.contains { type.conforms(to: $0) } || type.goes(by: DataFormats.written.union(DataFormats.binary).union(ExternalBridge.tables).filter { DataFormats.reads($0) || ExternalBridge.tables.contains($0) })
   }
 
+  private static func reads(_ ext: String, _ type: UTType) -> Bool {
+    Toml.handles(ext) || DataFormats.reads(ext) || readable.contains { type.conforms(to: $0) }
+  }
+
+  func canProcess(_ file: ProcessableFile) -> Bool { Self.reads(file.url.pathExtension, file.fileType) }
+
   func takes(_ file: ProcessableFile, to target: UTType) -> Bool {
-    Toml.handles(Conversions.fileExtension(of: target)) || Self.readable.contains { target.conforms(to: $0) }
+    let source = file.url.pathExtension.lowercased(), wanted = Conversions.fileExtension(of: target)
+    if Self.settings.contains(wanted) { return Self.settings.contains(source) || Self.records.contains(source) }
+    if Self.places.contains(wanted) { return Self.places.contains(source) || Self.tables.contains(source) || source == "json" }
+    if Self.cards.contains(wanted) { return Self.tables.contains(source) || source == wanted }
+    return Toml.handles(wanted) || DataFormats.writes(wanted) || Self.readable.contains { target.conforms(to: $0) }
   }
 
   func process(
@@ -39,16 +55,25 @@ final class DataProcessor: FileProcessor, @unchecked Sendable {
       throw ProcessingError.unknownType
     }
     let outputType = Self.outputType(for: output, operations: operations)
-    let writable = Toml.handles(output.pathExtension)
-      || Self.readable.contains { outputType.conforms(to: $0) }
-    guard writable else {
+    let wanted = output.pathExtension.lowercased()
+    guard Toml.handles(wanted) || DataFormats.writes(wanted) || Self.readable.contains(where: { outputType.conforms(to: $0) }) else {
       throw ProcessingError.unsupportedConversion(from: inputType, to: outputType)
     }
 
     progress(0.3)
     let value = try Self.read(input, as: inputType)
     progress(0.7)
-    try Self.write(value, to: output, as: outputType)
+    var extras: [URL] = []
+    if !DataFormats.writes(wanted), [Self.csv, Self.tsv].contains(where: { $0.map(outputType.conforms) ?? false }), let book = value as? DataFormats.Book {
+      // A sheet a file: there is one table in a CSV.
+      for (index, sheet) in book.sheets.enumerated() {
+        let place = index == 0 ? output : output.numbered(index + 1, of: book.sheets.count)
+        try Self.write(sheet.table, to: place, as: outputType)
+        if index > 0 { extras.append(place) }
+      }
+    } else {
+      try Self.write(value, to: output, as: outputType)
+    }
     progress(1.0)
 
     let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
@@ -56,13 +81,15 @@ final class DataProcessor: FileProcessor, @unchecked Sendable {
       outputURL: output,
       outputSize: attributes[.size] as? Int64 ?? 0,
       outputDimensions: nil,
-      duration: Date().timeIntervalSince(start)
+      duration: Date().timeIntervalSince(start),
+      additionalOutputs: extras
     )
   }
 
   // MARK: - Reading
 
   private static func read(_ url: URL, as type: UTType) throws -> Any {
+    if DataFormats.reads(url.pathExtension) { return try DataFormats.read(url) }
     let data = try Data(contentsOf: url)
 
     if type.conforms(to: .json) {
@@ -86,7 +113,8 @@ final class DataProcessor: FileProcessor, @unchecked Sendable {
     // A table remembers the order of its columns; every other format only
     // wants the rows.
     let table = read as? Separated.Table
-    let value: Any = table?.rows ?? read
+    let value = DataFormats.plain(read)
+    if DataFormats.writes(url.pathExtension) { return try DataFormats.data(read, as: url.pathExtension).write(to: url, options: .atomic) }
 
     if type.conforms(to: .json) {
       let data = try JSONSerialization.data(
@@ -110,12 +138,15 @@ final class DataProcessor: FileProcessor, @unchecked Sendable {
       return try Toml.text(from: value).write(to: url, atomically: true, encoding: .utf8)
     }
 
-    guard let rows = value as? [[String: Any]] else {
-      throw ProcessingError.conversionFailed(
-        reason: "Only a list of flat records can become a table. This file is not one."
-      )
+    let columns: [String]?, rows: [[String: Any]]
+    if let plain = value as? [[String: Any]] {
+      (columns, rows) = (table?.columns, plain)
+    } else {
+      // Places, or a record of several tables: the first of them.
+      let first = try DataFormats.someTables(in: read)[0].table
+      (columns, rows) = (first.columns, first.rows)
     }
-    let text = Separated.text(from: rows, columns: table?.columns, separator: separator(for: type))
+    let text = Separated.text(from: rows, columns: columns, separator: separator(for: type))
     try text.write(to: url, atomically: true, encoding: .utf8)
   }
 
@@ -200,7 +231,6 @@ enum Separated {
 
   static func table(from text: String, separator: Character) throws -> Table {
     let records = parse(text, separator: separator)
-    guard let stated = records.first else { return Table(columns: [], rows: []) }
     // One line and nothing under it, opening like JSON: a JSON file under a
     // table's name. Read as a table it is a header with no rows, and came out
     // as an empty list, reported as converted.
@@ -209,6 +239,12 @@ enum Separated {
         reason: "This file is called a table and holds JSON. Give it the .json extension and it will convert."
       )
     }
+    return self.table(of: records)
+  }
+
+  /// The first of them are the headings.
+  static func table(of records: [[String]]) -> Table {
+    guard let stated = records.first else { return Table(columns: [], rows: []) }
     // Every cell needs a heading of its own to be kept under. A second column
     // called "name" replaced the first, and a row longer than the header lost
     // whatever did not fit beneath it; a repeat is numbered, and what has no
@@ -313,7 +349,7 @@ enum Separated {
     return "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
   }
 
-  private static func describe(_ value: Any?) -> String {
+  static func describe(_ value: Any?) -> String {
     switch value {
     case nil, is NSNull: return ""
     case let string as String: return string

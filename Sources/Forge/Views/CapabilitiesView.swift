@@ -35,8 +35,8 @@ struct CapabilitiesView: View {
     }
     .navigationTitle("Capabilities")
     .searchable(text: $search, placement: .toolbar, prompt: "Search capabilities")
-    // Installing writes to the user's Mac, so the exact command is shown once
-    // before it runs. Everything after that happens in here.
+    // What comes from somewhere else is said once, with where from and how much,
+    // before it is fetched. Everything after that happens in here.
     .confirmsToolInstalls(with: installer)
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
@@ -157,7 +157,7 @@ struct CapabilitiesView: View {
       haystack.append(install.adds)
     case .needsPack(let pack):
       haystack.append(pack.name)
-      if let tool = pack.tool { haystack.append(contentsOf: [tool.binary, tool.formula, tool.adds]) }
+      if let tool = pack.tool { haystack.append(contentsOf: [tool.binary, tool.name, tool.adds]) }
     case .unavailable(let reason):
       haystack.append(reason)
     case .planned:
@@ -279,14 +279,7 @@ private struct CapabilityCard: View {
   private func toolDetail(_ tool: ExternalTool, wired: Bool) -> some View {
     switch installer.state(of: tool.binary) {
     case .running(let line):
-      HStack(spacing: 8) {
-        ProgressView().controlSize(.small)
-        Text(line.isEmpty ? "Installing \(tool.formula)…" : line)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .truncationMode(.middle)
-      }
+      ToolProgress(tool: tool, share: line)
 
     case .failed(let reason):
       VStack(alignment: .leading, spacing: 6) {
@@ -307,17 +300,18 @@ private struct CapabilityCard: View {
   private func settled(_ tool: ExternalTool, wired: Bool) -> some View {
     if tool.isInstalled {
       caption(wired
-        ? "\(tool.binary) is installed, and Forge uses it for \(tool.adds)."
-        : "\(tool.binary) is installed. Forge does not call it yet.")
+        ? "\(tool.name) is here, and Forge uses it for \(tool.adds)."
+        : "\(tool.name) is here. Forge does not call it yet.")
+      if Toolbox.shared.has(tool.name) {
+        Button("Remove") { installer.remove(tool) }
+          .controlSize(.small)
+          .help("Delete the copy Forge downloaded")
+      }
     } else {
       VStack(alignment: .leading, spacing: 6) {
-        caption("\(tool.binary) would add \(tool.adds). Homebrew installs it here.")
-        if ExternalTools.hasHomebrew {
-          Button("Install \(tool.formula)") { installer.ask(tool) }
-            .controlSize(.small)
-        } else {
-          caption("Homebrew is not here either, and installing that is a step Forge will not take for you. brew.sh has the one line.")
-        }
+        caption("\(tool.name) adds \(tool.adds).")
+        Button("Download, \(tool.weight)…") { installer.ask(tool) }
+          .controlSize(.small)
       }
     }
   }
@@ -341,7 +335,7 @@ private struct CapabilityCard: View {
     guard case .needsPack(let pack) = capability.status, let tool = pack.tool, !tool.isInstalled else {
       return false
     }
-    return ExternalTools.hasHomebrew
+    return tool.release != nil
   }
 
   @ViewBuilder

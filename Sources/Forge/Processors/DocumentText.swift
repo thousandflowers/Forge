@@ -20,6 +20,9 @@ enum DocumentText {
       // Not `.officeOpenXML`: that is Word's reader, and it refuses an ODT.
       (UTType("org.oasis-open.opendocument.text"), .openDocument),
       (UTType("org.openxmlformats.wordprocessingml.document"), .officeOpenXML),
+      (UTType("org.openxmlformats.wordprocessingml.document.macroenabled"), .officeOpenXML),
+      (UTType("org.openxmlformats.wordprocessingml.template"), .officeOpenXML),
+      (UTType("com.microsoft.word.doc"), .docFormat),
     ]
     return candidates.reduce(into: [:]) { result, candidate in
       guard let type = candidate.0 else { return }
@@ -40,6 +43,8 @@ enum DocumentText {
       (.html, .html),
       (.rtf, .rtf),
       (UTType("org.openxmlformats.wordprocessingml.document"), .officeOpenXML),
+      (UTType("org.oasis-open.opendocument.text"), .openDocument),
+      (UTType("com.microsoft.word.doc"), .docFormat),
     ]
     return candidates.reduce(into: [:]) { result, candidate in
       guard let type = candidate.0 else { return }
@@ -52,6 +57,7 @@ enum DocumentText {
     // writable - and the result would be the rendered words with every mark
     // stripped, in a file called `.md`. Nothing on the system writes Markdown.
     if let markdown, type.conforms(to: markdown) { return false }
+    if let epub = Book.type, type.conforms(to: epub) { return true }
     return type.conforms(to: .pdf) || writable.keys.contains { type.conforms(to: $0) }
   }
 
@@ -62,6 +68,8 @@ enum DocumentText {
     if let markdown, type.conforms(to: markdown) {
       return try rendered(markdown: try text(in: url))
     }
+
+    if let epub = Book.type, type.conforms(to: epub) { return try Book.read(url) }
 
     if let email = Email.type, type.conforms(to: email) {
       return NSAttributedString(string: try Email.text(of: url))
@@ -99,10 +107,15 @@ enum DocumentText {
   /// thorough level only what it is called is kept, as with a PDF.
   @MainActor
   static func details(of url: URL, as type: UTType, keeping policy: PrivacyPolicy) -> Details {
-    guard let documentType = readable.first(where: { type.conforms(to: $0.key) })?.value else { return [:] }
-    var read: NSDictionary?
-    _ = try? NSAttributedString(url: url, options: [.documentType: documentType], documentAttributes: &read)
-    let all = (read as? Details) ?? [:]
+    var all: Details = [:]
+    if let epub = Book.type, type.conforms(to: epub) {
+      all = Book.details(of: url)
+    } else {
+      guard let documentType = readable.first(where: { type.conforms(to: $0.key) })?.value else { return [:] }
+      var read: NSDictionary?
+      _ = try? NSAttributedString(url: url, options: [.documentType: documentType], documentAttributes: &read)
+      all = (read as? Details) ?? [:]
+    }
     let wanted = policy == .stripAll ? title : descriptive
     return all.filter { wanted.contains($0.key) }
   }
@@ -220,6 +233,12 @@ enum DocumentText {
     }
     if type.conforms(to: .pdf) {
       return try writePDF(document, to: output, details: details)
+    }
+
+    if let epub = Book.type, type.conforms(to: epub) {
+      // Never by the name Forge is writing it under for now.
+      let first = document.string.split(whereSeparator: \.isNewline).first.map { String($0.prefix(80)) } ?? "Untitled"
+      return try Book.data(document, details: details, fallbackTitle: first).write(to: output, options: .atomic)
     }
 
     guard let documentType = writable.first(where: { type.conforms(to: $0.key) })?.value else {

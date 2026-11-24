@@ -18,11 +18,11 @@ enum Subtitles {
 
   /// What can be read, by extension. This list is the feature: each entry is a
   /// parser below, and an extension nobody parses is not claimed.
-  static let readableExtensions: Set<String> = ["srt", "vtt", "webvtt", "sbv", "sub"]
+  static let readableExtensions: Set<String> = ["srt", "vtt", "webvtt", "sbv", "sub", "ass", "ssa", "lrc", "ttml", "dfxp", "itt"]
 
   /// What can be written. Fewer than can be read, and deliberately: MicroDVD
   /// counts in frames, so writing one means inventing a frame rate.
-  static let writableExtensions: Set<String> = ["srt", "vtt", "webvtt", "sbv", "txt", "text"]
+  static let writableExtensions: Set<String> = ["srt", "vtt", "webvtt", "sbv", "ass", "lrc", "ttml", "txt", "text"]
 
   /// The formats that carry cues, as against plain text - which is a thing any
   /// of them can be turned into and is not a subtitle format. Asking a film
@@ -44,6 +44,9 @@ enum Subtitles {
     let cues: [Cue]
     switch url.pathExtension.lowercased() {
     case "sbv": cues = parseTimed(text, separator: ",")
+    case "ass", "ssa": cues = parseASS(text)
+    case "lrc": cues = parseLRC(text)
+    case "ttml", "dfxp", "itt": cues = parseTTML(text)
     case "sub": cues = text.contains("{") ? parseMicroDVD(text) : parseTimed(text, separator: ",")
     default: cues = parseTimed(text, separator: "-->")
     }
@@ -240,6 +243,9 @@ enum Subtitles {
     switch url.pathExtension.lowercased() {
     case "vtt", "webvtt": text = webVTT(cues)
     case "sbv": text = sbv(cues)
+    case "ass": text = ass(cues)
+    case "lrc": text = lrc(cues)
+    case "ttml": text = ttml(cues)
     case "txt", "text": text = cues.map(\.text).joined(separator: "\n\n") + "\n"
     default: text = subRip(cues)
     }

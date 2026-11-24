@@ -71,7 +71,7 @@ struct BatchProcessingView: View {
           ForEach(openers, id: \.tool.id) { offer in
             ToolOfferRow(
               tool: offer.tool,
-              because: "\(offer.names) needs \(offer.tool.formula) to open. It adds \(offer.tool.adds).",
+              because: "\(offer.names) needs \(offer.tool.name) to open. It adds \(offer.tool.adds).",
               installer: installer,
               then: { vm.retry(offer.urls) }
             )
@@ -606,7 +606,7 @@ final class BatchViewModel: ObservableObject {
       guard let tool = ToolOffers.opener(for: url) else { continue }
       grouped[tool.binary, default: (tool, [])].urls.append(url)
     }
-    return grouped.values.map { Opener(tool: $0.tool, urls: $0.urls) }.sorted { $0.tool.formula < $1.tool.formula }
+    return grouped.values.map { Opener(tool: $0.tool, urls: $0.urls) }.sorted { $0.tool.name < $1.tool.name }
   }
 
   /// Once a tool is in, the files it opens are taken in again.

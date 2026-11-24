@@ -62,7 +62,7 @@ struct FilmSettings: Codable, Hashable, Sendable {
       }
     }
 
-    /// Tried, one by one, with the ffmpeg Homebrew installs.
+    /// Tried, one by one, with a whole ffmpeg.
     var containers: [String] {
       switch self {
       case .h264, .h264Apple: return ["mp4", "m4v", "mov", "mkv"]

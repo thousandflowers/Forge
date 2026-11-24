@@ -47,33 +47,51 @@ enum ExternalBridge {
     return nil
   }
 
-  /// Fonts, which macOS reads and cannot write: CoreText can list a font's
-  /// tables and has no public API to make one. fonttools can, and this is the
-  /// part of it with a command of its own - WOFF2 in both directions.
-  ///
-  /// WOFF version 1 is deliberately absent: fonttools exposes no command for
-  /// it, and driving its library through `python3 -c` is a different promise
-  /// from running a tool the user installed.
-  enum Fonts {
-    static let sfnt: Set<String> = ["ttf", "otf"]
-    static let packed: Set<String> = ["woff2"]
+  // ponytail: tables of what each is asked for; neither can be asked itself.
+  /// E-books, which are calibre's.
+  static let books: Set<String> = [
+    "mobi", "azw", "azw3", "azw4", "fb2", "fbz", "lit", "lrf", "pdb", "prc", "rb", "snb", "tcr", "chm", "kepub", "htmlz", "txtz", "djvu",
+  ]
+  private static let bookSources = books.union(["epub", "docx", "odt", "html", "txt", "rtf", "md", "cbz", "cbr"])
+  private static let bookTargets: Set<String> = ["epub", "mobi", "azw3", "fb2", "lit", "lrf", "pdb", "rb", "snb", "tcr", "htmlz", "txtz", "pdf", "docx", "rtf", "txt"]
 
-    static func handles(_ ext: String) -> Bool {
-      sfnt.contains(ext.lowercased()) || packed.contains(ext.lowercased())
-    }
+  /// Columns, packed: DuckDB's.
+  static let tables: Set<String> = ["parquet"]
+  private static let tableReaders = ["parquet": "read_parquet", "csv": "read_csv", "tsv": "read_csv", "json": "read_json", "jsonl": "read_json", "ndjson": "read_json"]
+  private static let tableWriters = [
+    "parquet": "FORMAT parquet, COMPRESSION zstd", "csv": "FORMAT csv, HEADER", "tsv": "FORMAT csv, HEADER, DELIMITER '\t'",
+    "json": "FORMAT json, ARRAY true", "jsonl": "FORMAT json", "ndjson": "FORMAT json",
+  ]
 
-    /// What fonttools should be told to do, or nothing when the pair is not
-    /// one it has a command for - ttf to otf among them, which is a change of
-    /// outline format rather than a change of container.
-    static func arguments(from source: String, to target: String, input: URL, output: URL) -> [String]? {
-      if sfnt.contains(source), packed.contains(target) {
-        return ["ttLib.woff2", "compress", "-o", output.path, input.path]
-      }
-      if packed.contains(source), sfnt.contains(target) {
-        return ["ttLib.woff2", "decompress", "-o", output.path, input.path]
-      }
-      return nil
+  private static let typstTargets: Set<String> = ["pdf", "png", "svg", "html"]
+
+  /// The files nobody opens but one tool.
+  static let special: [(extensions: Set<String>, binary: String, isWords: Bool)] = [
+    (books, "ebook-convert", false), (tables, "duckdb", false), (["typ"], "typst", true),
+  ]
+
+  /// The one tool for the pair, and what to tell it.
+  private static func specialist(from source: String, to target: String, input: URL, output: URL) -> Plan? {
+    if source == "typ", typstTargets.contains(target), let typst = ExternalTools.locate("typst") {
+      // A page a file where there is a page a file.
+      let place = ["png", "svg"].contains(target)
+        ? output.deletingPathExtension().path + "-{0p}." + target : output.path
+      return Plan(
+        tool: typst, toolName: "Typst",
+        arguments: ["compile", "--root", input.deletingLastPathComponent().path, "--format", target] + (target == "html" ? ["--features", "html"] : []) + [input.path, place]
+      )
     }
+    if tables.contains(source) || tables.contains(target), source != target, let reader = tableReaders[source], let writer = tableWriters[target],
+       let duckdb = ExternalTools.locate("duckdb") {
+      func quoted(_ url: URL) -> String { "'" + url.path.replacingOccurrences(of: "'", with: "''") + "'" }
+      return Plan(tool: duckdb, toolName: "DuckDB", arguments: ["-batch", "-no-init", ":memory:", "-c", "COPY (SELECT * FROM \(reader)(\(quoted(input)))) TO \(quoted(output)) (\(writer))"])
+    }
+    // Only where one end of it is a book nobody else handles.
+    if books.contains(source) || books.contains(target), source != target, bookSources.contains(source), bookTargets.contains(target),
+       let calibre = ExternalTool.calibre.location {
+      return Plan(tool: calibre, toolName: "calibre", arguments: [input.path, output.path])
+    }
+    return nil
   }
 
   /// pandoc's own answer to what it reads and writes, asked once.
@@ -186,12 +204,16 @@ enum ExternalBridge {
         extensions.formUnion(pandoc.map { byName[$0] ?? $0 })
       }
       if libreOffice != nil { extensions.formUnion(libreOfficeFamilies.flatMap(\.writes)) }
+      if ExternalTool.calibre.isInstalled { extensions.formUnion(bookTargets) }
+    case .data:
+      if libreOffice != nil { extensions.formUnion(libreOfficeFamilies.filter { $0.reads.contains("xlsx") }.flatMap(\.writes)) }
+      if ExternalTools.locate("duckdb") != nil { extensions.formUnion(tables) }
     default:
       return []
     }
     return extensions.compactMap { ext in
-      guard let type = UTType(filenameExtension: ext), !type.isDynamic else { return nil }
-      return type
+      if let type = UTType(filenameExtension: ext), !type.isDynamic { return type }
+      return ExtraFormats.type(ext)
     }
   }
 
@@ -249,8 +271,11 @@ enum ExternalBridge {
 
   static func canHandle(_ type: UTType) -> Bool {
     guard let ext = type.preferredFilenameExtension else { return false }
-    if Fonts.handles(ext) { return ExternalTools.locate("fonttools") != nil }
+    if let one = special.first(where: { $0.extensions.contains(ext) }) { return ExternalTools.locate(one.binary) != nil }
     if pandocReads(ext) { return true }
+    // Read by others, and by these for what only they write.
+    if tableReaders[ext] != nil, ExternalTools.locate("duckdb") != nil { return true }
+    if bookSources.contains(ext), ExternalTool.calibre.isInstalled { return true }
     // ffmpeg is asked about a pair rather than about a file, so anything
     // time-based is worth offering it and nothing else is.
     let isTimeBased = type.conforms(to: .audiovisualContent) || type.conforms(to: .audio)
@@ -272,7 +297,8 @@ enum ExternalBridge {
     if type.conforms(to: .image) {
       return ImageProcessor.isWebP(type) && ExternalTools.locate("cwebp") != nil
     }
-    if Fonts.handles(ext) { return ExternalTools.locate("fonttools") != nil }
+    if tables.contains(ext) { return ExternalTools.locate("duckdb") != nil }
+    if books.contains(ext) { return bookTargets.contains(ext) && ExternalTool.calibre.isInstalled }
     // Only what pandoc has already said: this is asked from view bodies, and
     // running pandoc there waited on a subprocess in the middle of a SwiftUI
     // update - the app aborted at launch. `warmUp` asks it in the background.
@@ -300,10 +326,7 @@ enum ExternalBridge {
   static func couldPlan(from source: String, to target: String) -> Bool {
     if isASubtitleNoToolWrites(target) { return false }
     let nowhere = URL(fileURLWithPath: "/dev/null")
-    if ExternalTools.locate("fonttools") != nil,
-       Fonts.arguments(from: source, to: target, input: nowhere, output: nowhere) != nil {
-      return true
-    }
+    if specialist(from: source, to: target, input: nowhere, output: nowhere) != nil { return true }
     if ExternalTools.locate("pandoc") != nil, let known = formats.peek(),
        source == "txt" ? !known.read.isEmpty : known.read.contains(name(of: source)),
        known.write.contains(name(of: target)) {
@@ -328,17 +351,15 @@ enum ExternalBridge {
     let target = output.pathExtension.lowercased()
     if isASubtitleNoToolWrites(target) { return nil }
 
-    if let fonttools = ExternalTools.locate("fonttools"),
-       let arguments = Fonts.arguments(from: source, to: target, input: input, output: output) {
-      return Plan(tool: fonttools, toolName: "fonttools", arguments: arguments)
-    }
+    if let plan = specialist(from: source, to: target, input: input, output: output) { return plan }
 
     if let pandoc = ExternalTools.locate("pandoc"), pandocReads(source), pandocWrites(target) {
       // Standalone, or an HTML output is a fragment with no <head> and an EPUB
       // has no spine: a file somebody can open, not a piece of one.
       // Built a piece at a time: one long `+` chain of conditionals was more
       // than the macOS 15 compiler would type-check.
-      var arguments = ["--standalone"]
+      // Left to the name, a .txt is written as Markdown, marks and all.
+      var arguments = target == "txt" ? ["-t", "plain"] : ["--standalone"]
       // Plain text is read as Markdown, which it is a subset of: pandoc has
       // no reader called "plain", so a .txt could not become an EPUB.
       if source == "txt" { arguments += ["-f", "markdown"] }
@@ -729,6 +750,7 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
     }
     progress(1.0)
 
+    let extras = plan.toolName == "Typst" ? try Self.gatherPages(of: output) : []
     guard FileManager.default.fileExists(atPath: output.path) else {
       throw ProcessingError.conversionFailed(
         reason: "\(plan.toolName) reported success and wrote nothing"
@@ -740,8 +762,22 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
       outputURL: output,
       outputSize: attributes[.size] as? Int64 ?? 0,
       outputDimensions: nil,
-      duration: Date().timeIntervalSince(start)
+      duration: Date().timeIntervalSince(start),
+      additionalOutputs: extras
     )
+  }
+
+  /// The pages it numbered itself, the first under the name that was asked for.
+  private static func gatherPages(of output: URL) throws -> [URL] {
+    let stem = output.deletingPathExtension().lastPathComponent + "-", folder = output.deletingLastPathComponent()
+    let pages = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+      .filter { $0.pathExtension == output.pathExtension && $0.lastPathComponent.hasPrefix(stem) && $0.deletingPathExtension().lastPathComponent.dropFirst(stem.count).allSatisfy(\.isNumber) }
+      .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    return try pages.enumerated().compactMap { index, page in
+      let place = index == 0 ? output : output.numbered(index + 1, of: pages.count)
+      if place != page { try FileManager.default.moveItem(at: page, to: place) }
+      return index == 0 ? nil : place
+    }
   }
 
   private static let longestReversed = 20.0
@@ -809,17 +845,6 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
     if said.contains("matches no streams") {
       return ProcessingError.conversionFailed(
         reason: "There are no subtitles in \(input.lastPathComponent)"
-      )
-    }
-
-    // fonttools reads a WOFF2 with what Python has; writing one needs the
-    // brotli module, which pip does not install alongside it. Its answer is a
-    // traceback ending in "No module named brotli", which says nothing about
-    // what to do next.
-    if said.contains("No module named brotli") {
-      return ProcessingError.conversionFailed(
-        reason: "fonttools is here but cannot write WOFF2 without its brotli module. "
-          + "`pip3 install --user brotli` adds it."
       )
     }
 

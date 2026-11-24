@@ -125,8 +125,8 @@ final class CommonFormatTests: BaseTestCase {
 
   /// A kind with few formats has nothing to hide.
   func test_aKindWithNoShortListShowsEverything() {
-    let all = OutputFormat.data
-    XCTAssertEqual(ConvertKind.data.leading(of: all), all)
+    let all = OutputFormat.fonts
+    XCTAssertEqual(ConvertKind.font.leading(of: all), all)
   }
 
   /// A short list none of which can be written is not an empty sheet.

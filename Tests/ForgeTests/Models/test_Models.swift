@@ -1204,13 +1204,7 @@ final class ConvertKindOfferingTests: XCTestCase {
   func test_aFontIsOfferedFonts() throws {
     let kind = try kind(of: "ttf")
     XCTAssertEqual(kind, .font)
-    // The formats themselves depend on fonttools being installed, which is
-    // the honest answer: nothing writes a font without it.
-    if ExternalTools.locate("fonttools") != nil {
-      XCTAssertTrue(offered(kind).contains("woff2"), "\(offered(kind))")
-    } else {
-      XCTAssertTrue(offered(kind).isEmpty)
-    }
+    XCTAssertTrue(offered(kind).contains("woff2"), "\(offered(kind))")
   }
 
   /// Subtitles are offered with no tool at all: where there is no track to
@@ -1472,10 +1466,11 @@ final class InputFormatGroupTests: XCTestCase {
 final class CapabilityWiringTests: XCTestCase {
   /// A pack Forge has a bridge for says so, or the card claims a working
   /// conversion is not called.
-  func test_fontToolsAreMarkedAsCalled() throws {
-    let fonts = try XCTUnwrap(Capabilities.all.first { $0.id == "fonts" })
-    guard case .needsPack(let pack) = fonts.status else { return XCTFail("fonts is not a pack") }
-    XCTAssertTrue(pack.isWired)
+  func test_everyPackIsMarkedAsCalled() {
+    for capability in Capabilities.all {
+      guard case .needsPack(let pack) = capability.status else { continue }
+      XCTAssertTrue(pack.isWired, capability.id)
+    }
   }
 }
 

@@ -119,7 +119,7 @@ struct QuickConvertSheet: View {
           // What a tool that is not here would add, with the button that adds
           // it. The formats appear above as soon as it is in.
           ForEach(tools, id: \.id) { tool in
-            ToolOfferRow(tool: tool, because: "With \(tool.formula): \(tool.adds).", installer: installer)
+            ToolOfferRow(tool: tool, because: "With \(tool.name): \(tool.adds).", installer: installer)
           }
         } else {
           formatChips(leading + chosen)
@@ -196,7 +196,7 @@ struct QuickConvertSheet: View {
       if kinds.isEmpty {
         let tools = Dictionary(grouping: sources.compactMap { ToolOffers.opener(for: $0.url) }, by: \.id).compactMap(\.value.first)
         ForEach(tools, id: \.id) { tool in
-          ToolOfferRow(tool: tool, because: "\(tool.formula) opens them. It adds \(tool.adds).", installer: installer)
+          ToolOfferRow(tool: tool, because: "\(tool.name) opens them. It adds \(tool.adds).", installer: installer)
         }
       }
     }

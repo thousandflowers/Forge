@@ -146,15 +146,14 @@ final class OfferTests: BaseTestCase {
   /// for no other, and an old Office file - which nothing on macOS opens -
   /// points at the one tool that would.
   func test_aMissingToolIsOfferedWhereItWouldHelp() throws {
-    let office = try XCTUnwrap(ToolOffers.all.first { $0.formula == "libreoffice" })
-    XCTAssertTrue(office.isCask)
-    XCTAssertEqual(office.installCommand, "brew install --cask libreoffice")
+    let office = try XCTUnwrap(ToolOffers.all.first { $0.name == "LibreOffice" })
+    XCTAssertEqual(office.release?.commands, ["soffice"])
     XCTAssertEqual(office.serves, [.document])
 
     let word97 = path("letter.doc")
     try Data("not really".utf8).write(to: word97)
     if !office.isInstalled {
-      XCTAssertEqual(ToolOffers.opener(for: word97)?.formula, "libreoffice")
+      XCTAssertEqual(ToolOffers.opener(for: word97)?.name, "LibreOffice")
       XCTAssertTrue(ToolOffers.missing(for: [.document]).contains(office))
     }
     XCTAssertFalse(ToolOffers.missing(for: [.image]).contains(office), "not offered for pictures")

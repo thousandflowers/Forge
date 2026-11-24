@@ -295,7 +295,6 @@ final class NamedWithoutAPresetTests: XCTestCase {
 
 final class TraceTests: ToolTestCase {
   func test_aPictureAsOutlines() async throws {
-    try XCTSkipIf(ExternalTools.locate("potrace") == nil, "potrace is not here")
     let source = path("a.png")
     try Quarters.image(at: source)
     let made = try await run([], on: source, to: .svg)[0]

@@ -45,7 +45,7 @@ enum ProcessingError: LocalizedError, Sendable {
     guard let ext = type.preferredFilenameExtension?.lowercased() else { return "" }
     for capability in Capabilities.all where capability.evidence.contains(ext) {
       if case .needsPack(let pack) = capability.status, pack.isWired, let tool = pack.tool, !tool.isInstalled {
-        return " \(tool.formula) can: \(tool.installCommand)"
+        return " \(tool.name) can, and Forge downloads it: see Capabilities."
       }
     }
     return ""
