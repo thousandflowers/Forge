@@ -61,6 +61,10 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   /// not to the preset, and saving it would turn a question into a setting.
   var parameterValues: [String: Double] = [:]
 
+  /// Keep what was there when the result would not be lighter. For this run
+  /// only, and outside `CodingKeys` for the same reason.
+  var onlyIfLighter = false
+
   init(
     id: UUID = UUID(),
     name: String,

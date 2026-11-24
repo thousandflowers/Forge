@@ -16,6 +16,18 @@ struct AppSettings: Codable, Sendable, Equatable {
   /// Post a notification when a batch finishes.
   var notifyWhenFinished: Bool = true
 
+  // MARK: - Without being asked
+  //
+  // All off until somebody turns them on: these work on files nobody handed
+  // over.
+
+  /// Make a picture that is copied lighter before it is pasted.
+  var lighterClipboard: Bool = false
+  /// Make screen recordings lighter when they finish.
+  var lighterRecordings: Bool = false
+  /// Turn HEIC, WebP and AVIF downloads into JPEGs.
+  var friendlyDownloads: Bool = false
+
   // MARK: - What everything starts from
   //
   // A preference here is what Forge does when a preset does not say otherwise.
@@ -96,6 +108,7 @@ extension AppSettings {
   private enum CodingKeys: String, CodingKey {
     case maxConcurrentNative, createBackupBeforeOverwrite, notifyWhenFinished
     case defaultFitMode, defaultQuality, privacy, nameTemplate, appearance
+    case lighterClipboard, lighterRecordings, friendlyDownloads
   }
 
   /// Every key is optional on the way in. A setting added in a later version
@@ -112,5 +125,8 @@ extension AppSettings {
     privacy = try c.decodeIfPresent(PrivacyPolicy.self, forKey: .privacy) ?? fresh.privacy
     nameTemplate = try c.decodeIfPresent(String.self, forKey: .nameTemplate) ?? fresh.nameTemplate
     appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? fresh.appearance
+    lighterClipboard = try c.decodeIfPresent(Bool.self, forKey: .lighterClipboard) ?? fresh.lighterClipboard
+    lighterRecordings = try c.decodeIfPresent(Bool.self, forKey: .lighterRecordings) ?? fresh.lighterRecordings
+    friendlyDownloads = try c.decodeIfPresent(Bool.self, forKey: .friendlyDownloads) ?? fresh.friendlyDownloads
   }
 }

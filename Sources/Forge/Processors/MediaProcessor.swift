@@ -176,7 +176,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       aim = max(1, Int(Double(aim) * Double(ceiling) / Double(result.outputSize) * 0.95))
     }
     try? FileManager.default.removeItem(at: output)
-    throw ProcessingError.conversionFailed(
+    throw ProcessingError.tooBig(
       reason: "\(asset.url.lastPathComponent) cannot be made to fit in "
         + "\(Int64(ceiling).formatted(.byteCount(style: .file))): the smallest it came out was "
         + "\(smallest.formatted(.byteCount(style: .file))). A smaller picture would fit; so would a shorter film."

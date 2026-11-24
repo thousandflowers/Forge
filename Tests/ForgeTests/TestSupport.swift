@@ -217,6 +217,18 @@ enum Fixture {
   }
 
   /// A sine tone, written as 16-bit PCM in whatever container the extension names.
+  @discardableResult
+  static func heic(at url: URL) throws -> URL {
+    let png = url.deletingPathExtension().appendingPathExtension("fixture.png")
+    try image(at: png, width: 320, height: 200)
+    defer { try? FileManager.default.removeItem(at: png) }
+    let picture = try XCTUnwrap(CGImageSourceCreateWithURL(png as CFURL, nil).flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) })
+    let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, UTType.heic.identifier as CFString, 1, nil))
+    CGImageDestinationAddImage(destination, picture, nil)
+    XCTAssertTrue(CGImageDestinationFinalize(destination))
+    return url
+  }
+
   /// A picture nothing can store losslessly in little room.
   @discardableResult
   static func noise(at url: URL, width: Int, height: Int) throws -> URL {

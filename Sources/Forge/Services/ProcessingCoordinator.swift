@@ -450,6 +450,9 @@ actor ProcessingCoordinator {
           progress: progress
         )
         break
+      } catch ProcessingError.tooBig where preset.onlyIfLighter {
+        // The ceiling was an aim and not a promise.
+        throw ProcessingError.leftAlone(reason: Lighter.notLighter)
       } catch let error as ProcessingError {
         guard case .unsupportedConversion = error else {
           throw Self.naming(error, scratch: plan.workURL, as: file)
@@ -468,11 +471,15 @@ actor ProcessingCoordinator {
     // towards it; for the rest - a PDF, a document, data - there is nothing to
     // turn down, and the ceiling was simply not looked at. It is now: a file
     // over it is not handed over as though it fitted.
-    if let ceiling = ImageProcessor.sizeCeiling(from: operations), result.outputSize > Int64(ceiling) {
+    if !preset.onlyIfLighter, let ceiling = ImageProcessor.sizeCeiling(from: operations), result.outputSize > Int64(ceiling) {
       throw ProcessingError.conversionFailed(
         reason: "\(file.fileName) comes out at \(result.outputSize.formatted(.byteCount(style: .file))), over the "
           + "\(Int64(ceiling).formatted(.byteCount(style: .file))) asked for, and Forge has no way to make this kind of file smaller."
       )
+    }
+
+    if preset.onlyIfLighter, !Lighter.isWorthIt(from: file.fileSize, to: result.outputSize) {
+      throw ProcessingError.leftAlone(reason: Lighter.notLighter)
     }
 
     try Task.checkCancellation()

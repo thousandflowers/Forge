@@ -59,6 +59,8 @@ private struct MenuBarLabel: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
   let inbox = OpenedFiles()
 
+  func applicationWillTerminate(_ notification: Notification) { ClipboardLighter.leaveNothing() }
+
   func applicationWillFinishLaunching(_ notification: Notification) {
     // What pandoc writes is asked once, by running it. Asked here, in the
     // background, it is known before any window wants it.

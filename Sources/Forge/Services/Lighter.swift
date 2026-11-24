@@ -12,6 +12,12 @@ enum Lighter {
   /// Less than this and what is given up is not worth what is saved.
   private static let smallestSaving = 0.05
 
+  /// What HEVC needs of H.264's weight to look the same. Measured on a screen
+  /// recording: 0.996 alike, frame for frame. Not for a film already in HEVC.
+  private static let filmShare = 0.5
+
+  static let notLighter = "It would not be any lighter."
+
   static func isWorthIt(from before: Int64, to after: Int64) -> Bool {
     after > 0 && before > 0 && Double(before - after) / Double(before) >= smallestSaving
   }
@@ -40,7 +46,25 @@ enum Lighter {
   private static func losesNothingAsAPhotograph(_ url: URL) -> Bool {
     guard let source = CGImageSourceCreateWithURL(url as CFURL, nil), CGImageSourceGetCount(source) == 1,
           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else { return false }
-    return (properties[kCGImagePropertyHasAlpha] as? Bool) != true
+    guard (properties[kCGImagePropertyHasAlpha] as? Bool) == true else { return true }
+    return CGImageSourceCreateImageAtIndex(source, 0, nil).map(isSolid) ?? false
+  }
+
+  /// Whether nothing shows through. Having the channel says nothing: every
+  /// screenshot macOS takes has one, with nothing see-through in it.
+  private static func isSolid(_ image: CGImage) -> Bool {
+    let width = image.width, height = image.height
+    var alpha = [UInt8](repeating: 0, count: width * height)
+    let drawn = alpha.withUnsafeMutableBytes { bytes -> Bool in
+      guard let context = CGContext(
+        data: bytes.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width,
+        space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue
+      ) else { return false }
+      context.interpolationQuality = .none
+      context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+      return true
+    }
+    return drawn && alpha.allSatisfy { $0 == .max }
   }
 
   /// What to try, by kind. Nil for what nothing here makes lighter.
@@ -50,7 +74,12 @@ enum Lighter {
     case .image:
       guard losesNothingAsAPhotograph(file.url) else { return nil }
       actions = [.convertFormat(to: file.fileType == .heic ? .heic : .jpeg), .quality(level: 78)]
-    case .video: actions = [.convertFormat(to: .mpeg4Movie), .encode(codec: .hevc)]
+    case .video:
+      // Left to itself the export goes for the top and weighs as much as before.
+      actions = [
+        .convertFormat(to: .mpeg4Movie), .encode(codec: .hevc),
+        .limitSize(bytes: max(1, Int(Double(file.fileSize) * filmShare))),
+      ]
     case .audio: actions = [.convertFormat(to: UTType("com.apple.m4a-audio") ?? .mpeg4Audio)]
     default: return nil
     }

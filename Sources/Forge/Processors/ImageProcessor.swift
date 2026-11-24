@@ -421,7 +421,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
 
     let finalSize = try Self.fileSize(of: output)
     guard finalSize <= ceiling else {
-      throw ProcessingError.conversionFailed(
+      throw ProcessingError.tooBig(
         // The input's name: `output` is the hidden scratch file.
         reason: "Cannot get \(input.lastPathComponent) under "
           + "\(Int64(ceiling).formatted(.byteCount(style: .file))); the smallest it goes is "

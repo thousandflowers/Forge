@@ -12,6 +12,11 @@ final class AppModel: ObservableObject {
 
   /// The questions files ask by their names, one at a time.
   let asks = AskCenter()
+  /// What was done without being asked.
+  let results = ResultCenter()
+  private lazy var clipboard = ClipboardLighter(coordinator: coordinator)
+  private var inHand: Set<String> = []
+  private var automatic: [Automatic.Place: MonitoredFolderWatcher] = [:]
 
   /// Brings the window back, once there has been one.
   var showWindow: (() -> Void)?
@@ -78,6 +83,7 @@ final class AppModel: ObservableObject {
 
     await refreshHistory()
     for folder in folders where folder.isActive { startWatcher(folder) }
+    startAutomatic()
   }
 
   // MARK: - Presets
@@ -417,7 +423,8 @@ final class AppModel: ObservableObject {
   // MARK: - History
 
   /// Put a past conversion back the way it was before it.
-  func undo(_ entry: ProcessingHistory, discard: (URL) throws -> Void = Undo.trash) {
+  @discardableResult
+  func undo(_ entry: ProcessingHistory, discard: (URL) throws -> Void = Undo.trash) -> Bool {
     // Before it lands: to a watched folder an original put back is a file
     // arriving, whose name still asks for what was just undone.
     remember(entry.fileURL)
@@ -425,12 +432,13 @@ final class AppModel: ObservableObject {
       if let restored = try Undo.run(entry, discard: discard) { remember(restored) }
     } catch {
       report(error, doing: "undoing “\(entry.fileURL.lastPathComponent)”")
-      return
+      return false
     }
     Task { [weak self] in
       do { try await self?.persistence.markUndone(entry.id) } catch { self?.report(error, doing: "updating history") }
       await self?.refreshHistory()
     }
+    return true
   }
 
   func refreshHistory() async {
@@ -457,6 +465,83 @@ final class AppModel: ObservableObject {
     // The coordinator holds its own copy, so it has to be told.
     let snapshot = settings
     Task { await coordinator.update(settings: snapshot) }
+    startAutomatic()
+  }
+
+  // MARK: - Without being asked
+
+  /// Start what is allowed and stop what is not.
+  private func startAutomatic() {
+    if settings.lighterClipboard {
+      clipboard.start { [weak self] made in
+        self?.results.show(ResultCard(
+          title: "Copied picture", file: made.file, before: made.before, after: made.after,
+          undo: { self?.clipboard.undo(made) ?? false },
+          gone: { self?.clipboard.discard(made) }
+        ))
+      }
+    } else {
+      clipboard.stop()
+    }
+
+    for place in Automatic.Place.allCases {
+      guard place.isWanted(settings) else {
+        automatic.removeValue(forKey: place)?.stop()
+        continue
+      }
+      guard automatic[place] == nil else { continue }
+      let watcher = MonitoredFolderWatcher()
+      let folder = MonitoredFolder(url: place.folder, ruleId: UUID(), destinationMode: .copyTo)
+      do {
+        try watcher.startWatching(folder: folder) { [weak self] url in await self?.takeAutomatically(url, in: place) }
+        automatic[place] = watcher
+      } catch {
+        report(error, doing: "watching “\(folder.displayName)”")
+      }
+    }
+  }
+
+  private func takeAutomatically(_ url: URL, in place: Automatic.Place) async {
+    let path = url.standardizedFileURL.path
+    guard inHand.insert(path).inserted else { return }
+    defer { inHand.remove(path) }
+    guard !wroteThis(url), !isSpokenFor(url), let file = try? ProcessableFile(url: url),
+          let preset = await Automatic.preset(for: file, in: place, settings: settings) else { return }
+    // The same answer about backups here and there, or an original could be
+    // replaced by somebody who thinks it is kept.
+    let snapshot = settings
+    await coordinator.update(settings: snapshot)
+    do {
+      let entry = try await coordinator.processFile(
+        file, with: preset, destinationMode: Automatic.mode(for: snapshot), destinationURL: url.deletingLastPathComponent()
+      ) { _ in }
+      entry.outputs.forEach(remember)
+      await refreshHistory()
+      guard let output = entry.outputURL else { return }
+      let after = ((try? FileManager.default.attributesOfItem(atPath: output.path))?[.size] as? Int64) ?? 0
+      results.show(ResultCard(title: output.lastPathComponent, file: output, before: file.fileSize, after: after, undo: { [weak self] in
+        self?.undo(entry) ?? false
+      }))
+    } catch ProcessingError.leftAlone {
+      await refreshHistory()
+    } catch is CancellationError {
+      await refreshHistory()
+    } catch {
+      report(error, doing: "converting “\(url.lastPathComponent)”")
+      await refreshHistory()
+    }
+  }
+
+  /// A folder somebody set up, or a word in the name, says what happens to it.
+  private func isSpokenFor(_ url: URL) -> Bool {
+    let parent = url.deletingLastPathComponent().standardizedFileURL.path
+    return folders.contains { folder in
+      let path = folder.url.standardizedFileURL.path
+      guard folder.isActive, path == parent || (folder.includeSubfolders && parent.hasPrefix(path == "/" ? path : path + "/")) else { return false }
+      return Arrival.of(
+        url, folderPreset: presets.first { $0.id == folder.ruleId }, presets: presets, onlyWhenRenamed: folder.onlyWhenRenamed
+      ) != .leave
+    }
   }
 
   // MARK: - Watchers

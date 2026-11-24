@@ -34,6 +34,16 @@ struct SettingsView: View {
           .controlSize(.small)
         }
       }
+      Section("Without being asked") {
+        Toggle("Make copied pictures lighter", isOn: $model.settings.lighterClipboard)
+        Toggle("Make screen recordings lighter", isOn: $model.settings.lighterRecordings)
+        Toggle("Turn HEIC, WebP and AVIF downloads into JPEGs", isOn: $model.settings.friendlyDownloads)
+        Text(model.settings.createBackupBeforeOverwrite
+          ? "A card in the corner says what was done and undoes it. Originals are kept in Backups; a result that would not be lighter is not used."
+          : "A card in the corner says what was done and undoes it. Backups are off, so nothing is replaced: the lighter copy is put beside it.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
       Section("What everything starts from") {
         Picker("Resizing means", selection: $model.settings.defaultFitMode) {
           ForEach(ResizeFitMode.allCases, id: \.self) { Text($0.title).tag($0) }
