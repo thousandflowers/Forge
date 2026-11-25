@@ -39,6 +39,8 @@ final class Lesson: ObservableObject {
     self.panel = panel
     panel.show()
     Task { await score.begin() }
+    // With no window, nobody else has.
+    Task { await model.bootstrap() }
   }
 
   /// The folder, its files, and somebody watching it.
@@ -83,6 +85,15 @@ final class Lesson: ObservableObject {
   func showFolder() {
     guard let folder = files?.folder else { return }
     panel?.follow(folder)
+  }
+
+  /// And on to the program itself.
+  func openForge(_ section: AppSection? = nil) {
+    let model = model
+    close()
+    if let section { model?.section = section }
+    model?.showWindow?()
+    NSApp.activate(ignoringOtherApps: true)
   }
 
   func close() {

@@ -82,7 +82,19 @@ final class AppModel: ObservableObject {
   }
 
   /// Load persisted state on launch; seed default presets on first run.
+  private var readying: Task<Void, Never>?
+
+  /// Asked for by the window and, with no window yet, by the lesson. Twice at
+  /// once, the presets it begins with were written twice.
   func bootstrap() async {
+    if let readying { return await readying.value }
+    let task = Task { await getReady() }
+    readying = task
+    await task.value
+    readying = nil
+  }
+
+  private func getReady() async {
     Claims.sweep(root: persistence.root)
     do {
       let loadedPresets = try await persistence.loadAllPresets()
@@ -96,7 +108,9 @@ final class AppModel: ObservableObject {
       } else {
         presets = Self.ordered(loadedPresets)
       }
-      folders = try await persistence.loadMonitoredFolders()
+      let saved = try await persistence.loadMonitoredFolders()
+      // The lesson's is not written down: read again, it was swept away.
+      folders = saved + folders.filter { $0.id == Self.lessonID }
     } catch {
       report(error, doing: "loading your presets and folders")
     }

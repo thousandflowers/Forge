@@ -6,6 +6,8 @@ struct ForgeApp: App {
   @StateObject private var model = AppModel()
   /// Here rather than in the window, so a closed window keeps its files.
   @StateObject private var batch = BatchViewModel()
+  /// Asked once: the lesson says it has been seen as soon as it opens.
+  private let isFirst = Lesson.isNew
 
   var body: some Scene {
     Window("Forge", id: MenuBarView.windowID) {
@@ -19,6 +21,7 @@ struct ForgeApp: App {
     // is. Left to itself SwiftUI opens the scene again for each: the window
     // faded out and came back.
     .handlesExternalEvents(matching: [])
+    .waits(isFirst)
     .commands {
       SidebarCommands()
       ForgeCommands(model: model, batch: batch)
@@ -42,6 +45,18 @@ struct ForgeApp: App {
   }
 }
 
+private extension Scene {
+  /// The first time there is one small thing to look at, and the window comes
+  /// after it. Before macOS 15 a scene cannot be told to wait: both are there.
+  func waits(_ isWaiting: Bool) -> some Scene {
+    if #available(macOS 15, *) {
+      return defaultLaunchBehavior(isWaiting ? .suppressed : .automatic)
+    } else {
+      return self
+    }
+  }
+}
+
 /// The menu bar's icon, which is there from launch whether or not a window is:
 /// so it is what says where files from outside go.
 private struct MenuBarLabel: View {
@@ -58,6 +73,7 @@ private struct MenuBarLabel: View {
         delegate.inbox.deliver = { model.open($0) }
         delegate.service.cut = { model.cut($0) }
         delegate.becameActive = { model.startAutomatic() }
+        if Lesson.isNew { Lesson.shared.open(model) }
       }
   }
 }

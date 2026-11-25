@@ -13,6 +13,8 @@ enum WelcomeSamples {
     let letter: URL
   }
 
+  /// What the three of them are, in the order they are fanned.
+  static let kinds: [PresetCategory] = [.image, .document, .audio]
   static let width = 1920, height = 1200
   static let letter = "Letter"
 

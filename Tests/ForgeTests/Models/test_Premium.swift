@@ -29,6 +29,30 @@ final class PremiumTests: BaseTestCase {
     XCTAssertTrue(model.folders.isEmpty)
   }
 
+  /// The window is opened while it lasts, and gets everything ready again: what
+  /// is being watched for the lesson is not swept away with it.
+  @MainActor
+  func test_gettingReadyTwiceKeepsTheLesson() async throws {
+    let model = AppModel(persistence: store)
+    await model.bootstrap()
+    model.startLesson(in: try folder("Try Forge"))
+    await model.bootstrap()
+    XCTAssertEqual(model.folders.map(\.onlyWhenRenamed), [true])
+    model.endLesson()
+    XCTAssertTrue(model.folders.isEmpty)
+  }
+
+  /// The window and the lesson both ask at once, the first time there is.
+  @MainActor
+  func test_gettingReadyAtOnceWritesThePresetsOnce() async throws {
+    let model = AppModel(persistence: store)
+    async let one: Void = model.bootstrap()
+    async let other: Void = model.bootstrap()
+    _ = await (one, other)
+    let saved = try await store.loadAllPresets().count
+    XCTAssertEqual(saved, model.presets.count)
+  }
+
   /// What it is tried on is made there and then, and is what it says it is.
   func test_theSamplesOfTheWelcomeAreRealFiles() throws {
     let files = try WelcomeSamples.make(in: try folder("welcome"))

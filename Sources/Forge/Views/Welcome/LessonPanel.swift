@@ -4,19 +4,26 @@ import SwiftUI
 /// Beside the folder, and with it: where the folder's window goes, it goes.
 @MainActor
 final class LessonPanel {
-  private let panel: NSPanel
+  private let panel: Panel
   private unowned let lesson: Lesson
   /// The Finder's window with the folder in it.
   private var folder: CGWindowID?
   private var timer: Timer?
   private var isBeside = false
 
+  /// Return and Escape answer the first question. Once the folder is open they
+  /// are the Finder's: a name is being typed there.
+  private final class Panel: NSPanel {
+    var takesKeys = true
+    override var canBecomeKey: Bool { takesKeys }
+  }
+
   private static let gap: CGFloat = 10
   private static let often = 1.0 / 60
 
   init(_ lesson: Lesson) {
     self.lesson = lesson
-    panel = NSPanel(contentRect: .zero, styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
+    panel = Panel(contentRect: .zero, styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
     panel.title = "Try Forge"
     panel.level = .floating
     panel.isFloatingPanel = true
@@ -39,6 +46,7 @@ final class LessonPanel {
     }
     panel.alphaValue = 0
     panel.orderFrontRegardless()
+    if panel.canBecomeKey { panel.makeKey() }
     NSAnimationContext.runAnimationGroup { $0.duration = 0.25; panel.animator().alphaValue = 1 }
   }
 
@@ -56,6 +64,7 @@ final class LessonPanel {
     let before = Set(Self.finderWindows().map(\.id))
     folder = nil
     isBeside = false
+    panel.takesKeys = false
     NSWorkspace.shared.open(url)
     timer?.invalidate()
     let began = Date()
@@ -194,7 +203,7 @@ struct LessonView: View {
       .font(.system(size: 13)).foregroundStyle(lesson.problem == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
       .fixedSize(horizontal: false, vertical: true)
     switch lesson.step {
-    case .hello: FileFan(isOpen: true, size: 36).frame(maxWidth: .infinity)
+    case .hello: FileFan(isOpen: true, size: 36, kinds: WelcomeSamples.kinds).frame(maxWidth: .infinity)
     case .drag: if let model = lesson.model { DragSwitch(model: model, keys: keys) }
     case .end: if let model = lesson.model { EndSwitch(model: model) }
     default: if let (from, to) = lesson.renaming() { TypedName(from: from, to: to, isStill: isStill) }
@@ -205,17 +214,11 @@ struct LessonView: View {
     HStack(spacing: 8) {
       switch lesson.step {
       case .hello:
-        Button("Not Now") { lesson.close() }
+        Button("Not Now") { lesson.openForge() }.keyboardShortcut(.cancelAction)
         Spacer()
-        Button("Open the Folder") { lesson.begin() }.buttonStyle(.borderedProminent)
+        Button("Open the Folder") { lesson.begin() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
       case .end:
-        Button("Open Forge") {
-          let model = lesson.model
-          lesson.close()
-          model?.section = .process
-          model?.showWindow?()
-          NSApp.activate(ignoringOtherApps: true)
-        }
+        Button("Open Forge") { lesson.openForge(.process) }
         Spacer()
         Button("Done") { lesson.close() }.buttonStyle(.borderedProminent)
       default:
