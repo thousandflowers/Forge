@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 /// the one way any of them has of making one.
 enum Tool: Hashable, Sendable {
   case mute
-  /// Every file as loud as the next.
+  /// The same volume for every file.
   case normalize
   case reverse
   /// As light as it goes without anybody noticing, and left alone if it is.

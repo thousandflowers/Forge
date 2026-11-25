@@ -142,7 +142,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // be dropped, and the film come out looking as if nothing had been said.
     if !videoTracks.isEmpty, operations.film != nil, wanted.conforms(to: .movie) || wanted.conforms(to: .video) {
       guard ExternalTools.locate("ffmpeg") != nil else {
-        throw ProcessingError.conversionFailed(reason: "Film settings need ffmpeg, which Forge downloads: see Store, Tools.")
+        throw ProcessingError.conversionFailed(reason: "Video settings need ffmpeg, which Forge downloads: see Store, Tools.")
       }
       throw ProcessingError.unsupportedConversion(
         from: UTType(filenameExtension: input.pathExtension) ?? .movie, to: wanted
@@ -176,7 +176,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     }
 
     if videoTracks.isEmpty, operations.film != nil, FormatCatalog.isWritableVideo(wanted), !Self.isSoundOnly(wanted) {
-      throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no picture, and Film settings are for films.")
+      throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no picture, and Video settings are for videos.")
     }
 
     if videoTracks.isEmpty {
@@ -256,7 +256,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     throw ProcessingError.tooBig(
       reason: "\(asset.url.lastPathComponent) cannot be made to fit in "
         + "\(Int64(ceiling).formatted(.byteCount(style: .file))): the smallest it came out was "
-        + "\(smallest.formatted(.byteCount(style: .file))). A smaller picture would fit; so would a shorter film."
+        + "\(smallest.formatted(.byteCount(style: .file))). A smaller picture would fit; so would a shorter video."
     )
   }
 
@@ -509,7 +509,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     let step = Self.interval(in: operations) ?? (100 / min(edit.rate ?? Self.framesPerSecond, 50)).rounded() / 100
     let moment = operations.tools.compactMap { if case .still(let second) = $0 { return second } else { return nil } }.last
     if let moment, moment > duration {
-      throw ProcessingError.conversionFailed(reason: "The film is \(Tool.clock(duration)) long: there is nothing at \(Tool.clock(moment)).")
+      throw ProcessingError.conversionFailed(reason: "The video is \(Tool.clock(duration)) long: there is nothing at \(Tool.clock(moment)).")
     }
     guard Self.interval(in: operations) == nil || duration / step <= Self.mostPictures else {
       throw ProcessingError.conversionFailed(reason: "That would make more than \(Int(Self.mostPictures)) pictures.")
@@ -675,7 +675,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     }
 
     guard !edit.isCutOut || session.presetName == AVAssetExportPresetHEVCHighestQualityWithAlpha else {
-      throw ProcessingError.conversionFailed(reason: "A film without its background fits in a MOV, and in nothing else macOS writes.")
+      throw ProcessingError.conversionFailed(reason: "A video without its background fits in a MOV, and in nothing else macOS writes.")
     }
 
     session.outputURL = output

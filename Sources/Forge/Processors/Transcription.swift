@@ -109,10 +109,10 @@ enum Transcription {
   ) async throws -> Heard {
     let chosen = locale.map(Locale.init(identifier:)) ?? Locale.current
     guard let recognizer = SFSpeechRecognizer(locale: chosen) else {
-      throw ProcessingError.validationFailed(message: "No recogniser for \(chosen.identifier).")
+      throw ProcessingError.validationFailed(message: "There is no speech recognition for \(chosen.identifier).")
     }
     guard recognizer.isAvailable else {
-      throw ProcessingError.conversionFailed(reason: "The recogniser for \(chosen.identifier) is not available right now.")
+      throw ProcessingError.conversionFailed(reason: "Speech recognition for \(chosen.identifier) is not available right now.")
     }
 
     let request = SFSpeechURLRecognitionRequest(url: url)

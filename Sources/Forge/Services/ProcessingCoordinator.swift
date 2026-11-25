@@ -355,7 +355,7 @@ actor ProcessingCoordinator {
   private static func refuseToolsThatDoNotSuit(_ file: ProcessableFile, in actions: [Operation]) throws {
     guard let tool = actions.tools.first(where: { !$0.suits(file.fileType) }) else { return }
     let what = ConvertKind(fileType: file.fileType)?.plural ?? "this kind of file"
-    throw ProcessingError.conversionFailed(reason: "“\(tool.title)” is not something done to \(file.fileType.conforms(to: .pdf) ? "PDFs" : what).")
+    throw ProcessingError.conversionFailed(reason: "“\(tool.title)” does not work on \(file.fileType.conforms(to: .pdf) ? "PDFs" : what).")
   }
 
   /// The name template for one branch of a split: `{branch}` becomes the

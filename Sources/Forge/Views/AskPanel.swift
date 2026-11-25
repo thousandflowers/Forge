@@ -501,7 +501,7 @@ struct AskView: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .help("What to do to it, how heavy, and what it says about you")
+    .help("Tools, file size and metadata")
     .onHover { isOverMore = $0 }
     .background(GeometryReader { Color.clear.preference(key: MoreFrame.self, value: $0.frame(in: .global)) })
     .padding([.horizontal, .bottom], -Self.padding)
@@ -587,7 +587,7 @@ struct AskView: View {
     let isAimed = tiles.over == tile
     let isLit = isAimed || session.answers[question] == choice.value
     let weight = session.measured[choice.value]
-    let says = weight?.words(from: session.files.first) ?? (choice.isDefault ? (short: "the usual", full: "the usual") : nil)
+    let says = weight?.words(from: session.files.first) ?? (choice.isDefault ? (short: "default", full: "default") : nil)
     let isHeavier = session.isHeavier(weight?.bytes)
     let isWeighed = height > Self.plain && (question != .cut || says != nil)
     let face = ChoiceFace(

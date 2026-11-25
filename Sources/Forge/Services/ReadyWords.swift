@@ -31,10 +31,10 @@ enum ReadyWords {
      [.resize(width: 1280, height: 1280, fitMode: .proportional), .encode(codec: .h264), .limitSize(bytes: 16_000_000)]),
     ("discord", "Discord video", "MP4, 720p, under 10 MB.", .video, ["mp4"],
      [.resize(width: 1280, height: 1280, fitMode: .proportional), .encode(codec: .h264), .limitSize(bytes: 10_000_000)]),
-    ("tv", "Television", "MP4, 1080p, HEVC, what an Apple TV plays.", .video, ["mp4"],
+    ("tv", "Apple TV", "MP4, 1080p, HEVC, what an Apple TV plays.", .video, ["mp4"],
      [.resize(width: 1920, height: 1080, fitMode: .proportional), .encode(codec: .hevc)]),
-    ("gif", "Moving picture", "GIF, 480 px wide.", .video, ["gif"], [.resize(width: 480, height: nil, fitMode: .proportional)]),
-    ("vhs", "Old tape", "MP4 without the stripes and with less noise.", .video, ["mp4"], [.film({
+    ("gif", "Animated GIF", "GIF, 480 px wide.", .video, ["gif"], [.resize(width: 480, height: nil, fitMode: .proportional)]),
+    ("vhs", "Old tape", "MP4, without stripes and with less noise.", .video, ["mp4"], [.film({
       var film = FilmSettings()
       film.interlacing = .deinterlace
       film.noise = .medium
@@ -42,6 +42,6 @@ enum ReadyWords {
     }())]),
     ("subs", "Subtitles", "SRT, from its own track or from what is said.", .video, ["srt"], []),
     ("podcast", "Podcast", "M4A, as loud as the next one.", .audio, ["m4a"], [.tool(.normalize), .quality(level: 60)]),
-    ("text", "What is said", "TXT, from a recording.", .audio, ["txt"], []),
+    ("text", "Transcript", "TXT, from a recording.", .audio, ["txt"], []),
   ]
 }

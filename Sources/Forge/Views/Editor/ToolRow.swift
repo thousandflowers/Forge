@@ -16,7 +16,7 @@ struct ToolRow: View {
         moment("To", span.to, none: "the end") { tool = .trim(Span(from: span.from, to: $0), fast: fast) }
         Toggle("Fast", isOn: Binding(get: { fast }, set: { tool = .trim(span, fast: $0) }))
           .toggleStyle(.checkbox)
-          .help("Without encoding it again. The moment before the cut stays in the file, hidden.")
+          .help("Not encoded again, so it is fast. The moment before the cut stays in the file, hidden.")
       }
     case .divide(let division): divide(division)
     case .speed(let speed):
@@ -48,7 +48,7 @@ struct ToolRow: View {
     case .sync(let thousandths):
       HStack(spacing: 6) {
         NumberToken(value: Binding(get: { thousandths }, set: { if let value = $0, value != 0 { tool = .sync(value) } }), placeholder: "250", range: -10_000...10_000, startingFrom: thousandths)
-        Text("thousandths of a second later").foregroundStyle(.secondary)
+        Text("milliseconds later").foregroundStyle(.secondary)
       }
     case .adjust(let what, let much):
       HStack(spacing: 6) {

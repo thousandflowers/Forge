@@ -56,11 +56,11 @@ final class MCPTests: ToolTestCase {
     let made = try await call("convert", ["files": [source.path], "preset": "sized", "answers": ["width": 200]])
     XCTAssertEqual(try ProcessableFile(url: URL(fileURLWithPath: made.text)).dimensions?.width, 200, made.text)
     for (arguments, says) in [
-      (["files": [source.path], "preset": "sized", "do": ["rotate90"]], "whole recipe"),
+      (["files": [source.path], "preset": "sized", "do": ["rotate90"]], "cannot be combined"),
       (["files": [source.path], "preset": "sized", "answers": ["height": 200]], "does not ask"),
       (["files": [source.path], "preset": "sized", "answers": ["width": 1]], "16 to"),
       (["files": [sound.path], "preset": "sized"], "not for this kind of file"),
-      (["files": [source.path], "to": "png", "answers": ["width": 200]], "no preset"),
+      (["files": [source.path], "to": "png", "answers": ["width": 200]], "need a preset"),
     ] as [([String: Any], String)] {
       let said = try await call("convert", arguments)
       XCTAssertTrue(said.isError && said.text.contains(says), said.text)

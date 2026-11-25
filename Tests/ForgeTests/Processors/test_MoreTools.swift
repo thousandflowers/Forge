@@ -209,7 +209,7 @@ final class FilmAndSomethingTests: ToolTestCase {
     let sound = try Fixture.audio(at: path("voice.wav"), seconds: 5)
     let files = [try ProcessableFile(url: sound), try ProcessableFile(url: film)]
     XCTAssertEqual(Joiner.kinds(for: files), [.dubbed])
-    XCTAssertEqual(AskOptions.choices(for: .join, files: files).map(\.label), ["Film with this sound"])
+    XCTAssertEqual(AskOptions.choices(for: .join, files: files).map(\.label), ["Video with this sound"])
     let made = try await coordinator().join(files, as: .dubbed, into: path("out"))
     XCTAssertEqual(made.lastPathComponent, "film joined.mp4")
     let tracks = try await AVURLAsset(url: made).trackCounts()

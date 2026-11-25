@@ -124,7 +124,7 @@ struct RedactionReviewSheet: View {
     VStack(alignment: .leading, spacing: 0) {
       if session.candidates.isEmpty {
         centred {
-          Text("Forge found nothing it recognises here. That is not the same as there being nothing.")
+          Text("Forge found nothing it recognizes here. That is not the same as there being nothing.")
             .font(.callout)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)

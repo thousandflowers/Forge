@@ -149,7 +149,7 @@ extension ForgeCommand {
       }
       let possible = Joiner.kinds(for: sources)
       guard let chosen = kind ?? possible.first, possible.contains(chosen) else {
-        throw CLIError(sources.count < 2 ? "Give at least two files to join." : "These files cannot be made into one together.")
+        throw CLIError(sources.count < 2 ? "Give at least two files to join." : "These files cannot be joined.")
       }
       let coordinator = ProcessingCoordinator(settings: AppSettings.load())
       print(try await coordinator.join(sources, as: chosen, into: out.map { URL(fileURLWithPath: $0) }, named: name).path)
@@ -290,7 +290,7 @@ extension ForgeCommand {
       row("fonts", names(OutputFormat.fonts))
       if !pandoc.write.isEmpty { row("pandoc", pandoc.write.sorted()) }
       if ExternalTools.locate("ffmpeg") != nil {
-        row("ffmpeg", ["sound and film into any container it writes, by extension (see `ffmpeg -muxers`)"])
+        row("ffmpeg", ["sound and video into any container it writes, by extension (see `ffmpeg -muxers`)"])
       }
     }
 

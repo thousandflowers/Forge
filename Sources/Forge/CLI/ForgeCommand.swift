@@ -187,7 +187,7 @@ struct RecipeOptions: ParsableArguments {
       notes.append("--quality does nothing for \(format?.uppercased() ?? "this format"): it keeps every pixel as it is.")
     }
     if let codec, !kinds.isEmpty, kinds.isDisjoint(with: [.audio, .video]) {
-      notes.append("--codec \(codec.rawValue) is for sound and film, and none of these files is either.")
+      notes.append("--codec \(codec.rawValue) is for sound and video, and none of these files is either.")
     }
     return notes
   }

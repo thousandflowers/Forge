@@ -24,7 +24,7 @@ enum MediaRender {
         try await pass.write(from.track, from.asset, url)
         let asset = AVURLAsset(url: url)
         guard let made = try await asset.loadTracks(withMediaType: .video).first else {
-          throw ProcessingError.conversionFailed(reason: "The film could not be drawn again.")
+          throw ProcessingError.conversionFailed(reason: "The video could not be drawn again.")
         }
         from = (asset, made)
         if pass.standsUp { turned = .identity }
@@ -215,7 +215,7 @@ enum MediaRender {
     let pixels: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange)]
     let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: pixels)
     writer.add(input)
-    guard writer.startWriting() else { throw writer.error ?? ProcessingError.conversionFailed(reason: "Cannot write the film backwards") }
+    guard writer.startWriting() else { throw writer.error ?? ProcessingError.conversionFailed(reason: "Cannot write the video backwards") }
     defer { if writer.status == .writing { writer.cancelWriting() } }
     writer.startSession(atSourceTime: .zero)
 
@@ -229,7 +229,7 @@ enum MediaRender {
       output.alwaysCopiesSampleData = false
       reader.timeRange = CMTimeRange(start: start, end: end)
       reader.add(output)
-      guard reader.startReading() else { throw reader.error ?? ProcessingError.conversionFailed(reason: "Cannot read the film backwards") }
+      guard reader.startReading() else { throw reader.error ?? ProcessingError.conversionFailed(reason: "Cannot read the video backwards") }
       var frames: [(buffer: CVPixelBuffer, ends: CMTime)] = []
       while let sample = output.copyNextSampleBuffer() {
         guard let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
@@ -238,7 +238,7 @@ enum MediaRender {
         guard time >= start, time < end else { continue }
         frames.append((buffer, time))
       }
-      guard reader.status == .completed else { throw reader.error ?? ProcessingError.conversionFailed(reason: "Cannot read the film backwards") }
+      guard reader.status == .completed else { throw reader.error ?? ProcessingError.conversionFailed(reason: "Cannot read the video backwards") }
       for (index, frame) in frames.enumerated().reversed() {
         // It is shown from when the one after it used to come.
         let until = index + 1 < frames.count ? frames[index + 1].ends : end
@@ -250,13 +250,13 @@ enum MediaRender {
     input.markAsFinished()
     writer.endSession(atSourceTime: range.duration)
     await writer.finishWriting()
-    guard writer.status == .completed else { throw writer.error ?? ProcessingError.conversionFailed(reason: "Cannot write the film backwards") }
+    guard writer.status == .completed else { throw writer.error ?? ProcessingError.conversionFailed(reason: "Cannot write the video backwards") }
   }
 
   private static func waitUntilReady(_ input: AVAssetWriterInput, _ writer: AVAssetWriter) async throws {
     while !input.isReadyForMoreMediaData {
       try Task.checkCancellation()
-      guard writer.status == .writing else { throw writer.error ?? ProcessingError.conversionFailed(reason: "Cannot write the film backwards") }
+      guard writer.status == .writing else { throw writer.error ?? ProcessingError.conversionFailed(reason: "Cannot write the video backwards") }
       try await Task.sleep(nanoseconds: 2_000_000)
     }
   }

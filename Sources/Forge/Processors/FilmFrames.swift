@@ -8,7 +8,7 @@ import Vision
 ///
 /// Into ProRes, which is encoded again on the way out: what is lost twice shows.
 enum FilmFrames {
-  private static let cannot = ProcessingError.conversionFailed(reason: "The film could not be drawn again.")
+  private static let cannot = ProcessingError.conversionFailed(reason: "The video could not be drawn again.")
 
   /// Every picture through `paint`, the right way up.
   static func repaint(
@@ -68,7 +68,7 @@ enum FilmFrames {
       ]).cropped(to: image.extent)
     }
     guard sawSomebody else {
-      throw ProcessingError.conversionFailed(reason: "There is nobody in the film: in a film, people are all that macOS tells from what is behind them.")
+      throw ProcessingError.conversionFailed(reason: "There is nobody in the video: in a video, people are all that macOS tells from what is behind them.")
     }
   }
 
@@ -101,7 +101,7 @@ enum FilmFrames {
     guard let configuration = VTFrameRateConversionConfiguration(
       frameWidth: width, frameHeight: height, usePrecomputedFlow: false, qualityPrioritization: .normal, revision: .revision1
     ) else {
-      throw ProcessingError.conversionFailed(reason: "macOS cannot make up frames for a film of \(width) × \(height).")
+      throw ProcessingError.conversionFailed(reason: "macOS cannot make up frames for a video of \(width) × \(height).")
     }
     let processor = VTFrameProcessor()
     try processor.startSession(configuration: configuration)

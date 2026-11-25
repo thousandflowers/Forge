@@ -190,7 +190,7 @@ private struct MenuPresets: View {
       .fixedSize()
     }
     Text(chosen.isEmpty
-      ? "The ones you use on files like the one in your hand come first. It is learnt from History, on this Mac."
+      ? "The ones you use on files like the one in your hand come first. Forge learns it from History, on this Mac."
       : "In the order you chose them, and only where they suit the file. Up to \(Suggestions.most) are shown.")
       .font(.caption)
       .foregroundStyle(.secondary)

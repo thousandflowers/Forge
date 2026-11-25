@@ -22,7 +22,7 @@ enum BurnedSubtitles {
       request.finish(with: made, context: nil)
     }
     guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
-      throw ProcessingError.conversionFailed(reason: "The film cannot be written")
+      throw ProcessingError.conversionFailed(reason: "The video cannot be written")
     }
     session.videoComposition = composition
     session.outputURL = output

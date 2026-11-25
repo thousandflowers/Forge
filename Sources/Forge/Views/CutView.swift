@@ -160,7 +160,7 @@ struct CutView: View {
       if model.kind == .video {
         Toggle("Mute", isOn: $model.isMuted).toggleStyle(.checkbox)
         Toggle("Fast", isOn: $model.isFast).toggleStyle(.checkbox).disabled(!model.canBeFast)
-          .help("Without encoding it again. The moment before the cut stays in the file, hidden.")
+          .help("Not encoded again, so it is fast. The moment before the cut stays in the file, hidden.")
       }
       Spacer(minLength: 0)
     }

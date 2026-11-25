@@ -83,7 +83,7 @@ struct AskRequest: Equatable {
       case .tool, .cut: return "Do this to it"
       case .join: return "All of them together"
       case .forYou: return "For you"
-      case .language: return "What is spoken in it"
+      case .language: return "Transcript"
       case .privacy: return "Remove location and camera details"
       case .parameter(let parameter) where !parameter.label.isEmpty: return parameter.label
       case .size, .width, .quality, .parameter:

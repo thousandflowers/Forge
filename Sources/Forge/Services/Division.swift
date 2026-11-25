@@ -25,7 +25,7 @@ enum Division {
       parts = try await spans(division, of: file, in: rest)
     }
     guard parts.count > 1 else {
-      throw ProcessingError.conversionFailed(reason: "\(file.fileName) is all in one part already.")
+      throw ProcessingError.conversionFailed(reason: "There is nowhere to divide \(file.fileName).")
     }
     guard parts.count <= most else {
       throw ProcessingError.conversionFailed(reason: "That would make \(parts.count) files of \(file.fileName).")
@@ -76,7 +76,7 @@ enum Division {
   private static func spans(_ division: Tool.Division, of file: ProcessableFile, in rest: [Operation]) async throws -> [[Operation]] {
     let edit = MediaEdit(rest)
     guard let kept = (edit.part ?? Span()).clamped(to: try await length(of: file.url)) else {
-      throw ProcessingError.conversionFailed(reason: "There is nothing in the part of \(file.fileName) asked for.")
+      throw ProcessingError.conversionFailed(reason: "That part of \(file.fileName) is empty.")
     }
     if case .every(let seconds) = division, (kept.upperBound - kept.lowerBound) / seconds > Double(most) {
       throw ProcessingError.conversionFailed(reason: "That would make more than \(most) files of \(file.fileName).")
@@ -103,7 +103,7 @@ enum Division {
   static func length(of url: URL) async throws -> Double {
     if let seconds = try? await AVURLAsset(url: url).load(.duration).seconds, seconds.isFinite, seconds > 0 { return seconds }
     if let said = probe(url, ["-show_entries", "format=duration", "-of", "csv=p=0"]), let seconds = Double(said) { return seconds }
-    throw ProcessingError.conversionFailed(reason: "How long \(url.lastPathComponent) is cannot be read.")
+    throw ProcessingError.conversionFailed(reason: "Forge cannot read the length of \(url.lastPathComponent).")
   }
 
   private static func chapters(of url: URL) async -> [Double] {

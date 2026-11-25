@@ -171,7 +171,7 @@ final class PictureToolTests: ToolTestCase {
     let source = path("a.png")
     try Quarters.image(at: source)
     let said = await reason { _ = try await self.run(["speed2x"], on: source) }
-    XCTAssertEqual(said, "“Speed 2×” is not something done to images.")
+    XCTAssertEqual(said, "“Speed 2×” does not work on images.")
   }
 }
 
@@ -343,7 +343,7 @@ final class FilmToolTests: ToolTestCase {
     let last = try await seconds(every[2])
     XCTAssertEqual(last, 0.5, accuracy: 0.12)
     let said = await reason { _ = try await self.run(["split60s"], on: source) }
-    XCTAssertTrue(said.contains("one part"), said)
+    XCTAssertTrue(said.contains("nowhere to divide"), said)
   }
 
   func test_partsCannotReplaceOneFile() async throws {
@@ -640,7 +640,7 @@ final class PDFToolTests: ToolTestCase {
   func test_aPageIsNotMirrored() async throws {
     let source = try document("a.pdf", pages: 1)
     let said = await reason { _ = try await self.run(["mirror"], on: source) }
-    XCTAssertEqual(said, "“Mirror” is not something done to PDFs.")
+    XCTAssertEqual(said, "“Mirror” does not work on PDFs.")
   }
 }
 

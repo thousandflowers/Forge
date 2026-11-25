@@ -163,7 +163,7 @@ struct ForgeCommands: Commands {
   private func cut() {
     let panel = NSOpenPanel()
     panel.allowedContentTypes = [.image, .movie, .audio]
-    panel.message = "Choose a film, a recording or a picture to cut."
+    panel.message = "Choose a video, a recording or a picture to cut."
     guard panel.runModal() == .OK, let url = panel.url, let file = try? ProcessableFile(url: url) else { return }
     model.cut(file)
   }

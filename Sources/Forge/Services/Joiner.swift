@@ -16,10 +16,10 @@ enum Joiner {
     var title: String {
       switch self {
       case .pdf: return "One PDF"
-      case .film: return "One film"
+      case .film: return "One video"
       case .sound: return "One recording"
-      case .dubbed: return "Film with this sound"
-      case .subtitled: return "Film with these subtitles"
+      case .dubbed: return "Video with this sound"
+      case .subtitled: return "Video with these subtitles"
       case .burned: return "Subtitles in the picture"
       case .collage: return "One picture"
       }
@@ -146,7 +146,7 @@ enum Joiner {
     let there = try await voice.load(.timeRange)
     try second.insertTimeRange(CMTimeRange(start: there.start, duration: min(there.duration, range.duration)), of: voice, at: .zero)
     guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
-      throw ProcessingError.conversionFailed(reason: "The film cannot be written")
+      throw ProcessingError.conversionFailed(reason: "The video cannot be written")
     }
     session.outputURL = output
     session.outputFileType = AVFileType((UTType(filenameExtension: output.pathExtension) ?? .mpeg4Movie).identifier)
@@ -158,7 +158,7 @@ enum Joiner {
   /// A track that can be turned on and off, in a film otherwise as it is.
   private static func subtitle(_ film: ProcessableFile, with words: ProcessableFile, to output: URL, privacy: PrivacyPolicy) throws {
     guard let ffmpeg = ExternalTools.locate("ffmpeg") else {
-      throw ProcessingError.conversionFailed(reason: "Subtitles are put into a film by ffmpeg, which Forge downloads: see Store, Tools.")
+      throw ProcessingError.conversionFailed(reason: "Subtitles are put into a video by ffmpeg, which Forge downloads: see Store, Tools.")
     }
     let codec = output.pathExtension.lowercased() == "mkv" ? "srt" : "mov_text"
     do {
@@ -170,7 +170,7 @@ enum Joiner {
       throw CancellationError()
     } catch {
       throw ProcessingError.conversionFailed(
-        reason: "\(words.fileName) could not be put into \(film.fileName). Convert the film to MP4 and the subtitles to SRT, and try again."
+        reason: "\(words.fileName) could not be put into \(film.fileName). Convert the video to MP4 and the subtitles to SRT, and try again."
       )
     }
   }
@@ -216,7 +216,7 @@ enum Joiner {
     let composition = AVMutableComposition()
     guard let picture = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
           let sound = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
-      throw ProcessingError.conversionFailed(reason: "The films cannot be joined")
+      throw ProcessingError.conversionFailed(reason: "The videos cannot be joined")
     }
     var at = CMTime.zero
     var frame: CGSize?
@@ -267,7 +267,7 @@ enum Joiner {
     drawn.frameDuration = CMTime(seconds: 1 / Double(rate > 0 ? min(rate, 120) : 30), preferredTimescale: 60_000)
     drawn.instructions = instructions
     guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
-      throw ProcessingError.conversionFailed(reason: "The films cannot be joined")
+      throw ProcessingError.conversionFailed(reason: "The videos cannot be joined")
     }
     session.videoComposition = drawn
     session.outputURL = output
@@ -340,7 +340,7 @@ enum Joiner {
     await withTaskCancellationHandler { await box.session.export() } onCancel: { box.session.cancelExport() }
     if session.status == .cancelled { throw CancellationError() }
     guard session.status == .completed else {
-      throw session.error ?? ProcessingError.conversionFailed(reason: "The films could not be joined")
+      throw session.error ?? ProcessingError.conversionFailed(reason: "The videos could not be joined")
     }
   }
 

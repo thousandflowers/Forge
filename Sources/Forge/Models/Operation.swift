@@ -56,7 +56,7 @@ enum Operation: Codable, Hashable, Identifiable, Sendable {
     case .filter: return "Filter"
     case .recognizeText: return "Read the text"
     case .encode: return "Codec"
-    case .film: return "Film settings"
+    case .film: return "Video settings"
     case .limitSize: return "Max file size"
     case .stripMetadata: return "Remove metadata"
     case .tool(let tool): return tool.title

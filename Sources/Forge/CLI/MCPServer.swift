@@ -63,7 +63,7 @@ struct MCPServer {
         ] as Object],
       ],
       [
-        "name": "join", "description": "Make several files into one: PDFs and pictures, films, recordings, or a film with another file's sound or subtitles.",
+        "name": "join", "description": "Make several files into one: PDFs and pictures, videos, recordings, or a video with another file's sound or subtitles.",
         "inputSchema": ["type": "object", "required": ["files"], "properties": [
           "files": files, "out": out,
           "as": ["type": "string", "enum": Joiner.Kind.allCases.map(\.rawValue), "description": "Without it, what the files suggest."],
@@ -121,7 +121,7 @@ struct MCPServer {
     }
     let possible = Joiner.kinds(for: files)
     let asked = (arguments["as"] as? String).flatMap(Joiner.Kind.init(rawValue:))
-    guard let kind = asked ?? possible.first, possible.contains(kind) else { throw CLIError("These files cannot be made into one together.") }
+    guard let kind = asked ?? possible.first, possible.contains(kind) else { throw CLIError("These files cannot be joined.") }
     return try await coordinator.join(files, as: kind, into: folder(arguments)).path
   }
 
@@ -133,10 +133,10 @@ struct MCPServer {
       // A preset is the whole recipe. What is beside it would be dropped without
       // a word, which reads as if it had been done.
       let beside = ["to", "do", "maxBytes"].filter { arguments[$0] != nil }
-      guard beside.isEmpty else { throw CLIError("A preset is the whole recipe. Give it without \(beside.joined(separator: ", ")).") }
+      guard beside.isEmpty else { throw CLIError("A preset cannot be combined with \(beside.joined(separator: ", ")).") }
       return found.answered(with: try answers(arguments, to: found))
     }
-    guard arguments["answers"] == nil else { throw CLIError("Answers are to a preset's questions, and no preset was given.") }
+    guard arguments["answers"] == nil else { throw CLIError("Answers need a preset.") }
     var made = RulePreset(name: "Asked by an assistant", description: "", category: .custom)
     if let format = arguments["to"] as? String {
       made = try RecipeOptions.parse(["--to", format]).resolve(saved: [])

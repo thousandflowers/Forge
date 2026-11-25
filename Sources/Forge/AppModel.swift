@@ -545,7 +545,7 @@ final class AppModel: ObservableObject {
   /// From the Finder's menu: as many windows as there are files to cut.
   func cut(_ urls: [URL]) {
     let files = urls.compactMap { try? ProcessableFile(url: $0) }.filter { CutModel(file: $0) != nil }
-    if files.isEmpty { lastError = "None of those files is one Forge can cut." }
+    if files.isEmpty { lastError = "Forge cannot cut any of these files." }
     files.prefix(Self.mostWindows).forEach(cut)
   }
 

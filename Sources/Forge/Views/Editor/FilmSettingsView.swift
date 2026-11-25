@@ -24,7 +24,7 @@ struct FilmSettingsView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       if let tool {
-        ToolOfferRow(tool: tool, because: "Film settings are ffmpeg\u{2019}s work.", installer: installer)
+        ToolOfferRow(tool: tool, because: "Video settings are ffmpeg\u{2019}s work.", installer: installer)
       }
       line("Encoder") {
         Picker("Encoder", selection: $settings.encoder) { ForEach(offered, id: \.self) { Text($0.title).tag($0) } }.labelsHidden()
@@ -115,8 +115,8 @@ struct FilmSettingsView: View {
       }
       line("Also") {
         Toggle("Smooth blocks", isOn: $settings.smoothsBlocks)
-        Toggle("Grey", isOn: $settings.isGrey)
-        Toggle("PAL to HD colours", isOn: $settings.isRec709).help("For an old PAL tape: from Rec. 601 to the Rec. 709 screens expect")
+        Toggle("Grayscale", isOn: $settings.isGrey)
+        Toggle("PAL to HD colors", isOn: $settings.isRec709).help("For an old PAL tape: from Rec. 601 to the Rec. 709 screens expect")
       }
     }
   }
