@@ -37,7 +37,7 @@ actor WatchRunner {
   func run(folder: MonitoredFolder) async throws {
     let watcher = MonitoredFolderWatcher()
     memory.remember(folder.url, subfolders: folder.includeSubfolders)
-    try watcher.startWatching(
+    try await watcher.startWatching(
       folder: folder,
       onGone: { [weak self] in Task { await self?.folderWentAway() } }
     ) { [weak self] url in

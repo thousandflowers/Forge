@@ -75,6 +75,23 @@ final class HandRenamesTests: BaseTestCase {
     XCTAssertEqual(got, ["b.jpg>c.png"])
   }
 
+  /// Opening the places waits for macOS to be answered: it is not done here.
+  func test_startingDoesNotWaitForThePlaces_andStoppingMeanwhileHolds() async throws {
+    let home = try folder("home")
+    let watcher = HandRenames(hand: .init(isInFinder: { true }, idle: { 0 }))
+    watcher.start(in: [home]) { _, _ in }
+    XCTAssertFalse(watcher.isWatching)
+    watcher.stop()
+    try await Task.sleep(nanoseconds: 800_000_000)
+    XCTAssertFalse(watcher.isWatching, "turned off while it was being opened")
+
+    watcher.start(in: [home]) { _, _ in }
+    for _ in 0..<40 where !watcher.isWatching { try await Task.sleep(nanoseconds: 100_000_000) }
+    XCTAssertTrue(watcher.isWatching)
+    watcher.stop()
+    XCTAssertFalse(watcher.isWatching)
+  }
+
   func test_itIsOffUntilItIsTurnedOn() throws {
     XCTAssertFalse(AppSettings().convertsRenames)
     var on = AppSettings()

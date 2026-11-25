@@ -595,12 +595,15 @@ final class AppModel: ObservableObject {
       watchedPlaces[place] = place.folder
       let watcher = MonitoredFolderWatcher()
       let folder = MonitoredFolder(url: place.folder, ruleId: UUID(), destinationMode: .copyTo)
-      do {
-        try watcher.startWatching(folder: folder) { [weak self] url in await self?.takeAutomatically(url, in: place) }
-        automatic[place] = watcher
-      } catch {
-        report(error, doing: "watching “\(folder.displayName)”")
-      }
+      automatic[place] = watcher
+      watcher.start(folder: folder, begun: { [weak self] error in
+        guard let error else { return }
+        Task { @MainActor in
+          guard let self, self.automatic[place] === watcher else { return }
+          self.automatic[place] = nil
+          self.report(error, doing: "watching “\(folder.displayName)”")
+        }
+      }) { [weak self] url in await self?.takeAutomatically(url, in: place) }
     }
   }
 
@@ -725,24 +728,31 @@ final class AppModel: ObservableObject {
   private func startWatcher(_ folder: MonitoredFolder) {
     guard watchers[folder.id] == nil else { return }
     let watcher = MonitoredFolderWatcher()
-    do {
-      try watcher.startWatching(
-        folder: folder,
-        onGone: { [weak self] in Task { @MainActor in self?.stoppedWatching(folder) } }
-      ) { [weak self] url in
-        await self?.processIncoming(url, folder: folder)
+    let memory = RenameMemory()
+    watchers[folder.id] = watcher
+    memories[folder.id] = memory
+    watcher.start(
+      folder: folder,
+      onGone: { [weak self] in Task { @MainActor in self?.stoppedWatching(folder) } },
+      begun: { [weak self] error in
+        guard let error else { return memory.remember(folder.url, subfolders: folder.includeSubfolders) }
+        Task { @MainActor in
+          guard let self, self.watchers[folder.id] === watcher else { return }
+          self.couldNotWatch(folder, error)
+        }
       }
-      watchers[folder.id] = watcher
-      let memory = RenameMemory()
-      memory.remember(folder.url, subfolders: folder.includeSubfolders)
-      memories[folder.id] = memory
-    } catch {
-      // A folder that shows as active but is not being watched is worse than
-      // an error message, so say so and turn it back off.
-      report(error, doing: "watching “\(folder.displayName)”")
-      if let index = folders.firstIndex(where: { $0.id == folder.id }) {
-        folders[index].isActive = false
-      }
+    ) { [weak self] url in
+      await self?.processIncoming(url, folder: folder)
+    }
+  }
+
+  /// A folder that shows as active but is not being watched is worse than an
+  /// error message, so say so and turn it back off.
+  private func couldNotWatch(_ folder: MonitoredFolder, _ error: Error) {
+    stopWatcher(folder)
+    report(error, doing: "watching “\(folder.displayName)”")
+    if let index = folders.firstIndex(where: { $0.id == folder.id }) {
+      folders[index].isActive = false
     }
   }
 

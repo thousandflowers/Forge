@@ -11,7 +11,7 @@ final class MonitoredFolderWatcherTests: BaseTestCase {
     let seen = Collector()
 
     let watcher = MonitoredFolderWatcher()
-    try watcher.startWatching(
+    try await watcher.startWatching(
       folder: MonitoredFolder(url: watched, ruleId: UUID(), destinationMode: .copyTo)
     ) { url in await seen.add(url) }
     defer { watcher.stop() }
@@ -29,7 +29,7 @@ final class MonitoredFolderWatcherTests: BaseTestCase {
     let seen = Collector()
 
     let watcher = MonitoredFolderWatcher()
-    try watcher.startWatching(
+    try await watcher.startWatching(
       folder: MonitoredFolder(url: watched, ruleId: UUID(), destinationMode: .copyTo)
     ) { url in await seen.add(url) }
     defer { watcher.stop() }
@@ -51,7 +51,7 @@ final class MonitoredFolderWatcherTests: BaseTestCase {
     let seen = Collector()
 
     let watcher = MonitoredFolderWatcher()
-    try watcher.startWatching(
+    try await watcher.startWatching(
       folder: MonitoredFolder(url: watched, ruleId: UUID(), destinationMode: .copyTo)
     ) { url in await seen.add(url) }
     defer { watcher.stop() }
@@ -92,7 +92,7 @@ final class MonitoredFolderWatcherTests: BaseTestCase {
     let seen = Collector()
 
     let watcher = MonitoredFolderWatcher()
-    try watcher.startWatching(
+    try await watcher.startWatching(
       folder: MonitoredFolder(url: watched, ruleId: UUID(), destinationMode: .copyTo)
     ) { url in await seen.add(url) }
     defer { watcher.stop() }
@@ -105,10 +105,10 @@ final class MonitoredFolderWatcherTests: BaseTestCase {
     XCTAssertEqual(names.map(\.lastPathComponent), ["shallow.png"])
   }
 
-  private func watch(_ watched: URL, subfolders: Bool = false, gone: (@Sendable () -> Void)? = nil) throws -> (MonitoredFolderWatcher, Collector) {
+  private func watch(_ watched: URL, subfolders: Bool = false, gone: (@Sendable () -> Void)? = nil) async throws -> (MonitoredFolderWatcher, Collector) {
     let seen = Collector()
     let watcher = MonitoredFolderWatcher()
-    try watcher.startWatching(
+    try await watcher.startWatching(
       folder: MonitoredFolder(url: watched, ruleId: UUID(), destinationMode: .copyTo, includeSubfolders: subfolders),
       onGone: gone
     ) { url in await seen.add(url) }
@@ -122,7 +122,7 @@ final class MonitoredFolderWatcherTests: BaseTestCase {
     let outside = try folder("album")
     try Fixture.image(at: outside.appendingPathComponent("one.png"), width: 32, height: 32)
     try Fixture.image(at: outside.appendingPathComponent("two.png"), width: 32, height: 32)
-    let (watcher, seen) = try watch(watched, subfolders: true)
+    let (watcher, seen) = try await watch(watched, subfolders: true)
     defer { watcher.stop() }
 
     try await Task.sleep(nanoseconds: 700_000_000)
@@ -138,7 +138,7 @@ final class MonitoredFolderWatcherTests: BaseTestCase {
   /// means it is not ready.
   func test_aFileStillCalledSomethingProvisionalIsLeftAlone() async throws {
     let watched = try folder("watched")
-    let (watcher, seen) = try watch(watched)
+    let (watcher, seen) = try await watch(watched)
     defer { watcher.stop() }
 
     try await Task.sleep(nanoseconds: 700_000_000)
@@ -159,7 +159,7 @@ final class MonitoredFolderWatcherTests: BaseTestCase {
   /// arrival, not more of the same file.
   func test_aFileThatGrowsAgainIsHandedOverAgain() async throws {
     let watched = try folder("watched")
-    let (watcher, seen) = try watch(watched)
+    let (watcher, seen) = try await watch(watched)
     defer { watcher.stop() }
 
     try await Task.sleep(nanoseconds: 700_000_000)
@@ -181,7 +181,7 @@ final class MonitoredFolderWatcherTests: BaseTestCase {
   func test_saysWhenTheFolderItWatchesIsGone() async throws {
     let watched = try folder("watched")
     let gone = Flag()
-    let (watcher, _) = try watch(watched) { gone.raise() }
+    let (watcher, _) = try await watch(watched) { gone.raise() }
     defer { watcher.stop() }
 
     try await Task.sleep(nanoseconds: 700_000_000)
@@ -190,6 +190,36 @@ final class MonitoredFolderWatcherTests: BaseTestCase {
     let deadline = Date().addingTimeInterval(10)
     while !gone.isRaised, Date() < deadline { try await Task.sleep(nanoseconds: 200_000_000) }
     XCTAssertTrue(gone.isRaised)
+  }
+
+  /// Opening a folder waits while macOS asks whether it can be seen. Forge
+  /// waited with it, from the window down, and looked as if it had died.
+  func test_nobodyWaitsWhileTheFolderIsBeingOpened() async throws {
+    let watched = try folder("watched")
+    let seen = Collector()
+    let answer = DispatchSemaphore(value: 0)
+    let watcher = MonitoredFolderWatcher()
+    let one = MonitoredFolder(url: watched, ruleId: UUID(), destinationMode: .copyTo)
+
+    let start = Date()
+    watcher.start(folder: one, begun: { _ in _ = answer.wait(timeout: .now() + 20) }) { url in await seen.add(url) }
+    watcher.stop()
+    watcher.start(folder: one, begun: { _ in }) { url in await seen.add(url) }
+    XCTAssertLessThan(Date().timeIntervalSince(start), 1)
+
+    // And once it is answered, the last thing asked is what holds.
+    answer.signal()
+    try await Task.sleep(nanoseconds: 700_000_000)
+    try Fixture.image(at: watched.appendingPathComponent("arrived.png"), width: 32, height: 32)
+    let names = try await seen.wait(for: 1, timeout: 10)
+    XCTAssertEqual(names.map(\.lastPathComponent), ["arrived.png"])
+
+    watcher.stop()
+    try await Task.sleep(nanoseconds: 300_000_000)
+    try Fixture.image(at: watched.appendingPathComponent("late.png"), width: 32, height: 32)
+    try await Task.sleep(nanoseconds: 2_500_000_000)
+    let after = await seen.all()
+    XCTAssertEqual(after.map(\.lastPathComponent), ["arrived.png"])
   }
 }
 

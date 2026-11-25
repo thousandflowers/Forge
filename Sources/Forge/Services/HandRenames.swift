@@ -21,7 +21,7 @@ final class HandRenames {
   /// Long enough for the Finder to ask whether the extension is really to change
   /// and for the answer to be told.
   private static let justNow: TimeInterval = 3
-  private static let latency: TimeInterval = 0.2
+  private nonisolated static let latency: TimeInterval = 0.2
 
   static var places: [URL] {
     [FileManager.SearchPathDirectory.desktopDirectory, .downloadsDirectory, .documentDirectory, .picturesDirectory]
@@ -29,7 +29,13 @@ final class HandRenames {
   }
 
   private let hand: Hand
+  /// A stream is made on one thread and kept on another.
+  private struct Opened: @unchecked Sendable { let stream: FSEventStreamRef? }
+  private static let opening = DispatchQueue(label: "com.eugeniozamengo.Forge.renames", qos: .utility)
+
   private var stream: FSEventStreamRef?
+  /// Which start this is; none once stopped.
+  private var attempt: UUID?
   private var pairs = RenamePairs()
   private var roots: [URL] = []
   private var renamed: @MainActor (_ file: URL, _ before: String) -> Void = { _, _ in }
@@ -39,17 +45,54 @@ final class HandRenames {
   init(hand: Hand = Hand()) { self.hand = hand }
 
   deinit {
-    guard let stream else { return }
+    if let stream { Self.close(stream) }
+  }
+
+  /// Returns at once: macOS may be asking whether these places can be seen, and
+  /// opening them waits for the answer.
+  func start(in places: [URL]? = nil, renamed: @escaping @MainActor (URL, String) -> Void) {
+    self.renamed = renamed
+    guard attempt == nil else { return }
+    let attempt = UUID()
+    self.attempt = attempt
+    // As the events have them: a place reached through a link is told by where it is.
+    let roots = (places ?? Self.places).map(Self.real)
+    self.roots = roots
+    Self.opening.async { [self] in
+      let stream = Opened(stream: open(roots))
+      DispatchQueue.main.async {
+        MainActor.assumeIsolated { self.opened(stream.stream, attempt) }
+      }
+    }
+  }
+
+  func stop() {
+    attempt = nil
+    if let stream { Self.close(stream) }
+    stream = nil
+    pairs = RenamePairs()
+  }
+
+  private func opened(_ stream: FSEventStreamRef?, _ attempt: UUID) {
+    // Stopped while macOS was asking.
+    guard self.attempt == attempt else {
+      if let stream { Self.close(stream) }
+      return
+    }
+    guard let stream else {
+      self.attempt = nil
+      return
+    }
+    self.stream = stream
+  }
+
+  private nonisolated static func close(_ stream: FSEventStreamRef) {
     FSEventStreamStop(stream)
     FSEventStreamInvalidate(stream)
     FSEventStreamRelease(stream)
   }
 
-  func start(in places: [URL]? = nil, renamed: @escaping @MainActor (URL, String) -> Void) {
-    self.renamed = renamed
-    guard stream == nil else { return }
-    // As the events have them: a place reached through a link is told by where it is.
-    roots = (places ?? Self.places).map(Self.real)
+  private nonisolated func open(_ roots: [URL]) -> FSEventStreamRef? {
     let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
       guard let info, let told = unsafeBitCast(paths, to: NSArray.self) as? [NSDictionary] else { return }
       let watcher = Unmanaged<HandRenames>.fromOpaque(info).takeUnretainedValue()
@@ -72,23 +115,14 @@ final class HandRenames {
         kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseExtendedData | kFSEventStreamCreateFlagUseCFTypes
           | kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagIgnoreSelf
       )
-    ) else { return }
+    ) else { return nil }
     FSEventStreamSetDispatchQueue(stream, .main)
     guard FSEventStreamStart(stream) else {
       FSEventStreamInvalidate(stream)
       FSEventStreamRelease(stream)
-      return
+      return nil
     }
-    self.stream = stream
-  }
-
-  func stop() {
-    guard let stream else { return }
-    FSEventStreamStop(stream)
-    FSEventStreamInvalidate(stream)
-    FSEventStreamRelease(stream)
-    self.stream = nil
-    pairs = RenamePairs()
+    return stream
   }
 
   func heard(_ events: [RenamePairs.Event]) {
@@ -102,7 +136,7 @@ final class HandRenames {
   private var isByHand: Bool { hand.isInFinder() && hand.idle() <= Self.justNow }
 
   /// Foundation takes `/private` off the front, and the events leave it on.
-  static func real(_ url: URL) -> URL {
+  nonisolated static func real(_ url: URL) -> URL {
     guard let path = realpath(url.path, nil) else { return url }
     defer { free(path) }
     return URL(fileURLWithPath: String(cString: path))
