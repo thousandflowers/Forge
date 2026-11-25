@@ -65,8 +65,6 @@ Some conversions are not settings, they are things Forge works out from what you
 | Convert a video to JPEG or PNG | Exports its frames, twelve a second, into a folder named after the clip |
 | Convert a video to GIF | Turns the clip into an animated GIF, and a GIF back into video |
 | Convert a recording to `.txt`, `.rtf`, `.docx` or `.pdf` | Transcribes it on device, into that format |
-| Convert a recording or a film to `.srt` or `.vtt` | Takes the subtitles out of it, or writes them from what is said, with the times |
-| Rename a file `holiday_ask.jpg` in a watched folder | Opens a small menu beside the pointer: format, size, what to leave out, each with the size it really comes to |
 | Convert a scan or a photo to text | Reads it with Vision, on device |
 | Convert a document to `.m4a` or `.wav` | Reads it aloud with a system voice |
 | Convert a PDF to an image | Rasterises every page, not just the first |
@@ -198,19 +196,6 @@ Completions come from the tool itself: `forge --generate-completion-script zsh` 
 ## Watched folders
 
 Open the Folders tab, add a folder, give it a preset. Anything dropped in is converted on arrival, through FSEvents, with the same care about backups and names as everything else.
-
-Turn on **Only when renamed** and Forge leaves every file alone until its name says what it wants, so a whole Desktop can be watched:
-
-| In the name | What happens |
-| --- | --- |
-| `_2MB`, `_300KB` | Comes out under that size |
-| `_800px`, `_q80` | That wide, that quality |
-| `_privacy` | Without location, camera, serial numbers and author |
-| `_ask` | A small menu asks: format, size, privacy |
-| `_asksize`, `_askwidth`, `_askquality`, `_askformat` | The same menu, with that one question |
-| any word you gave a preset | Runs that preset. If it asks something, the menu opens |
-
-For pictures, the menu shows what each choice really comes to, measured on the file before you press. From the command line, `forge watch --only-renamed` reads the same names; there is no screen there to ask on, so a preset's questions take their defaults.
 
 ## How it fits together
 
