@@ -478,9 +478,7 @@ struct PresetEditorView: View {
               .foregroundStyle(.secondary)
               .frame(width: 120, height: 90)
               .background(
-                RoundedRectangle(cornerRadius: 10)
-                  .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
-                  .foregroundStyle(Color.secondary.opacity(0.3))
+                DropBorder(radius: 10)
               )
             }
             .buttonStyle(.plain)
@@ -572,9 +570,7 @@ struct PresetEditorView: View {
       .menuIndicator(.hidden)
       .accessibilityLabel(root ? "Add a block at the end" : "Add a step to this path")
       .background(
-        RoundedRectangle(cornerRadius: Metrics.blockRadius, style: .continuous)
-          .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
-          .foregroundStyle(isDropTarget(.endOf(container)) ? Color.accentColor : Color.secondary.opacity(0.3))
+        DropBorder(isLit: isDropTarget(.endOf(container)))
       )
       .frame(maxWidth: Metrics.blockColumn)
       .frame(maxWidth: .infinity)

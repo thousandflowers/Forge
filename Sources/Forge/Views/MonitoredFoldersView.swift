@@ -143,6 +143,8 @@ private struct AddFolderSheet: View {
         }
       }
       .formStyle(.grouped)
+      // One ground, with the buttons under it.
+      .scrollContentBackground(.hidden)
       Divider()
       HStack {
         Spacer()
@@ -166,7 +168,7 @@ private struct AddFolderSheet: View {
       }
       .padding()
     }
-    .frame(width: 460, height: 480)
+    .frame(width: 460, height: 430)
     .translucentSheet()
     .onAppear { if presetID == nil { presetID = model.presets.first?.id } }
   }

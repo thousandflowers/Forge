@@ -3,7 +3,6 @@ import SwiftUI
 
 /// Where presets and tools come from, in one place.
 struct StoreView: View {
-  @EnvironmentObject private var model: AppModel
   enum Shelf: String, CaseIterable {
     case presets = "Presets", tools = "Tools"
   }
@@ -11,26 +10,23 @@ struct StoreView: View {
   @AppStorage("storeShelf") private var shelf = Shelf.presets
 
   var body: some View {
-    Group {
+    VStack(spacing: 0) {
+      // Not in the title bar, which cut its ends off.
+      Picker("Show", selection: $shelf) {
+        ForEach(Shelf.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+      }
+      .pickerStyle(.segmented)
+      .labelsHidden()
+      .frame(width: 220)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.horizontal, 20)
+      .padding(.top, 14)
       switch shelf {
       case .presets: GalleryView()
       case .tools: CapabilitiesView()
       }
     }
     .navigationTitle("Store")
-    .toolbar {
-      ToolbarItem(placement: .principal) {
-        // Behind the editor it would change what is under it.
-        if model.presetEditor == nil {
-        Picker("Show", selection: $shelf) {
-          ForEach(Shelf.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
-        }
-      }
-    }
   }
 }
 
@@ -81,12 +77,15 @@ struct GalleryView: View {
     .confirmsToolInstalls(with: installer)
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
-        Button {
-          NSWorkspace.shared.open(GalleryView.contributeURL)
-        } label: {
-          Label("Share Yours", systemImage: "square.and.arrow.up")
+        // The editor covers what it is about.
+        if model.presetEditor == nil {
+          Button {
+            NSWorkspace.shared.open(GalleryView.contributeURL)
+          } label: {
+            Label("Share Yours", systemImage: "square.and.arrow.up").labelStyle(.titleAndIcon)
+          }
+          .help("Open the gallery file on GitHub to add one")
         }
-        .help("Open the gallery file on GitHub to add one")
       }
     }
     .task { await load() }

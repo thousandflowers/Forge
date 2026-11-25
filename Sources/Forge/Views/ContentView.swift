@@ -15,6 +15,9 @@ struct ContentView: View {
       .navigationTitle("Forge")
     } detail: {
       detail
+        // Its own ground came out as a box of another shade, over the edge of the
+        // sidebar.
+        .toolbarBackground(.hidden, for: .windowToolbar)
     }
     // Covered by the editor, and so out of reach: the grid of presets behind it
     // could still be walked and pressed by VoiceOver, and by anything else

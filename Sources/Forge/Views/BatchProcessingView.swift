@@ -108,16 +108,21 @@ struct BatchProcessingView: View {
     .onChange(of: model.opened) { _ in takeOpened() }
     .navigationTitle("Convert")
     .toolbar {
-      ToolbarItemGroup {
-        // Behind the maker these would act on a list nobody can see.
+      // Behind the maker these would act on a list nobody can see. Nothing to
+      // clear is not a reason to show a disabled bin: it is a reason for there to
+      // be no bin.
+      ToolbarItem(placement: .primaryAction) {
+        if model.presetEditor == nil, !vm.files.isEmpty {
+          Button { clear() } label: { Label("Clear", systemImage: "trash") }
+            .help("Clear the list")
+            .disabled(vm.isProcessing)
+        }
+      }
+      ToolbarItem(placement: .primaryAction) {
         if model.presetEditor == nil {
-          Button { addFiles() } label: { Label("Add Files", systemImage: "plus") }
-          // Nothing to clear is not a reason to show a disabled bin: it is a
-          // reason for there to be no bin.
-          if !vm.files.isEmpty {
-            Button(role: .destructive) { clear() } label: { Label("Clear", systemImage: "trash") }
-              .disabled(vm.isProcessing)
-          }
+          // As dark as the others: drawn by itself it looked switched off.
+          Button { addFiles() } label: { Label("Add Files", systemImage: "plus").foregroundStyle(Color(nsColor: .labelColor).opacity(0.65)) }
+            .help("Add files")
         }
       }
     }
@@ -170,10 +175,7 @@ struct BatchProcessingView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(shape.fill(Color.accentColor.opacity(isTargeted ? 0.08 : 0)))
-    .overlay(
-      shape.strokeBorder(style: StrokeStyle(lineWidth: isTargeted ? 2.5 : 1.5, dash: [7]))
-        .foregroundStyle(isTargeted ? Color.accentColor : Color.secondary.opacity(0.28))
-    )
+    .overlay(DropBorder(isLit: isTargeted))
     .padding(20)
     .contentShape(Rectangle())
   }
@@ -185,6 +187,8 @@ struct BatchProcessingView: View {
           PreviewImage(url: f.url, maxPixels: 64)
             .frame(width: 24, height: 24)
             .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            // A white picture on a white list has no edge of its own.
+            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
             .accessibilityHidden(true)
           Text(f.fileName)
             .lineLimit(1)
@@ -205,6 +209,7 @@ struct BatchProcessingView: View {
         Text(f.kindName)
           .foregroundStyle(.secondary)
       }
+      .width(min: 110, ideal: 140)
       TableColumn("Size", value: \.fileSize) { f in
         Text(f.fileSize.formatted(.byteCount(style: .file)))
           .foregroundStyle(.secondary).monospacedDigit()

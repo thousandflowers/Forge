@@ -149,6 +149,65 @@ struct TagRow: View {
   }
 }
 
+/// A border to drop things in. The dashes are as many as go round it exactly, and
+/// one is in the middle of every corner: left to themselves they broke off there.
+struct DropBorder: View {
+  var radius: CGFloat = Metrics.blockRadius
+  var isLit = false
+
+  private static let dash: CGFloat = 7
+
+  var body: some View {
+    GeometryReader { space in
+      let line: CGFloat = isLit ? 2.5 : 1.5
+      let box = CGRect(origin: .zero, size: space.size).insetBy(dx: line / 2, dy: line / 2)
+      let r = min(radius, box.width / 2, box.height / 2)
+      let color = isLit ? Color.accentColor : Color.secondary.opacity(0.35)
+      if r > min(box.width, box.height) * 0.3 {
+        // Nearly all corner: the dashes go round it, and come out even.
+        let shape = RoundedRectangle(cornerRadius: r, style: .circular), round = 2 * (box.width + box.height - r * 4) + 2 * .pi * r
+        let each = round / max(2, (round / (Self.dash * 2)).rounded())
+        shape.path(in: box).stroke(color, style: StrokeStyle(lineWidth: line, dash: [each / 2, each / 2]))
+      } else {
+      ZStack {
+        ForEach(0..<4, id: \.self) { Self.side($0, of: box, r).stroke(color, style: Self.style(line, along: $0 % 2 == 0 ? box.width - r * 2 : box.height - r * 2)) }
+        Self.corners(of: box, r).stroke(color, style: StrokeStyle(lineWidth: line, lineCap: .round))
+      }
+      }
+    }
+    .allowsHitTesting(false)
+    .accessibilityHidden(true)
+  }
+
+  /// Between two corners, beginning and ending with a gap.
+  private static func style(_ line: CGFloat, along length: CGFloat) -> StrokeStyle {
+    let count = max(1, ((length / dash - 1) / 2).rounded(.down)), each = length / (count * 2 + 1)
+    return StrokeStyle(lineWidth: line, lineCap: .round, dash: [max(0.1, each - line), each + line], dashPhase: each - line / 2)
+  }
+
+  private static func side(_ index: Int, of box: CGRect, _ r: CGFloat) -> Path {
+    Path { path in
+      switch index {
+      case 0: path.move(to: CGPoint(x: box.minX + r, y: box.minY)); path.addLine(to: CGPoint(x: box.maxX - r, y: box.minY))
+      case 1: path.move(to: CGPoint(x: box.maxX, y: box.minY + r)); path.addLine(to: CGPoint(x: box.maxX, y: box.maxY - r))
+      case 2: path.move(to: CGPoint(x: box.maxX - r, y: box.maxY)); path.addLine(to: CGPoint(x: box.minX + r, y: box.maxY))
+      default: path.move(to: CGPoint(x: box.minX, y: box.maxY - r)); path.addLine(to: CGPoint(x: box.minX, y: box.minY + r))
+      }
+    }
+  }
+
+  /// Whole, each of them.
+  private static func corners(of box: CGRect, _ r: CGFloat) -> Path {
+    Path { path in
+      for (x, y, from) in [(box.maxX - r, box.minY + r, -90.0), (box.maxX - r, box.maxY - r, 0), (box.minX + r, box.maxY - r, 90), (box.minX + r, box.minY + r, 180)] {
+        let center = CGPoint(x: x, y: y)
+        path.move(to: CGPoint(x: x + r * cos(from * .pi / 180), y: y + r * sin(from * .pi / 180)))
+        path.addArc(center: center, radius: r, startAngle: .degrees(from), endAngle: .degrees(from + 90), clockwise: false)
+      }
+    }
+  }
+}
+
 /// Sizes measured from Shortcuts on macOS 26, used wherever Forge draws a
 /// block, a row or a card. Colours stay Forge's.
 enum Metrics {

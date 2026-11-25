@@ -262,7 +262,8 @@ struct BlockCard<Content: View>: View {
         .onAppear { narrow = geo.size.width < inlineMinimum }
         .onChange(of: geo.size.width) { narrow = $0 < inlineMinimum }
     })
-    .padding(.horizontal, 12).padding(.vertical, 8)
+    // Of several rows, clear of the corners.
+    .padding(.horizontal, oneLine ? 12 : 16).padding(.vertical, oneLine ? 8 : 14)
     .frame(minHeight: Metrics.blockHeight)
     .frame(maxWidth: Metrics.blockColumn, alignment: .leading)
     // The card is the column's width, centred; the background goes on before
