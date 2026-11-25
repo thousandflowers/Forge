@@ -70,6 +70,18 @@ final class PremiumTests: BaseTestCase {
     }
   }
 
+  /// What a tile says it can be, the file it stands for really can.
+  func test_whatTheTilesBecomeCanBeMade() throws {
+    let files = try WelcomeSamples.make(in: try folder("welcome"))
+    for sample in WelcomeSamples.each {
+      let before = "\(sample.name).\(sample.from)", was = files.folder.appendingPathComponent(before)
+      XCTAssertTrue(FileManager.default.fileExists(atPath: was.path), before)
+      let now = files.folder.appendingPathComponent("\(sample.name).\(sample.to)")
+      try FileManager.default.moveItem(at: was, to: now)
+      XCTAssertNotNil(Retype.wanted(of: now, before: before), "\(before) to \(sample.to)")
+    }
+  }
+
   func test_historyIsByDay_theLatestFirst() throws {
     let calendar = Calendar.current
     let now = calendar.date(from: DateComponents(year: 2026, month: 11, day: 25, hour: 10))!

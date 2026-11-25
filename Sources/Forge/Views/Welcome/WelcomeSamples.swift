@@ -13,8 +13,20 @@ enum WelcomeSamples {
     let letter: URL
   }
 
-  /// What the three of them are, in the order they are fanned.
-  static let kinds: [PresetCategory] = [.image, .document, .audio]
+  struct Sample: Sendable {
+    let kind: PresetCategory
+    let name: String
+    let from: String
+    let to: String
+  }
+
+  /// What the three of them are, in the order they are fanned, and one thing
+  /// each can be made into.
+  static let each = [
+    Sample(kind: .image, name: "First light", from: "png", to: "jpg"),
+    Sample(kind: .document, name: letter, from: "md", to: "pdf"),
+    Sample(kind: .audio, name: "Ember", from: "wav", to: "m4a"),
+  ]
   static let width = 1920, height = 1200
   static let letter = "Letter"
 

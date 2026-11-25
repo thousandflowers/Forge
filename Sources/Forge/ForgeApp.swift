@@ -51,6 +51,8 @@ private extension Scene {
   func waits(_ isWaiting: Bool) -> some Scene {
     if #available(macOS 15, *) {
       return defaultLaunchBehavior(isWaiting ? .suppressed : .automatic)
+        // Nor the one that was open when Forge was last quit.
+        .restorationBehavior(isWaiting ? .disabled : .automatic)
     } else {
       return self
     }

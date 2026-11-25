@@ -87,6 +87,8 @@ final class Lesson: ObservableObject {
     panel?.follow(folder)
   }
 
+  func pop() { score.play(.pop) }
+
   /// And on to the program itself.
   func openForge(_ section: AppSection? = nil) {
     let model = model

@@ -42,7 +42,7 @@ final class LessonPanel {
   func show() {
     panel.setContentSize(panel.contentViewController?.view.fittingSize ?? .zero)
     if folder == nil, let screen = NSScreen.main?.visibleFrame {
-      panel.setFrameOrigin(NSPoint(x: screen.midX - panel.frame.width / 2, y: screen.midY - panel.frame.height / 2 + screen.height * 0.08))
+      panel.setFrameOrigin(NSPoint(x: screen.midX - panel.frame.width / 2, y: screen.midY - panel.frame.height / 2))
     }
     panel.alphaValue = 0
     panel.orderFrontRegardless()
@@ -140,10 +140,17 @@ struct LessonView: View {
   private static let radius: CGFloat = 20
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      VStack(alignment: .leading, spacing: 12) {
-        header
-        content
+    VStack(spacing: 0) {
+      Group {
+        if lesson.step == .hello {
+          hello
+        } else {
+          VStack(alignment: .leading, spacing: 12) {
+            header
+            content
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
       }
       .id(lesson.step)
       .transition(isStill ? .opacity : .asymmetric(insertion: .offset(x: 14).combined(with: .opacity), removal: .opacity))
@@ -155,6 +162,19 @@ struct LessonView: View {
     .frame(width: Self.width, height: Self.height, alignment: .topLeading)
     .floatingGlass(radius: Self.radius)
     .padding(Floating.room)
+  }
+
+  /// Everything on one axis, and the files in the middle of it.
+  private var hello: some View {
+    VStack(spacing: 6) {
+      Text(title).font(.system(size: 15, weight: .semibold))
+      Text(more)
+        .font(.system(size: 13)).foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+      LessonFan(size: 42) { lesson.pop() }
+    }
+    .frame(maxWidth: .infinity)
   }
 
   private var header: some View {
@@ -203,7 +223,7 @@ struct LessonView: View {
       .font(.system(size: 13)).foregroundStyle(lesson.problem == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
       .fixedSize(horizontal: false, vertical: true)
     switch lesson.step {
-    case .hello: FileFan(isOpen: true, size: 36, kinds: WelcomeSamples.kinds).frame(maxWidth: .infinity)
+    case .hello: EmptyView()
     case .drag: if let model = lesson.model { DragSwitch(model: model, keys: keys) }
     case .end: if let model = lesson.model { EndSwitch(model: model) }
     default: if let (from, to) = lesson.renaming() { TypedName(from: from, to: to, isStill: isStill) }
@@ -214,9 +234,10 @@ struct LessonView: View {
     HStack(spacing: 8) {
       switch lesson.step {
       case .hello:
+        Spacer(minLength: 0)
         Button("Not Now") { lesson.openForge() }.keyboardShortcut(.cancelAction)
-        Spacer()
         Button("Open the Folder") { lesson.begin() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+        Spacer(minLength: 0)
       case .end:
         Button("Open Forge") { lesson.openForge(.process) }
         Spacer()

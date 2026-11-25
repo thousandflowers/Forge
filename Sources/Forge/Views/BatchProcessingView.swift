@@ -879,12 +879,13 @@ struct StartChoices: View {
 struct FileFan: View {
   let isOpen: Bool
   var size: CGFloat = 62
-  var kinds: [PresetCategory] = [.image, .document, .video]
   @Environment(\.accessibilityReduceMotion) private var isStill
+
+  private static let kinds: [PresetCategory] = [.image, .document, .video]
 
   var body: some View {
     ZStack {
-      ForEach(Array(kinds.enumerated()), id: \.offset) { index, kind in
+      ForEach(Array(Self.kinds.enumerated()), id: \.offset) { index, kind in
         let side = CGFloat(index - 1)
         BlockIcon(symbol: kind.icon, tint: kind.tint, size: size)
           .shadow(color: .black.opacity(0.18), radius: 5, y: 3)
