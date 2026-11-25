@@ -4,19 +4,26 @@ import SwiftUI
 /// Beside the folder, and with it: where the folder's window goes, it goes.
 @MainActor
 final class LessonPanel {
-  private let panel: NSPanel
+  private let panel: Panel
   private unowned let lesson: Lesson
   /// The Finder's window with the folder in it.
   private var folder: CGWindowID?
   private var timer: Timer?
   private var isBeside = false
 
+  /// Return and Escape answer the first question. Once the folder is open they
+  /// are the Finder's: a name is being typed there.
+  private final class Panel: NSPanel {
+    var takesKeys = true
+    override var canBecomeKey: Bool { takesKeys }
+  }
+
   private static let gap: CGFloat = 10
   private static let often = 1.0 / 60
 
   init(_ lesson: Lesson) {
     self.lesson = lesson
-    panel = NSPanel(contentRect: .zero, styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
+    panel = Panel(contentRect: .zero, styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
     panel.title = "Try Forge"
     panel.level = .floating
     panel.isFloatingPanel = true
@@ -35,10 +42,11 @@ final class LessonPanel {
   func show() {
     panel.setContentSize(panel.contentViewController?.view.fittingSize ?? .zero)
     if folder == nil, let screen = NSScreen.main?.visibleFrame {
-      panel.setFrameOrigin(NSPoint(x: screen.midX - panel.frame.width / 2, y: screen.midY - panel.frame.height / 2 + screen.height * 0.08))
+      panel.setFrameOrigin(NSPoint(x: screen.midX - panel.frame.width / 2, y: screen.midY - panel.frame.height / 2))
     }
     panel.alphaValue = 0
     panel.orderFrontRegardless()
+    if panel.canBecomeKey { panel.makeKey() }
     NSAnimationContext.runAnimationGroup { $0.duration = 0.25; panel.animator().alphaValue = 1 }
   }
 
@@ -56,6 +64,7 @@ final class LessonPanel {
     let before = Set(Self.finderWindows().map(\.id))
     folder = nil
     isBeside = false
+    panel.takesKeys = false
     NSWorkspace.shared.open(url)
     timer?.invalidate()
     let began = Date()
@@ -131,14 +140,16 @@ struct LessonView: View {
   private static let radius: CGFloat = 20
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      VStack(alignment: .leading, spacing: 12) {
+    VStack(spacing: 0) {
+      VStack(spacing: 6) {
         header
-        content
+        words
+        // In the middle of what is left, whatever it is and however many lines
+        // there are above it.
+        thing.frame(maxWidth: .infinity, maxHeight: .infinity).padding(.bottom, 10)
       }
       .id(lesson.step)
       .transition(isStill ? .opacity : .asymmetric(insertion: .offset(x: 14).combined(with: .opacity), removal: .opacity))
-      Spacer(minLength: 0)
       footer
     }
     .padding(18)
@@ -148,98 +159,127 @@ struct LessonView: View {
     .padding(Floating.room)
   }
 
+  /// The tick beside it takes no room: the title stays in the middle.
   private var header: some View {
-    HStack(alignment: .firstTextBaseline, spacing: 8) {
-      Text(title).font(.system(size: 15, weight: .semibold))
-      Spacer(minLength: 8)
-      Image(systemName: "checkmark.circle.fill")
-        .font(.system(size: 17))
-        .foregroundStyle(.green)
-        .opacity(lesson.isDone ? 1 : 0)
-        .scaleEffect(lesson.isDone || isStill ? 1 : 0.4)
-        .accessibilityHidden(!lesson.isDone)
-        .accessibilityLabel(Text("Done"))
-    }
+    Text(title)
+      .font(.system(size: 15, weight: .semibold))
+      .frame(maxWidth: .infinity)
+      .overlay(alignment: .trailing) {
+        Image(systemName: "checkmark.circle.fill")
+          .font(.system(size: 17))
+          .foregroundStyle(.green)
+          .opacity(lesson.isDone ? 1 : 0)
+          .scaleEffect(lesson.isDone || isStill ? 1 : 0.4)
+          .accessibilityHidden(!lesson.isDone)
+          .accessibilityLabel(Text("Done"))
+      }
   }
 
   private var title: String {
     switch lesson.step {
     case .hello: return "Try Forge"
-    case .word: return "Say it in the name"
+    case .word: return "Sound, too"
     case .kind: return "Change what it is"
-    case .ask: return "Let it ask"
-    case .sound: return "Sound, too"
     case .drag: return "Or just drag"
+    case .scan: return "A little magic"
+    case .keep: return "Anywhere else"
     case .end: return "That’s all there is to it"
     }
   }
 
   private var more: String {
     switch lesson.step {
-    case .hello: return "Three files to play with, in a folder of their own."
-    case .word: return "Select the picture, press Return, and add _gray."
-    case .kind: return "Give the letter another extension. If the Finder asks, choose Use .pdf."
-    case .ask: return "Not sure? Add _ask, and choose from a menu."
-    case .sound: return "Add _reverse to the recording, and listen."
+    case .hello: return "Three files to play with."
+    case .kind: return "Now make it .pdf. If the Finder asks, choose Use .pdf."
+    case .word: return "Add _reverse to the recording, and listen."
     case .drag: return "Hold \(keys) while you drag the picture, and let go on a format."
-    case .end: return "It works the same in any folder you watch."
+    case .scan: return "Select the photo, press Return, and add _scan."
+    case .keep: return "It works the same in any folder you watch."
+    case .end: return lesson.made == nil ? "A few more names to try." : "The PDF is yours: drag it anywhere."
     }
   }
 
   private var keys: String { lesson.model?.settings.dragMenuKeys.symbols ?? "⇧" }
 
-  @ViewBuilder
-  private var content: some View {
+  private var words: some View {
     Text(lesson.problem ?? more)
       .font(.system(size: 13)).foregroundStyle(lesson.problem == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
+      .multilineTextAlignment(.center)
       .fixedSize(horizontal: false, vertical: true)
+  }
+
+  @ViewBuilder
+  private var thing: some View {
     switch lesson.step {
-    case .hello: FileFan(isOpen: true, size: 36).frame(maxWidth: .infinity)
-    case .drag: if let model = lesson.model { DragSwitch(model: model, keys: keys) }
-    case .end: if let model = lesson.model { EndSwitch(model: model) }
+    case .hello: LessonFan(size: 42, formats: lesson.formats, touched: lesson.touch, pressed: lesson.pop)
+    case .drag: if let files = lesson.files { HeldFile(file: files.picture, keys: keys) }
+    case .end:
+      VStack(spacing: 8) {
+        if let made = lesson.made { LessonMade(file: made) }
+        LessonExtras(lesson: lesson)
+      }
+    case .keep:
+      VStack(spacing: 10) {
+        if let model = lesson.model {
+          EndSwitch(model: model)
+          if lesson.isDragMenuNew { DragSwitch(model: model, keys: keys) }
+        }
+      }
+    case .scan, .kind:
+      if lesson.isDone, lesson.chain.count > 1 {
+        LessonChain(images: lesson.chain).transition(.scale(scale: 0.8).combined(with: .opacity))
+      } else if let (from, to) = lesson.renaming() {
+        TypedName(from: from, to: to, isStill: isStill)
+      }
     default: if let (from, to) = lesson.renaming() { TypedName(from: from, to: to, isStill: isStill) }
     }
   }
 
+  /// What is pressed in the middle; how far it is, and the sound, at the sides.
   private var footer: some View {
     HStack(spacing: 8) {
       switch lesson.step {
       case .hello:
-        Button("Not Now") { lesson.close() }
-        Spacer()
-        Button("Open the Folder") { lesson.begin() }.buttonStyle(.borderedProminent)
+        Button("Not Now") { lesson.openForge() }.keyboardShortcut(.cancelAction)
+        Button("Open the Folder") { lesson.begin() }.buttonStyle(Prominent()).keyboardShortcut(.defaultAction)
       case .end:
-        Button("Open Forge") {
-          let model = lesson.model
-          lesson.close()
-          model?.section = .process
-          model?.showWindow?()
-          NSApp.activate(ignoringOtherApps: true)
-        }
-        Spacer()
-        Button("Done") { lesson.close() }.buttonStyle(.borderedProminent)
+        Button("Open Forge") { lesson.openForge(.process) }
+        Button("Done") { lesson.close() }.buttonStyle(Prominent())
+      case .keep:
+        Button("Next") { lesson.next() }
       default:
-        dots
-        Spacer()
-        Button { lesson.isLoud.toggle() } label: { Image(systemName: lesson.isLoud ? "speaker.wave.2" : "speaker.slash").frame(width: 18) }
-          .buttonStyle(.plain).foregroundStyle(.secondary)
-          .help(lesson.isLoud ? "Turn the sound off" : "Turn the sound on")
-          .accessibilityLabel(Text(lesson.isLoud ? "Turn the sound off" : "Turn the sound on"))
         if lesson.renaming() != nil, !lesson.isDone { Button("Show Me") { lesson.showHow() } }
         Button(lesson.isDone ? "Next" : "Skip") { lesson.next() }
       }
     }
     .controlSize(.regular)
+    .frame(maxWidth: .infinity)
+    .overlay(alignment: .leading) { if isTrying { dots } }
+    .overlay(alignment: .trailing) { sound }
+  }
+
+  private var isTrying: Bool { !Self.aside.contains(lesson.step) }
+  /// Nothing to be done here.
+  private static let aside: Set<Lesson.Step> = [.hello, .keep, .end]
+
+  private var sound: some View {
+    let name = lesson.isLoud ? "Turn the sound off" : "Turn the sound on"
+    return Button { lesson.isLoud.toggle() } label: { Image(systemName: lesson.isLoud ? "speaker.wave.2" : "speaker.slash").frame(width: 18) }
+      .buttonStyle(.plain)
+      // Where there is something to listen to, and nothing to be heard.
+      .foregroundStyle(lesson.step == .word && !lesson.isLoud ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+      .help(name)
+      .accessibilityLabel(Text(name))
   }
 
   private var dots: some View {
     HStack(spacing: 5) {
-      ForEach(Lesson.Step.allCases.filter { $0 != .hello && $0 != .end }, id: \.self) { other in
+      ForEach(Lesson.Step.allCases.filter { !Self.aside.contains($0) }, id: \.self) { other in
         Circle().fill(Color.primary.opacity(other.rawValue < lesson.step.rawValue || other == lesson.step ? 0.7 : 0.18)).frame(width: 6, height: 6)
       }
     }
     .accessibilityElement()
-    .accessibilityLabel(Text("Step \(lesson.step.rawValue) of \(Lesson.Step.allCases.count - 2)"))
+    .accessibilityLabel(Text("Step \(lesson.step.rawValue) of \(Lesson.Step.allCases.count - Self.aside.count)"))
   }
 }
 
@@ -260,17 +300,56 @@ private struct TypedName: View {
       let shown = isStill ? typed.count : min(max(0, beat - 4), typed.count)
       HStack(spacing: 8) {
         Image(nsImage: NSWorkspace.shared.icon(forFile: from.path)).resizable().frame(width: 22, height: 22)
-        (Text(head) + Text(String(typed.prefix(shown))).foregroundColor(.accentColor) + Text(end))
-          .font(.system(size: 13, weight: .medium))
-          .lineLimit(1)
-        Spacer(minLength: 0)
+        // As wide as it will be: in the middle, it moved with every letter.
+        Text(new).hidden().overlay(alignment: .leading) {
+          (Text(head) + Text(String(typed.prefix(shown))).foregroundColor(.accentColor) + Text(end)).fixedSize()
+        }
+        .font(.system(size: 13, weight: .medium))
+        .lineLimit(1)
       }
     }
     .padding(.horizontal, 10)
+    .frame(maxWidth: .infinity)
     .frame(height: 38)
-    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    // As where a name is typed in the Finder.
+    .background(Color(nsColor: .textBackgroundColor).opacity(0.7), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     .accessibilityElement()
     .accessibilityLabel(Text("\(old) becomes \(new)"))
+  }
+}
+
+/// The Finder has the keys, and the system's own is drawn like any other
+/// button without them.
+private struct Prominent: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .foregroundStyle(.white)
+      .padding(.horizontal, 10)
+      .frame(height: 20)
+      .background(Color.accentColor.opacity(configuration.isPressed ? 0.75 : 1), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+  }
+}
+
+/// The key to hold, and the file to take hold of.
+private struct HeldFile: View {
+  let file: URL
+  let keys: String
+
+  var body: some View {
+    HStack(spacing: 12) {
+      Text(keys)
+        .font(.system(size: 17, weight: .medium))
+        .frame(minWidth: 38, minHeight: 38)
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.7), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+      HStack(spacing: 8) {
+        Image(nsImage: NSWorkspace.shared.icon(forFile: file.path)).resizable().frame(width: 22, height: 22)
+        Text(file.lastPathComponent).font(.system(size: 13, weight: .medium)).lineLimit(1)
+      }
+      .frame(maxWidth: .infinity, minHeight: 38)
+      .background(Color(nsColor: .textBackgroundColor).opacity(0.7), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+    .accessibilityElement()
+    .accessibilityLabel(Text("\(keys) and \(file.lastPathComponent)"))
   }
 }
 
@@ -279,7 +358,7 @@ private struct DragSwitch: View {
   let keys: String
 
   var body: some View {
-    Toggle("Menu with \(keys)", isOn: Binding(get: { model.settings.dragMenu }, set: { model.settings.dragMenu = $0; model.saveSettings() }))
+    Toggle("Keep the menu with \(keys)", isOn: Binding(get: { model.settings.dragMenu }, set: { model.settings.dragMenu = $0; model.saveSettings() }))
       .toggleStyle(.switch).controlSize(.small)
       .font(.system(size: 13))
   }

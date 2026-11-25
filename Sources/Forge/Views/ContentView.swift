@@ -29,10 +29,7 @@ struct ContentView: View {
     // that reads the window that way.
     .accessibilityHidden(model.presetEditor != nil)
     .task { await model.bootstrap() }
-    .onAppear {
-      model.showWindow = { openWindow(id: MenuBarView.windowID) }
-      if Lesson.isNew { Lesson.shared.open(model) }
-    }
+    .onAppear { model.showWindow = { openWindow(id: MenuBarView.windowID) } }
     .preferredColorScheme(model.settings.appearance.colorScheme)
     // A preset is a program, and a program is not written in a sheet: the
     // editor takes the window, sidebar included, the way Shortcuts does.

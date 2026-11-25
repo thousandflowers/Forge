@@ -9,12 +9,17 @@ final class PremiumTests: BaseTestCase {
     func entry(_ from: String, _ to: String) -> ProcessingHistory {
       ProcessingHistory(fileURL: path(from), status: .completed, duration: 0, outputURL: path(to))
     }
-    XCTAssertTrue(Lesson.answers(entry("First light_gray.png", "First light.png"), .word))
-    XCTAssertFalse(Lesson.answers(entry("Ember_reverse.wav", "Ember.wav"), .word))
-    XCTAssertTrue(Lesson.answers(entry("Letter.md", "Letter.pdf"), .kind))
+    XCTAssertTrue(Lesson.answers(entry("Recipe.jpg", "Recipe.pdf"), .kind))
     XCTAssertFalse(Lesson.answers(entry("First light.png", "First light.pdf"), .kind))
-    XCTAssertTrue(Lesson.answers(entry("First light_ask.png", "First light.jpg"), .ask))
-    XCTAssertTrue(Lesson.answers(entry("Ember_reverse.wav", "Ember.wav"), .sound))
+    XCTAssertTrue(Lesson.answers(entry("Ember_reverse.wav", "Ember.wav"), .word))
+    XCTAssertFalse(Lesson.answers(entry("First light_gray.png", "First light.png"), .word))
+    XCTAssertTrue(Lesson.answers(entry("First light.png", "First light.jpg"), .drag))
+    XCTAssertFalse(Lesson.answers(entry("Ember_reverse.wav", "Ember.wav"), .drag))
+    XCTAssertFalse(Lesson.answers(entry("Recipe.jpg", "Recipe.pdf"), .drag))
+    XCTAssertTrue(Lesson.answers(entry("Recipe_scan.jpg", "Recipe.jpg"), .scan))
+    XCTAssertFalse(Lesson.answers(entry("Recipe.jpg", "Recipe.png"), .scan))
+    // Said in its name, it was not dragged.
+    XCTAssertFalse(Lesson.answers(entry("First light_gray.png", "First light.png"), .drag))
     XCTAssertTrue(Lesson.isIn(path("a"), path("a/b.png")))
     XCTAssertFalse(Lesson.isIn(path("a"), path("b.png")))
   }
@@ -29,11 +34,35 @@ final class PremiumTests: BaseTestCase {
     XCTAssertTrue(model.folders.isEmpty)
   }
 
+  /// The window is opened while it lasts, and gets everything ready again: what
+  /// is being watched for the lesson is not swept away with it.
+  @MainActor
+  func test_gettingReadyTwiceKeepsTheLesson() async throws {
+    let model = AppModel(persistence: store)
+    await model.bootstrap()
+    model.startLesson(in: try folder("Try Forge"))
+    await model.bootstrap()
+    XCTAssertEqual(model.folders.map(\.onlyWhenRenamed), [true])
+    model.endLesson()
+    XCTAssertTrue(model.folders.isEmpty)
+  }
+
+  /// The window and the lesson both ask at once, the first time there is.
+  @MainActor
+  func test_gettingReadyAtOnceWritesThePresetsOnce() async throws {
+    let model = AppModel(persistence: store)
+    async let one: Void = model.bootstrap()
+    async let other: Void = model.bootstrap()
+    _ = await (one, other)
+    let saved = try await store.loadAllPresets().count
+    XCTAssertEqual(saved, model.presets.count)
+  }
+
   /// What it is tried on is made there and then, and is what it says it is.
   func test_theSamplesOfTheWelcomeAreRealFiles() throws {
     let files = try WelcomeSamples.make(in: try folder("welcome"))
     XCTAssertEqual(try ProcessableFile(url: files.picture).dimensions?.width, WelcomeSamples.width)
-    XCTAssertEqual(WelcomeSamples.seconds(of: files.sound), 6, accuracy: 0.01)
+    XCTAssertEqual(WelcomeSamples.seconds(of: files.sound), WelcomeTune.seconds, accuracy: 0.01)
     let shape = WelcomeSamples.shape(of: files.sound, bars: 20)
     XCTAssertEqual(shape.count, 20)
     XCTAssertEqual(shape.max() ?? 0, 1, accuracy: 0.001)
@@ -44,6 +73,109 @@ final class PremiumTests: BaseTestCase {
       XCTAssertGreaterThan(peak, 0.02, "\(sound) is silent")
       XCTAssertLessThan(peak, 0.6, "\(sound) is loud")
     }
+  }
+
+  /// What a tile says it can be, the file it stands for really can.
+  func test_whatTheTilesBecomeCanBeMade() throws {
+    let files = try WelcomeSamples.make(in: try folder("welcome"))
+    for (sample, formats) in zip(WelcomeSamples.each, WelcomeSamples.formats()) {
+      let before = "\(sample.name).\(sample.from)", was = files.folder.appendingPathComponent(before)
+      XCTAssertTrue(FileManager.default.fileExists(atPath: was.path), before)
+      XCTAssertGreaterThan(formats.count, 2, before)
+      XCTAssertFalse(formats.contains(sample.from), before)
+      for format in formats {
+        let now = files.folder.appendingPathComponent("\(sample.name).\(format)")
+        try FileManager.default.moveItem(at: was, to: now)
+        XCTAssertNotNil(Retype.wanted(of: now, before: before), "\(before) to \(format)")
+        try FileManager.default.moveItem(at: now, to: was)
+      }
+    }
+  }
+
+  /// On while it lasts, and no setting is touched.
+  @MainActor
+  func test_theDragMenuIsOnlyLent() {
+    let model = AppModel(persistence: store)
+    model.settings.dragMenu = false
+    model.lendDragMenu(true)
+    XCTAssertTrue(model.isDragMenuOn)
+    XCTAssertFalse(model.settings.dragMenu)
+    model.lendDragMenu(false)
+    XCTAssertFalse(model.isDragMenuOn)
+  }
+
+  /// The sheet is really found in the photo, and comes out upright.
+  func test_theRecipeCanBeScanned() async throws {
+    let url = path("Recipe.jpg")
+    try WelcomeRecipe.write(to: url)
+    let preset = RulePreset(name: "Scan", description: "", category: .image, actions: [.tool(.scan)])
+    let entry = try await coordinator().processFile(try ProcessableFile(url: url), with: preset, destinationMode: .copyTo, destinationURL: try folder("out")) { _ in }
+    let size = try XCTUnwrap(ProcessableFile(url: try XCTUnwrap(entry.outputURL)).dimensions)
+    XCTAssertGreaterThan(size.height, size.width)
+  }
+
+  /// Each is a word Forge knows, an extension it makes of that file, or both.
+  func test_theNamesAtTheEndMeanSomething() throws {
+    let files = try WelcomeSamples.make(in: try folder("welcome"))
+    for extra in WelcomeSamples.extras {
+      let was = files.folder.appendingPathComponent(extra.name), now = files.folder.appendingPathComponent(extra.given)
+      XCTAssertTrue(exists(was), extra.name)
+      XCTAssertFalse(extra.word.hasPrefix("_") && NameTokens.read((extra.given as NSString).deletingPathExtension + "." + (extra.name as NSString).pathExtension).tools.isEmpty, extra.word)
+      guard extra.word.contains(".") else { continue }
+      try FileManager.default.moveItem(at: was, to: now)
+      XCTAssertNotNil(Retype.wanted(of: now, before: extra.name), extra.word)
+      try FileManager.default.moveItem(at: now, to: was)
+    }
+  }
+
+  /// The whole of it, as it is done in the lesson: a photo, a sheet, a PDF.
+  @MainActor
+  func test_aPhotoGoesAllTheWayToAPDF() async throws {
+    let files = try WelcomeSamples.make(in: try folder("welcome"))
+    let model = AppModel(persistence: store)
+    await model.bootstrap()
+    model.startLesson(in: files.folder)
+    defer { model.endLesson() }
+    try await Task.sleep(nanoseconds: 1_500_000_000)
+    for (word, made) in [("_scan", "Recipe.jpg"), (".pdf", "Recipe.pdf")] {
+      let before = model.history.count
+      try FileManager.default.moveItem(at: files.recipe, to: files.folder.appendingPathComponent(WelcomeSamples.Extra(name: "Recipe.jpg", word: word).given))
+      for _ in 0..<150 where model.history.count == before { try await Task.sleep(nanoseconds: 100_000_000) }
+      XCTAssertEqual(model.history.count, before + 1, word)
+      XCTAssertTrue(exists(files.folder.appendingPathComponent(made)), word)
+    }
+    // And both in one name.
+    let before = model.history.count
+    try FileManager.default.moveItem(at: files.picture, to: files.folder.appendingPathComponent("First light_gray.pdf"))
+    for _ in 0..<150 where model.history.count == before { try await Task.sleep(nanoseconds: 100_000_000) }
+    let gray = try XCTUnwrap(NSImage(contentsOf: files.folder.appendingPathComponent("First light.pdf")), "no First light.pdf")
+    let bits = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(gray.tiffRepresentation)))
+    let middle = try XCTUnwrap(bits.colorAt(x: bits.pixelsWide / 2, y: bits.pixelsHigh / 2)?.usingColorSpace(.sRGB))
+    XCTAssertEqual(middle.redComponent, middle.blueComponent, accuracy: 0.03, "\((try? FileManager.default.contentsOfDirectory(atPath: files.folder.path)) ?? [])")
+  }
+
+  /// What came of one name is given another the moment it is there.
+  @MainActor
+  func test_aFileIsGivenOneNameAfterAnother() async throws {
+    let files = try WelcomeSamples.make(in: try folder("welcome"))
+    let model = AppModel(persistence: store)
+    await model.bootstrap()
+    model.startLesson(in: files.folder)
+    defer { model.endLesson() }
+    try await Task.sleep(nanoseconds: 1_500_000_000)
+    for word in ["gray", "crop1x1", "round90"] {
+      let before = model.history.count
+      try FileManager.default.moveItem(at: files.picture, to: files.folder.appendingPathComponent("First light_\(word).png"))
+      for _ in 0..<5_000 where model.history.count == before { try await Task.sleep(nanoseconds: 2_000_000) }
+      XCTAssertEqual(model.history.count, before + 1, word)
+      XCTAssertTrue(exists(files.picture), "\(word): \((try? FileManager.default.contentsOfDirectory(atPath: files.folder.path)) ?? [])")
+    }
+  }
+
+  /// One note for each tile, and no two the same.
+  func test_everyTileHasANoteOfItsOwn() {
+    XCTAssertEqual(WelcomeCelesta.motif.count, WelcomeSamples.each.count)
+    XCTAssertEqual(Set(WelcomeCelesta.motif).count, WelcomeSamples.each.count)
   }
 
   func test_historyIsByDay_theLatestFirst() throws {

@@ -82,7 +82,19 @@ final class AppModel: ObservableObject {
   }
 
   /// Load persisted state on launch; seed default presets on first run.
+  private var readying: Task<Void, Never>?
+
+  /// Asked for by the window and, with no window yet, by the lesson. Twice at
+  /// once, the presets it begins with were written twice.
   func bootstrap() async {
+    if let readying { return await readying.value }
+    let task = Task { await getReady() }
+    readying = task
+    await task.value
+    readying = nil
+  }
+
+  private func getReady() async {
     Claims.sweep(root: persistence.root)
     do {
       let loadedPresets = try await persistence.loadAllPresets()
@@ -96,7 +108,9 @@ final class AppModel: ObservableObject {
       } else {
         presets = Self.ordered(loadedPresets)
       }
-      folders = try await persistence.loadMonitoredFolders()
+      let saved = try await persistence.loadMonitoredFolders()
+      // The lesson's is not written down: read again, it was swept away.
+      folders = saved + folders.filter { $0.id == Self.lessonID }
     } catch {
       report(error, doing: "loading your presets and folders")
     }
@@ -546,7 +560,7 @@ final class AppModel: ObservableObject {
     dropZone.take = { [weak self] in self?.dragMenu.present($0) }
     notchZone.take = { [weak self] in self?.dragMenu.present($0, outOf: self?.notchZone.here()) }
     dragMenu.notch = settings.notchZone ? notchZone : nil
-    dragMenu.answersKeys = settings.dragMenu
+    dragMenu.answersKeys = isDragMenuOn
     dragMenu.keys = settings.dragMenuKeys
     dragMenu.ignored = Set(settings.dragMenuIgnored)
     dragMenu.convert = { [weak self] file, preset in try await self?.convertInHand(file, with: preset) ?? [] }
@@ -560,7 +574,17 @@ final class AppModel: ObservableObject {
     }
     signs.place = settings.workSign
     notchSign.follow()
-    settings.dragMenu || settings.notchZone ? dragMenu.start() : dragMenu.stop()
+    isDragMenuOn || settings.notchZone ? dragMenu.start() : dragMenu.stop()
+  }
+
+  /// Lent for the lesson: nothing is written down, and nothing is to be put back.
+  private var isDragMenuLent = false
+  var isDragMenuOn: Bool { settings.dragMenu || isDragMenuLent }
+
+  func lendDragMenu(_ isLent: Bool) {
+    guard isDragMenuLent != isLent else { return }
+    isDragMenuLent = isLent
+    startDragMenu()
   }
 
   func suggestions(for files: [ProcessableFile]) -> [RulePreset] {
@@ -891,6 +915,9 @@ final class AppModel: ObservableObject {
     // Every file it wrote, not only the first: the second one lands in the
     // same watched folder and would be converted again.
     entry.outputs.forEach(remember)
+    // Known by its name at once: renamed in the second the watcher takes to
+    // come by, it was a file nobody had seen, and its word meant nothing.
+    memories[folder.id].map { memory in entry.outputs.forEach(memory.know) }
     Task { await refreshHistory() }
     return entry.outputs
   }

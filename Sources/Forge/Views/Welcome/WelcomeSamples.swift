@@ -10,11 +10,58 @@ enum WelcomeSamples {
     let folder: URL
     let picture: URL
     let sound: URL
-    let letter: URL
+    let recipe: URL
+  }
+
+  /// A file, and what is put after its name: a word, another extension, or both.
+  struct Extra: Sendable {
+    let name: String
+    let word: String
+
+    /// What it is then called.
+    var given: String {
+      let name = name as NSString
+      return name.deletingPathExtension + word + (word.contains(".") ? "" : "." + name.pathExtension)
+    }
+  }
+
+  /// What is done in a moment: reading the words of a picture keeps somebody
+  /// waiting half a minute, the first time.
+  static let extras = [
+    Extra(name: "First light.png", word: "_gray"), Extra(name: "First light.png", word: "_crop1x1"),
+    Extra(name: "Ember.wav", word: "_speed2x"), Extra(name: "First light.png", word: "_gray.pdf"),
+  ]
+
+  struct Sample: Sendable {
+    let kind: PresetCategory
+    let name: String
+    let from: String
+  }
+
+  /// What the three of them are, in the order they are fanned.
+  static let each = [
+    Sample(kind: .image, name: "First light", from: "png"),
+    Sample(kind: .document, name: recipe, from: "jpg"),
+    Sample(kind: .audio, name: "Ember", from: "wav"),
+  ]
+
+  /// What each can be made into on this Mac, the usual things first: what
+  /// Forge would offer for it, asked of Forge.
+  static func formats() -> [[String]] {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ForgeTiles-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil else { return each.map { _ in [] } }
+    return each.map { sample in
+      let url = folder.appendingPathComponent("\(sample.name).\(sample.from)")
+      guard FileManager.default.createFile(atPath: url.path, contents: nil), let file = try? ProcessableFile(url: url) else { return [] }
+      let all = AskOptions.choices(for: .format, files: [file]).map { $0.label.lowercased() }
+      // A sheet of paper is wanted as a PDF before anything else.
+      return sample.kind == .document ? all.filter { $0 == "pdf" } + all.filter { $0 != "pdf" } : all
+    }
   }
 
   static let width = 1920, height = 1200
-  static let letter = "Letter"
+  static let recipe = "Recipe"
 
   /// What was there from the last time goes to the Trash: somebody may have put
   /// something of theirs in it.
@@ -23,30 +70,16 @@ enum WelcomeSamples {
     if FileManager.default.fileExists(atPath: folder.path) { try FileManager.default.trashItem(at: folder, resultingItemURL: nil) }
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     func file(_ name: String) -> URL { folder.appendingPathComponent(name) }
-    let files = Files(folder: folder, picture: file("First light.png"), sound: file("Ember.wav"), letter: file("\(letter).md"))
+    let files = Files(folder: folder, picture: file("First light.png"), sound: file("Ember.wav"), recipe: file("\(recipe).jpg"))
     try write(picture(), to: files.picture)
     try writeSound(to: files.sound)
-    try Data(words.utf8).write(to: files.letter)
+    try WelcomeRecipe.write(to: files.recipe)
     return files
   }
 
-  private static let words = """
-    # Hello
-
-    This letter was written in **Markdown**, a plain text anybody can read and \
-    few people can print.
-
-    Give it another extension, and it is *really* something else:
-
-    - `.pdf` to send it
-    - `.docx` to let somebody change it
-    - `.epub` to read it on the sofa
-
-    """
-
   // MARK: - The picture
 
-  private struct Chance {
+  struct Chance {
     var state: UInt64
     mutating func next() -> Double {
       state ^= state << 13; state ^= state >> 7; state ^= state << 17
@@ -159,26 +192,10 @@ enum WelcomeSamples {
 
   // MARK: - The tune
 
-  /// A plucked string, eight notes up and down.
   static func writeSound(to url: URL) throws {
-    let rate = WelcomeScore.rate, notes: [Double] = [45, 52, 57, 60, 64, 71, 69, 64, 60, 57]
-    let buffer = WelcomeScore.buffer(seconds: 6) { count, left, right in
-      var chance = Chance(state: 88_172_645_463_325_252)
-      for (index, note) in notes.enumerated() {
-        let hertz = 440 * pow(2, (note - 69) / 12), length = Int(rate / hertz)
-        var string = (0..<length).map { _ in chance.next() * 2 - 1 }
-        let start = Int(Double(index) * 0.42 * rate), pan = 0.35 + 0.3 * Double(index % 3) / 2
-        var place = 0
-        for frame in start..<count {
-          let next = (place + 1) % length
-          let value = string[place]
-          string[place] = (value + string[next]) * 0.4985
-          place = next
-          let fade = min(1, Double(count - frame) / (rate * 0.8))
-          left[frame] += Float(value * 0.2 * (1 - pan) * 2 * fade)
-          right[frame] += Float(value * 0.2 * pan * 2 * fade)
-        }
-      }
+    let rate = WelcomeScore.rate
+    let buffer = WelcomeScore.buffer(seconds: WelcomeTune.seconds) { count, left, right in
+      WelcomeTune.play(into: left, right, count: count, rate: rate)
     }
     guard let buffer else { throw ProcessingError.conversionFailed(reason: "The sample sound could not be made.") }
     let file = try AVAudioFile(forWriting: url, settings: [

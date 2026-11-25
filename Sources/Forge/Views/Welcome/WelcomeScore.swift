@@ -4,34 +4,29 @@ import AVFoundation
 /// happens. Each is worked out here; nothing recorded is in the app.
 @MainActor
 final class WelcomeScore {
-  enum Sound: CaseIterable { case hello, pop, latch, shimmer, thud }
+  enum Sound: CaseIterable { case touch, pop, latch, shimmer, thud, finale }
 
   nonisolated static let rate = 44_100.0
   private let engine = AVAudioEngine()
   private let effects = [AVAudioPlayerNode(), AVAudioPlayerNode(), AVAudioPlayerNode()]
   private let sample = AVAudioPlayerNode()
-  private let room = AVAudioUnitReverb()
-  private var sounds: [Sound: AVAudioPCMBuffer] = [:]
+  private var sounds: [Sound: [AVAudioPCMBuffer]] = [:]
   private var turn = 0
+  private var said: [Sound: Int] = [:]
   private var isRunning = false
+  private var ending: Task<Void, Never>?
 
   var isOn = true { didSet { engine.mainMixerNode.outputVolume = isOn ? 1 : 0 } }
 
   /// A Mac with nothing to play on has a quiet welcome.
   func begin() async {
+    ending?.cancel()
     guard !isRunning else { return }
-    let made = await Task.detached(priority: .userInitiated) { Made(Sound.allCases.map { ($0, Self.make($0)) }) }.value
+    let made = await Task.detached(priority: .userInitiated) { Made(Sound.allCases.map { sound in (sound, (0..<Self.ways(of: sound)).compactMap { Self.make(sound, $0) }) }) }.value
     guard let format = AVAudioFormat(standardFormatWithSampleRate: Self.rate, channels: 2), !isRunning else { return }
-    for (sound, buffer) in made.sounds { sounds[sound] = buffer }
+    for (sound, buffers) in made.sounds { sounds[sound] = buffers }
     for node in effects + [sample] { engine.attach(node) }
-    engine.attach(room)
-    room.loadFactoryPreset(.mediumHall)
-    room.wetDryMix = 26
-    let mix = AVAudioMixerNode()
-    engine.attach(mix)
-    for node in effects { engine.connect(node, to: mix, format: format) }
-    engine.connect(mix, to: room, format: format)
-    engine.connect(room, to: engine.mainMixerNode, format: format)
+    for node in effects { engine.connect(node, to: engine.mainMixerNode, format: format) }
     engine.connect(sample, to: engine.mainMixerNode, format: format)
     engine.mainMixerNode.outputVolume = isOn ? 1 : 0
     do { try engine.start() } catch { return }
@@ -39,8 +34,18 @@ final class WelcomeScore {
     for node in effects + [sample] { node.play() }
   }
 
+  /// The note of one tile, played a little differently every time.
+  func touch(_ tile: Int) {
+    let turn = said[.touch, default: 0] % Self.touches
+    said[.touch] = turn * WelcomeCelesta.motif.count + tile
+    play(.touch)
+    said[.touch] = turn + 1
+  }
+
   func play(_ sound: Sound) {
-    guard isRunning, let buffer = sounds[sound] else { return }
+    guard isRunning, let buffers = sounds[sound], !buffers.isEmpty else { return }
+    let buffer = buffers[said[sound, default: 0] % buffers.count]
+    said[sound, default: 0] += 1
     effects[turn % effects.count].scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
     turn += 1
   }
@@ -58,15 +63,26 @@ final class WelcomeScore {
 
   func end() {
     guard isRunning else { return }
-    engine.stop()
-    isRunning = false
+    hush()
+    // The last of it is heard, and not cut short by whoever is done.
+    ending = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: UInt64(Self.last * 1_000_000_000))
+      guard !Task.isCancelled, let self else { return }
+      engine.stop()
+      isRunning = false
+    }
   }
+
+  /// How many ways there are to play one note.
+  private nonisolated static let touches = 3
+  /// How long the finale is.
+  private nonisolated static let last = 5.2
 
   // MARK: - Making them
 
   private struct Made: @unchecked Sendable {
-    let sounds: [(Sound, AVAudioPCMBuffer?)]
-    init(_ sounds: [(Sound, AVAudioPCMBuffer?)]) { self.sounds = sounds }
+    let sounds: [(Sound, [AVAudioPCMBuffer])]
+    init(_ sounds: [(Sound, [AVAudioPCMBuffer])]) { self.sounds = sounds }
   }
 
   nonisolated static func buffer(seconds: Double, _ fill: (Int, UnsafeMutablePointer<Float>, UnsafeMutablePointer<Float>) -> Void) -> AVAudioPCMBuffer? {
@@ -80,52 +96,47 @@ final class WelcomeScore {
     return buffer
   }
 
-  nonisolated static func make(_ sound: Sound) -> AVAudioPCMBuffer? {
+  /// How many of it there are: every touch is the next note of one tune.
+  nonisolated static func ways(of sound: Sound) -> Int {
     switch sound {
-    // A chord that opens, and is gone.
-    case .hello: return notes([(0, 57), (0.09, 64), (0.18, 69), (0.3, 73), (0.44, 76)], seconds: 3.2, level: 0.075, decay: 1.5)
-    case .shimmer: return notes([(0, 81), (0.05, 85), (0.10, 88), (0.16, 93)], seconds: 1.6, level: 0.05, decay: 3)
-    case .pop:
-      return buffer(seconds: 0.22) { count, left, right in
-        var phase = 0.0
-        for frame in 0..<count {
-          let time = Double(frame) / rate
-          phase += 2 * .pi * (260 + 420 * (1 - exp(-time * 38))) / rate
-          let value = Float(sin(phase) * exp(-time * 26) * min(1, time / 0.002) * 0.34)
-          left[frame] = value
-          right[frame] = value
-        }
-      }
-    case .latch, .thud:
-      let isSoft = sound == .thud
-      return buffer(seconds: 0.3) { count, left, right in
-        var seed: UInt64 = 88_172_645_463_325_252, low = 0.0
-        for frame in 0..<count {
-          let time = Double(frame) / rate
-          seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17
-          low += ((Double(seed & 0xFFFF) / 32_768 - 1) - low) * (isSoft ? 0.08 : 0.35)
-          let click = low * exp(-time * (isSoft ? 60 : 150)) * 0.3
-          let body = sin(2 * .pi * (isSoft ? 92 : 420) * time) * exp(-time * (isSoft ? 24 : 55)) * (isSoft ? 0.34 : 0.16)
-          let value = Float((click + body) * min(1, time / 0.001))
-          left[frame] = value
-          right[frame] = value
-        }
-      }
+    case .touch: return WelcomeCelesta.motif.count * touches
+    case .pop: return WelcomeCelesta.tune.count
+    case .latch, .shimmer: return 2
+    case .thud, .finale: return 1
     }
   }
 
-  private nonisolated static func notes(_ notes: [(at: Double, note: Double)], seconds: Double, level: Double, decay: Double) -> AVAudioPCMBuffer? {
+  nonisolated static func make(_ sound: Sound, _ way: Int = 0) -> AVAudioPCMBuffer? {
+    typealias Note = WelcomeCelesta.Note
+    switch sound {
+    // Softer than a press, and by itself: across the three it is the motif.
+    case .touch:
+      return celesta(0.9, way) { $0.play([Note(0, WelcomeCelesta.motif[way % WelcomeCelesta.motif.count])], loud: 0.1) }
+    case .pop:
+      let degree = WelcomeCelesta.tune[way % WelcomeCelesta.tune.count]
+      return celesta(0.8, way) { $0.play([Note(0, degree > 8 ? 5 : 3, 0.3), Note(0.055, degree)], loud: 0.17) }
+    // Up a fourth, or a third: on to the next thing.
+    case .latch:
+      return celesta(1.1, way) { $0.play(way == 0 ? [Note(0, 5, 0.75), Note(0.13, 8)] : [Note(0, 8, 0.75), Note(0.13, 10)], loud: 0.16) }
+    case .shimmer:
+      let phrase = way == 0
+        ? [Note(0, 5, 0.7), Note(0.09, 8, 0.8), Note(0.18, 10, 0.85), Note(0.3, 12), Note(0.36, 13, 0.45), Note(0.44, 15)]
+        : [Note(0, 3, 0.7), Note(0.09, 5, 0.75), Note(0.18, 8, 0.85), Note(0.27, 10, 0.9), Note(0.4, 12, 0.6), Note(0.48, 15)]
+      return celesta(2, way) { $0.play(phrase, loud: 0.14) }
+    // Down, and not home: it did not come off.
+    case .thud:
+      return celesta(1, way) { $0.play([Note(0, 10, 0.7), Note(0.17, 9, 0.8)], loud: 0.12) }
+    case .finale:
+      return celesta(last, way) { $0.end() }
+    }
+  }
+
+  private nonisolated static func celesta(_ seconds: Double, _ way: Int, _ play: (inout WelcomeCelesta) -> Void) -> AVAudioPCMBuffer? {
     buffer(seconds: seconds) { count, left, right in
-      for (index, one) in notes.enumerated() {
-        let hertz = 440 * pow(2, (one.note - 69) / 12), start = Int(one.at * rate), pan = 0.3 + 0.4 * Double(index % 2)
-        for frame in start..<count {
-          let time = Double(frame - start) / rate
-          let tone = sin(2 * .pi * hertz * time) + 0.22 * sin(4 * .pi * hertz * time) + 0.06 * sin(6 * .pi * hertz * time)
-          let value = tone * exp(-time * decay) * min(1, time / 0.012) * min(1, Double(count - frame) / 4_000) * level
-          left[frame] += Float(value * (1 - pan) * 2)
-          right[frame] += Float(value * pan * 2)
-        }
-      }
+      let seed = 88_172_645_463_325_252 &+ UInt64(way) &* 6_364_136_223_846_793_005 &+ UInt64(count)
+      var celesta = WelcomeCelesta(left: left, right: right, count: count, rate: rate, chance: WelcomeSamples.Chance(state: seed))
+      play(&celesta)
+      celesta.settle(over: seconds / 8)
     }
   }
 
