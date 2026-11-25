@@ -84,7 +84,7 @@ final class Lesson: ObservableObject {
 
   private func go(to step: Step) {
     going?.cancel()
-    score.play(step == .end ? .hello : .latch)
+    score.play(step == .end ? .finale : .latch)
     before = step == .scan ? files.flatMap { NSImage(contentsOf: $0.recipe) } : nil
     withAnimation(Motion.move) {
       self.step = step

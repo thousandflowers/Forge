@@ -4,35 +4,29 @@ import AVFoundation
 /// happens. Each is worked out here; nothing recorded is in the app.
 @MainActor
 final class WelcomeScore {
-  enum Sound: CaseIterable { case hello, pop, latch, shimmer, thud }
+  enum Sound: CaseIterable { case pop, latch, shimmer, thud, finale }
 
   nonisolated static let rate = 44_100.0
   private let engine = AVAudioEngine()
   private let effects = [AVAudioPlayerNode(), AVAudioPlayerNode(), AVAudioPlayerNode()]
   private let sample = AVAudioPlayerNode()
-  private let room = AVAudioUnitReverb()
   private var sounds: [Sound: [AVAudioPCMBuffer]] = [:]
   private var turn = 0
   private var said: [Sound: Int] = [:]
   private var isRunning = false
+  private var ending: Task<Void, Never>?
 
   var isOn = true { didSet { engine.mainMixerNode.outputVolume = isOn ? 1 : 0 } }
 
   /// A Mac with nothing to play on has a quiet welcome.
   func begin() async {
+    ending?.cancel()
     guard !isRunning else { return }
     let made = await Task.detached(priority: .userInitiated) { Made(Sound.allCases.map { sound in (sound, (0..<Self.ways(of: sound)).compactMap { Self.make(sound, $0) }) }) }.value
     guard let format = AVAudioFormat(standardFormatWithSampleRate: Self.rate, channels: 2), !isRunning else { return }
     for (sound, buffers) in made.sounds { sounds[sound] = buffers }
     for node in effects + [sample] { engine.attach(node) }
-    engine.attach(room)
-    room.loadFactoryPreset(.mediumRoom)
-    room.wetDryMix = 18
-    let mix = AVAudioMixerNode()
-    engine.attach(mix)
-    for node in effects { engine.connect(node, to: mix, format: format) }
-    engine.connect(mix, to: room, format: format)
-    engine.connect(room, to: engine.mainMixerNode, format: format)
+    for node in effects { engine.connect(node, to: engine.mainMixerNode, format: format) }
     engine.connect(sample, to: engine.mainMixerNode, format: format)
     engine.mainMixerNode.outputVolume = isOn ? 1 : 0
     do { try engine.start() } catch { return }
@@ -61,9 +55,18 @@ final class WelcomeScore {
 
   func end() {
     guard isRunning else { return }
-    engine.stop()
-    isRunning = false
+    hush()
+    // The last of it is heard, and not cut short by whoever is done.
+    ending = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: UInt64(Self.last * 1_000_000_000))
+      guard !Task.isCancelled, let self else { return }
+      engine.stop()
+      isRunning = false
+    }
   }
+
+  /// How long the finale is.
+  private nonisolated static let last = 5.2
 
   // MARK: - Making them
 
@@ -83,61 +86,43 @@ final class WelcomeScore {
     return buffer
   }
 
-  /// How many of it there are: nothing heard twice in a row is the same.
+  /// How many of it there are: every touch is the next note of one tune.
   nonisolated static func ways(of sound: Sound) -> Int {
     switch sound {
-    case .pop: return 7
-    case .latch, .thud: return 3
-    case .shimmer: return 3
-    case .hello: return 1
+    case .pop: return WelcomeCelesta.tune.count
+    case .latch, .shimmer: return 2
+    case .thud, .finale: return 1
     }
   }
 
   nonisolated static func make(_ sound: Sound, _ way: Int = 0) -> AVAudioPCMBuffer? {
+    typealias Note = WelcomeCelesta.Note
     switch sound {
-    // Up once, up again from higher, and a burst at the top.
-    case .hello:
-      return chimes(2.6, way) { chimes in
-        chimes.run(6, from: 0, at: 0, over: 0.36, loud: 0.05, fade: 4)
-        chimes.run(8, from: 3, at: 0.4, over: 0.42, loud: 0.055, fade: 3.2)
-        chimes.dust(50, from: 0.1, over: 0.8, loud: 0.022)
-        chimes.dust(110, from: 0.8, over: 1.3, loud: 0.038)
-      }
-    // A fingertip, and a giggle.
     case .pop:
-      return chimes(0.9, way) { chimes in
-        chimes.run(3, from: 3 + way % 4, at: 0, over: 0.15, loud: 0.07, fade: 8)
-        chimes.dust(22, from: 0.03, over: 0.4, loud: 0.034)
-      }
+      let degree = WelcomeCelesta.tune[way % WelcomeCelesta.tune.count]
+      return celesta(0.8, way) { $0.play([Note(0, degree > 8 ? 5 : 3, 0.3), Note(0.055, degree)], loud: 0.17) }
+    // Up a fourth, or a third: on to the next thing.
     case .latch:
-      return chimes(0.9, way) { chimes in
-        chimes.run(2, from: 3 + way, at: 0, over: 0.16, loud: 0.06, fade: 7)
-        chimes.dust(12, from: 0.05, over: 0.4, loud: 0.024)
-      }
-    // A wand.
+      return celesta(1.1, way) { $0.play(way == 0 ? [Note(0, 5, 0.75), Note(0.13, 8)] : [Note(0, 8, 0.75), Note(0.13, 10)], loud: 0.16) }
     case .shimmer:
-      return chimes(1.9, way) { chimes in
-        chimes.run(8, from: 1 + way, at: 0, over: 0.4, loud: 0.06, fade: 4.6)
-        chimes.dust(110, from: 0.04, over: 1.2, loud: 0.04)
-      }
-    // Down two, and held: it did not come off.
+      let phrase = way == 0
+        ? [Note(0, 5, 0.7), Note(0.09, 8, 0.8), Note(0.18, 10, 0.85), Note(0.3, 12), Note(0.36, 13, 0.45), Note(0.44, 15)]
+        : [Note(0, 3, 0.7), Note(0.09, 5, 0.75), Note(0.18, 8, 0.85), Note(0.27, 10, 0.9), Note(0.4, 12, 0.6), Note(0.48, 15)]
+      return celesta(2, way) { $0.play(phrase, loud: 0.14) }
+    // Down, and not home: it did not come off.
     case .thud:
-      return chimes(0.6, way) { chimes in
-        chimes.run(2, from: 4, by: -1, at: 0, over: 0.2, loud: 0.07, fade: 14)
-      }
+      return celesta(1, way) { $0.play([Note(0, 10, 0.7), Note(0.17, 9, 0.8)], loud: 0.12) }
+    case .finale:
+      return celesta(last, way) { $0.end() }
     }
   }
 
-  private nonisolated static func chimes(_ seconds: Double, _ way: Int, _ ring: (inout WelcomeChimes) -> Void) -> AVAudioPCMBuffer? {
+  private nonisolated static func celesta(_ seconds: Double, _ way: Int, _ play: (inout WelcomeCelesta) -> Void) -> AVAudioPCMBuffer? {
     buffer(seconds: seconds) { count, left, right in
       let seed = 88_172_645_463_325_252 &+ UInt64(way) &* 6_364_136_223_846_793_005 &+ UInt64(count)
-      var chimes = WelcomeChimes(left: left, right: right, count: count, rate: rate, chance: WelcomeSamples.Chance(state: seed))
-      ring(&chimes)
-      // Let go of, rather than cut off.
-      for frame in max(0, count - 4_000)..<count {
-        left[frame] *= Float(count - frame) / 4_000
-        right[frame] *= Float(count - frame) / 4_000
-      }
+      var celesta = WelcomeCelesta(left: left, right: right, count: count, rate: rate, chance: WelcomeSamples.Chance(state: seed))
+      play(&celesta)
+      celesta.settle(over: seconds / 8)
     }
   }
 
