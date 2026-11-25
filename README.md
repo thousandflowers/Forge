@@ -1,175 +1,138 @@
 <div align="center">
 
-<img src="docs/icon.png" alt="Forge" width="168">
+<img src="docs/icon.png" alt="Forge" width="148">
 
 # Forge
 
-**Batch file conversion for macOS. Photos, video, audio and PDFs, converted by the frameworks already on your Mac.**
+**Rename a file, and it becomes what you called it.**<br>
+A free, open source file converter for macOS.
 
-<img src="docs/screens/demo.gif" alt="Forge: the Convert, Presets, Gallery and Capabilities screens" width="820">
-
-Drop in a folder of photos, a video, a stack of PDFs. Forge asks what they should become, in the terms of what they are, and converts them in parallel without loading them all into memory. It is one binary that is both a Mac app and a command line tool, it works with Core Image, AVFoundation, PDFKit and Vision, and it asks macOS what this particular machine can read and write — so each file is offered only what that file can become.
+[Download](https://github.com/thousandflowers/Forge/releases/latest) · [What it does](#what-it-does-to-a-file) · [Command line](#command-line) · [Build it](#build-it-yourself)
 
 [![Build and Test](https://github.com/thousandflowers/Forge/actions/workflows/build.yml/badge.svg)](https://github.com/thousandflowers/Forge/actions/workflows/build.yml)
-[![Swift 5.9](https://img.shields.io/badge/Swift-5.9-orange.svg)](https://swift.org)
 [![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue.svg)](https://developer.apple.com/macos)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-> Alpha. It works, it is tested, and it is still changing week to week.
-
 </div>
 
-## Drop the files, and answer a question only when there is one
+Photos, videos, recordings, documents, spreadsheets, 3D models, subtitles, fonts. Forge converts them on your Mac, with the frameworks macOS already has. Your files never leave it.
 
-The Convert screen is a drop zone, and so is the Dock icon: files dropped on it, or opened with **Open With › Forge** in Finder, land on the same screen. The first time, Forge asks what the files should become. After that it mostly does not ask at all: **drop a folder onto the preset you chose a minute ago and it just runs.**
+> Alpha. It works, it is tested, and it is still changing week to week.
 
-Every conversion is read as five facts — is something being thrown away, did you ask for that yourself, is anything still undefined, does this make a different kind of thing or more files than it was given, does it touch the originals — and those five decide between running it, asking once, and the confirmation that has always guarded your originals. A size you typed into a filename counts as your own answer, so `holiday_10MB.jpg` runs without a word. The same ceiling arriving from a preset does not: that gets one sober popup which converts a single representative file into a scratch folder and shows you the before and the after, measured rather than guessed.
+## Say it in the name
 
-When it does ask, it asks the right question for the files in hand:
+Choose a folder to watch, and rename a file in it:
 
-- a **photo** gets format, size, quality, a look, and reading the text out of it
-- a **video** gets format, resolution, codec, frame export and a transcript
-- an **audio file** gets format, codec and a transcript
-- a **PDF** gets format, page size, quality, a filter, and a voice to read it aloud
-- a **CSV or JSON** gets one thing only, another data format, because that is all its processor accepts
-
-A control that would be ignored is not shown. If it is on screen, something honours it.
-
-<img src="docs/screens/capabilities.png" alt="The Capabilities screen" width="820">
-
-## Presets are a starting point, not a mode
-
-<img src="docs/screens/presets.png" alt="The Presets screen, one card per preset" width="820">
-
-Pick a preset in the sheet and its settings fill in the fields below. Change any field and the preset lets go, because from that point the fields are the truth. Leave it alone and the preset runs exactly as saved, which matters when it holds something the sheet has no control for.
-
-A preset can also **ask a question instead of deciding one**. Give it a parameter, say a maximum size, and Forge asks for the number when you convert rather than baking it in. The answer can go into the filename: name your files `{name}_{maxsize}` and a holiday photo comes out as `holiday_10MB.jpg`.
-
-Choosing **more than one output format** does not replace the first with the second. It makes both, one copy per format, each with the rest of the chain applied.
-
-## Building a preset is drawing its flow
-
-The editor takes the whole window, the way Shortcuts does. At the top, **Files that come in**: which kind of file this preset takes — images, videos, audio, documents, data files, 3D models, subtitles, fonts, or a custom list of exact formats — and what starts it. A preset runs when a file is dropped on Forge or lands in a watched folder; give it a word and it also runs when you **rename a file to carry that word** — `foto.jpg` becomes `foto_web.jpg` in a watched folder and the `web` preset takes it, whatever the folder's own preset is. An **Only if** test on the whole preset leaves alone every file that fails it, and history says so.
-
-Under that, the chain: blocks dragged in from a library on the right, or clicked. Steps that change the file (crop, resize, filter, read the text, quality, size ceiling, codec, metadata), questions the preset asks (once per batch, or read from the file's own name), what it comes out as, what it is called.
-
-And forks. **If** tests the file — its name, folder, kind, extension, size, sides — and opens two arms, one for each answer. **Split into copies** opens as many arms as you want, each its own path with its own steps and its own format, the outputs named after the arm: `foto_web.jpg`, `foto_archivio.png`. Arms stay apart until you put a **Join** after them, where every copy carries on together, or a **Merge**, where the copies become one PDF. Every fork is decided for each file before anything runs, so the processors only ever see a straight chain.
-
-## The magic conversions
-
-Some conversions are not settings, they are things Forge works out from what you asked:
-
-| You do this | Forge does this |
+| You rename it | You get |
 | --- | --- |
-| Rename a file `holiday_10MB.jpg` | Compresses it under ten megabytes, keeping the best quality that fits |
-| Convert a video to JPEG or PNG | Exports its frames, twelve a second, into a folder named after the clip |
-| Convert a video to GIF | Turns the clip into an animated GIF, and a GIF back into video |
-| Convert a recording to `.txt`, `.rtf`, `.docx` or `.pdf` | Transcribes it on device, into that format |
-| Convert a scan or a photo to text | Reads it with Vision, on device |
-| Convert a document to `.m4a` or `.wav` | Reads it aloud with a system voice |
-| Convert a PDF to an image | Rasterises every page, not just the first |
+| `Letter.md` → `Letter.pdf` | A PDF |
+| `clip.mov` → `clip.gif` | An animated GIF |
+| `holiday.jpg` → `holiday_2MB.jpg` | The same photo, under 2 MB |
+| `holiday.jpg` → `holiday_800px_privacy.jpg` | 800 pixels wide, without the place it was taken |
+| `sheet.jpg` → `sheet_scan.jpg` | The sheet in the photo, straightened and lit |
+| `talk.m4a` → `talk.txt` | What is said in it |
+| `anything_ask.jpg` | A small menu beside the pointer asks what you want |
 
-The size ceiling is a promise about the result, not a setting handed to an encoder. Forge writes the file, measures it, and writes it again lower until it fits, spending quality first and pixels only after that runs out. If it truly cannot reach your number it says so, instead of handing back something unrecognisable that happens to be small.
+Turn on **Only when renamed** and every other file in the folder is left alone, so a whole Desktop can be watched. Your own presets can have a word too: give one the word `web`, and `photo_web.jpg` runs it.
 
-## Capabilities, and what to do about the gaps
+## Or any other way you like
 
-The Capabilities screen is computed at run time, so it describes your Mac rather than a claim written months ago. Search it, filter it by status, and ask it to **look at the files you actually have**: it counts the kinds of file in your own folders and puts the capabilities that would help you at the top. Only filenames are read, never contents, and only when you press the button.
+- **Drop it** on the window, on the Dock icon or on the menu bar.
+- **Drag it with a key held down**, and a menu opens over the file with what it can become. It comes out of the notch too, on a Mac that has one.
+- **Right-click it** in the Finder, under Services.
+- **Let a folder do it.** Whatever lands in a watched folder is converted as it arrives.
+- **Call it** from Shortcuts, from the command line, or from an assistant.
 
-Every conversion above is Apple's frameworks and nothing else: no ImageMagick, no FFmpeg, no LibreOffice, and nothing to install before Forge is useful. For the handful of jobs macOS cannot do alone, Forge names the tool that can and offers to install it with **Homebrew**: the exact command is shown once before it runs, its output is live on the card, and the tool is your Mac's rather than Forge's.
+Dragging, the notch and the conversions nobody asks for are off until you turn them on in Settings.
 
-What stays true: **the core converts with Apple's frameworks and nothing else**, no extra tool is needed for any of it, and no third-party binary is bundled inside the `.app` or downloaded by Forge.
+## The window
 
-Install `cwebp`, `pandoc`, `ffmpeg` or `tesseract` and the formats they add appear where a processor will really do the writing: WebP out of the image path, EPUB and the office formats out of pandoc, the containers macOS cannot write out of ffmpeg. The cards say which of the two facts is true for each — whether the tool is here, and whether Forge calls it — because those are different things.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screens/convert-dark.png">
+  <img src="docs/screens/convert-light.png" alt="A picture dropped on Forge, with the formats it can become and what can be done to it" width="820">
+</picture>
 
-## How it compares
+Drop some files, and Forge asks what they should become: a photo is asked about its size and quality, a video about its codec, a recording about its words. A file is offered only what it can become on this Mac, and a control that would be ignored is not shown. Files of different kinds go through a preset together.
 
-Forge is not trying to out-encode a specialist. HandBrake has spent twenty years on video and will beat Forge at video; ImageOptim squeezes PNGs harder than ImageIO does. What Forge has is breadth, nothing to install first, and presets that travel.
+**A size is a promise, not a setting.** Ask for 2 MB and Forge writes the file, measures it, and writes it again until it fits, giving up quality first and pixels only after that. If it cannot get there, it says so.
 
-| | Forge | Permute | HandBrake | ImageOptim |
-| --- | --- | --- | --- | --- |
-| What it converts | images, video, audio, PDF, data, 3D, subtitles | images, video, audio | video, and the audio inside it | images |
-| Where the converters come from | macOS itself, plus optional Homebrew tools you ask for | bundled with the app | bundled with the app | bundled with the app |
-| What it offers is read from your Mac at run time | yes | no | no | no |
-| Presets you can export, import and browse in a gallery | yes | presets, kept local | presets, importable files | no |
-| Strips location and device metadata on conversion | yes, three levels | no | no | keeps or strips, all or nothing |
-| Command line | the same binary | no | separate `HandBrakeCLI` | no official one |
-| Licence | MIT | paid, closed | GPL-2.0 | GPL-2.0 |
+## What it does to a file
 
+Forty-five things, each one a block in a preset, a word in a name, and `--do` on the command line.
 
+| | |
+| --- | --- |
+| **Pictures** | `_nobg` `_scan` `_enhance` `_upscale2x` `_crop1x1` `_blurbg` `_gray` `_round40` `_border40` `_mark(©)` `_grid3x3` `_layers` |
+| **Videos** | `_trim10-45` `_crop16x9` `_speed2x` `_slowmo2x` `_mute` `_reverse` `_loop3` `_1080p` `_fps30` `_frames5s` `_at12s` `_splitchapters` |
+| **Sound** | `_voice` `_normalize` `_nosilence` `_fade3s` `_pitch+2` `_mono` `_wave` |
+| **PDF** | `_lighter` `_pages2-5` `_nopages1` `_splitpages` `_2up` `_numbers` `_tables` `_images` `_dpi300` `_askpassword` `_unlock` |
+| **The rest** | `_min` and `_pretty` for JSON, XML, CSS and JavaScript, `_sha256` and `_base64` for anything |
 
-## A gallery you can search
+Words add up: `clip_trim10-45_mute_720p.mp4` does all three. Some need a tool that macOS does not come with, and Forge says which one.
 
-<img src="docs/screens/gallery.png" alt="The Gallery screen" width="820">
+## Presets
 
-Presets other people published, searchable by name, by author, by topic, and by what they actually do, so typing `jpeg` finds the ones that write JPEG rather than only the ones that say so. Filter by type, by output size, or by topic. Every card hands you that one preset as its own file, and your own presets do the same.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screens/presets-dark.png">
+  <img src="docs/screens/presets-light.png" alt="The Presets screen" width="820">
+</picture>
 
-A preset is data, not code. It is a name and a list of actions Forge already knows how to run, so installing one cannot make the app do anything it could not already do.
+A preset is a chain of blocks, drawn the way Shortcuts draws one. It can ask a question each time it runs, write several formats at once, take different ways for different files with **If**, and split into copies that are joined again later, or merged into one PDF.
 
-## Names that say what the file turned out to be
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screens/editor-dark.png">
+  <img src="docs/screens/editor-light.png" alt="A preset that splits a photo into a copy for the web and one for the archive" width="820">
+</picture>
 
-A template names the files a conversion writes, and the field shows you what they will be called as you type it:
+A preset is data, not code: a name and a list of things Forge already knows how to do. Installing somebody else's cannot make the app do anything new.
 
-`{name}` `{parent}` `{date}` or `{date:yyyy-MM-dd}` `{counter}` or `{counter:03}` `{format}` `{quality}` `{codec}` `{width}` `{height}` `{dimensions}` `{size}`
+## The Store
 
-The last few are only true once the file exists, so they are filled in afterwards: `{name}_{dimensions}` gives `holiday_400x300.jpeg`, measured from the file that was actually written. A token Forge does not recognise is left where it is, because a typo you can see is one you can fix.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screens/store-dark.png">
+  <img src="docs/screens/store-light.png" alt="The Store, with presets to install" width="820">
+</picture>
 
-## General preferences, and overriding them
+Ready-made presets, one for each thing Forge does, and the presets other people have published.
 
-Settings also chooses the window's appearance — follow the Mac, light, or dark — and every sheet lets the window show through.
+**Tools** lists what your Mac can do, read from your Mac at that moment, and what is missing. Nothing else has to be installed for the core to work. For the rest (ffmpeg, pandoc, WebP, LibreOffice, calibre, DuckDB, Blender, Typst), press Download: Forge fetches the build it was tried with from whoever makes it, checks its fingerprint before using it, and keeps it in its own folder. No Homebrew, no password. Nothing is fetched until you press.
 
-Settings holds what resizing means (fit inside, fill and crop, stretch, pad out), the quality to use when a preset names none, how much of the metadata survives, and how new files are named. Each one is what happens when nothing else says otherwise. A preset overrides the general preference, a batch overrides the preset, and what you write into a filename overrides all of it.
-
-## What leaves with your files
-
-A photograph carries where it was taken, which camera took it, and often the serial number of the lens. A PDF carries who wrote it. None of that is the picture or the document, and all of it travels when you send the file to somebody.
-
-Three levels — keep everything, remove the location, remove what identifies a person, a device or a moment — available from Settings, from a preset, from a batch, or by naming a file `contract_privacy.pdf`. They combine: `holiday_10MB_privacy.jpg` compresses **and** strips.
-
-What is never removed, at any level, is the colour profile and the orientation. Those are not information about you: without them the photograph arrives on its side, in the wrong colours.
-
-Separately, and never automatically: Forge can look through a picture with Vision and Natural Language and **suggest** faces and names to cover up. It misses things — a face turned away, handwriting, a name in a reflection — so every box starts unticked, nothing is covered until you tick it, and the copy is written somewhere you choose. It is assistance, not anonymisation, and the app says so where you cannot miss it.
-
-## History you can run again
-
-A row in History knows what it did, not just which preset did it, so it can be **saved as a preset** — the same thing said the other way round, indistinguishable from one you made by hand — or run again on files you pick now, or run again on the same files. That last one is careful: an original that has moved is named rather than skipped in silence, and a run that replaced its original goes through the replace confirmation again rather than around it.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screens/tools-dark.png">
+  <img src="docs/screens/tools-light.png" alt="The Tools shelf of the Store, with what can be added to this Mac" width="820">
+</picture>
 
 ## Careful with your files
 
-- Conversions are written to a scratch file and moved into place, so nothing is ever read and written at the same path.
-- Output names never collide silently. Two files heading for one name both arrive.
-- Converting in place keeps a copy of the original in Backups, unless you turn that off.
-- Replacing or moving originals asks first, and says how many files and whether anything can be got back.
-- A watched folder ignores the files Forge itself writes, so pointing the output back at the input does not start a loop.
-- A cancel reaches the work, not just the queue: the scratch file goes with it and the original is untouched. One file can be stopped without stopping its siblings.
+- A conversion is written to one side and moved into place when it is whole.
+- Two files heading for the same name both arrive.
+- Replacing originals asks first, and keeps a backup unless you turn that off.
+- A file that would come out heavier is not handed over as a lighter one.
+- Every conversion is in **History**, where it can be undone, run again or saved as a preset.
 
-## It does not take the Mac down with it
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screens/history-dark.png">
+  <img src="docs/screens/history-light.png" alt="The History screen" width="820">
+</picture>
 
-How much runs at once is worked out per kind of work, from the cores, the memory and whether this is Apple silicon. Two videos at a time is one too many — the media engine is a single piece of hardware and asking it for two only makes heat — while two images at a time is far too few on a machine with ten cores, and images are bounded by memory rather than cores, because a decoded photograph is a quarter of a gigabyte.
+## What leaves with your files
 
-It backs off while a batch is running. A warm Mac, Low Power Mode or memory pressure shrinks the limits, and the screen says so rather than just getting slower. **Pause** stops new files starting and lets the ones in flight finish; a native encode cannot be frozen halfway, and a button claiming otherwise would be lying.
+A photograph carries where it was taken, and a PDF carries who wrote it. Forge can keep everything, remove the place, or remove whatever identifies a person, a device or a moment: in Settings, in a preset, for one batch, or with `_privacy` in a name. The color profile and the orientation always stay, because without them the picture comes out wrong.
+
+Forge can also suggest faces and names to cover up. It misses things, so every box starts unticked and nothing is covered until you say so. It is help, not anonymization.
 
 ## Install
 
-### Download
+Take the `.dmg` from [Releases](https://github.com/thousandflowers/Forge/releases/latest), open it, and drag Forge to Applications. It runs on Apple silicon and Intel, on macOS 13 Ventura or later.
 
-Grab the latest `.dmg` from the [Releases page](https://github.com/thousandflowers/Forge/releases), open it, drag Forge to Applications. Universal build, Apple silicon and Intel, macOS 13 Ventura or later.
+It is not notarized, so macOS stops the first launch:
 
-The build is not notarized, so macOS stops the first launch. On macOS 15 or later, open Forge once, dismiss the warning, then go to System Settings, Privacy & Security, and click **Open Anyway**. On macOS 13 and 14, right click the app and choose Open.
-
-### From source
-
-```bash
-git clone https://github.com/thousandflowers/Forge.git
-cd Forge
-./Scripts/build_app.sh      # produces build/Forge.app
-open build/Forge.app
-```
-
-`swift build` on its own produces a bare executable with no bundle, and macOS treats that as a background agent: it runs, but no window ever appears. Use the script, which assembles the real app bundle.
+- **macOS 15 or later:** open Forge once, close the warning, then go to System Settings, Privacy & Security, and press **Open Anyway**.
+- **macOS 13 and 14:** right-click the app and choose **Open**.
 
 ## Command line
 
-The same binary is also `forge`:
+The app is also `forge`:
 
 ```bash
 ln -s /Applications/Forge.app/Contents/MacOS/Forge /usr/local/bin/forge
@@ -177,65 +140,54 @@ ln -s /Applications/Forge.app/Contents/MacOS/Forge /usr/local/bin/forge
 
 ```bash
 forge convert *.png --to jpeg --quality 80 --out ./web
+forge convert clip.mov --do trim10-45 --do mute --out ./out
 forge convert photo.heic --preset "Web JPEG" --out ~/Desktop
-forge convert *.png --to jpeg --overwrite          # keeps a backup
-forge watch ~/Desktop/incoming --preset "Web JPEG" --out ~/Desktop/web
-
-forge presets              # the same presets the app shows
-forge formats              # what this Mac can read and write
+forge join one.pdf two.pdf --out ./out
+forge watch ~/Desktop --preset "Web JPEG" --out ~/Desktop --only-renamed
+forge formats
 ```
 
-It reads the presets you save in the app, writes to the same history, and exits non zero if any file failed, so it drops straight into a script. Converted paths go to stdout, problems to stderr:
+It uses the presets you made in the app, writes to the same History, and exits non-zero if a file failed. Converted paths go to stdout, problems to stderr.
+
+`forge mcp` lets an assistant convert, over the Model Context Protocol. It works on copies: an original is never replaced from there.
+
+## Build it yourself
 
 ```bash
-forge convert *.heic --to jpeg --out ./web > converted.txt
+git clone https://github.com/thousandflowers/Forge.git
+cd Forge
+./Scripts/build_app.sh      # makes build/Forge.app
+open build/Forge.app
 ```
 
-Completions come from the tool itself: `forge --generate-completion-script zsh` (or `bash`, or `fish`).
+`swift build` alone makes an executable without a bundle, and macOS shows no window for it. `swift test` runs everything, in a folder of its own, and never touches your data.
 
-## Watched folders
-
-Open the Folders tab, add a folder, give it a preset. Anything dropped in is converted on arrival, through FSEvents, with the same care about backups and names as everything else.
-
-## How it fits together
+<details>
+<summary>How it fits together</summary>
 
 ```
-SwiftUI  ──▶  ProcessingCoordinator  ──▶  Image / Media / Document / Data / Model processors
-                     │                     (Core Image · AVFoundation · PDFKit · Vision · ModelIO)
-              output planning              MonitoredFolderWatcher (FSEvents)
-              scratch file, atomic move    PersistenceManager (JSON in Application Support)
+SwiftUI  ──▶  ProcessingCoordinator  ──▶  one processor for each kind of file
+                     │                     (Core Image, AVFoundation, PDFKit, Vision, ModelIO)
+              names and places             MonitoredFolderWatcher (FSEvents)
+              write aside, then move       PersistenceManager (JSON in Application Support)
 ```
 
-- **FormatCatalog** asks ImageIO and AVFoundation what this machine can read and write. Nothing is offered that cannot be delivered.
-- **ConvertKind** decides which controls a dropped file is worth being shown, taken from what its processor honours rather than from what sounds plausible.
-- **ProcessingCoordinator** picks the processor, fills in the general preferences the preset left unsaid, runs the chain once per requested format, names the output from its template, and keeps every write off files you already have.
-- **ExternalTools** notices the converters your Mac already has, and installs one when you ask.
-- **PersistenceManager** stores presets, history and folders as plain JSON.
+- **FormatCatalog** asks the Mac what it can read and write.
+- **ConvertKind** decides what a file is worth being asked.
+- **ProcessingCoordinator** picks the processor, runs the chain, and names the result.
+- **Toolbox** fetches a tool when you ask for it.
 
-## Development
+</details>
 
-```bash
-swift test                         # the whole suite
-./Scripts/build_app.sh             # build build/Forge.app
-./Scripts/make_dmg.sh              # package it as a DMG
-```
+## Not here yet
 
-Tests build their fixtures at run time and keep everything in a scratch directory, so running them never touches the data the app keeps for you.
+- Notarization.
+- Translating subtitles. Doing it offline needs more than macOS 13 has, and Forge will not send your files to a server to do it.
 
-## What is not here yet
-
-- Translating subtitles into another language. macOS 13 has no offline translation API, and sending your files to somebody's server is not something this app is going to start doing quietly.
-- Redaction suggests; it never decides. There is no mode that covers faces without you looking at each one, and there will not be.
-- Signing and notarization.
-
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the longer list, including what Forge will not do and why.
+[The roadmap](docs/ROADMAP.md) has the longer list, with what Forge will not do and why.
 
 ## Contributing
 
-Fork, branch, keep `swift test` green, open a PR. Follow the Swift API Design Guidelines, keep memory bounded by streaming rather than loading, use async/await and actors.
-
-## License
+Fork, branch, keep `swift test` green, open a pull request.
 
 MIT. See [LICENSE](LICENSE).
-
-Built with Core Image, AVFoundation, PDFKit, Vision and SwiftUI. Inspired by the original Shift, rebuilt from scratch as a native app.
