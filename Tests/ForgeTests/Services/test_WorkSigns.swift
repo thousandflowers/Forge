@@ -81,6 +81,12 @@ final class WorkSignsTests: BaseTestCase {
     XCTAssertFalse(AppSettings.WorkSign.notch.showsHammer(hasNotch: true))
     XCTAssertFalse(AppSettings.WorkSign.both.showsNotch(hasNotch: false))
     XCTAssertFalse(AppSettings.WorkSign.nowhere.showsHammer(hasNotch: false))
+    XCTAssertEqual(AppSettings.WorkSign.notch.shown(hasNotch: false), .menuBar)
+    XCTAssertEqual(AppSettings.WorkSign.nowhere.shown(hasNotch: false), .nowhere)
+    XCTAssertEqual(AppSettings.WorkSign.both.shown(hasNotch: true), .both)
+    for place in AppSettings.WorkSign.allCases {
+      XCTAssertTrue(AppSettings.WorkSign.choices(hasNotch: false).contains(place.shown(hasNotch: false)), "\(place)")
+    }
     let only = signs(.notch)
     only.hear(.began(UUID(), file))
     XCTAssertEqual(only.hammer, .still)
@@ -146,7 +152,8 @@ final class WorkSignsTests: BaseTestCase {
 
   func test_theChoiceIsKept() throws {
     var settings = AppSettings()
-    XCTAssertEqual(settings.workSign, .menuBar)
+    XCTAssertEqual(settings.workSign, .notch)
+    XCTAssertEqual(try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8)).workSign, .notch, "settings from before there was a choice")
     settings.workSign = .both
     XCTAssertEqual(try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings)).workSign, .both)
   }

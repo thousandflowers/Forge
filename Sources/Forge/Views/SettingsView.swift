@@ -81,11 +81,11 @@ struct SettingsView: View {
       }
       Section("While converting") {
         HStack {
-          Picker("Show it in", selection: $model.settings.workSign) {
-            // A Mac without one has nothing to choose.
-            ForEach(AppSettings.WorkSign.allCases.filter { NotchZone.cutout() != nil || $0 == .nowhere || $0 == .menuBar || $0 == model.settings.workSign }, id: \.self) {
-              Text($0.title).tag($0)
-            }
+          let hasNotch = NotchZone.cutout() != nil
+          Picker("Show it in", selection: Binding(
+            get: { model.settings.workSign.shown(hasNotch: hasNotch) }, set: { model.settings.workSign = $0 }
+          )) {
+            ForEach(AppSettings.WorkSign.choices(hasNotch: hasNotch), id: \.self) { Text($0.title).tag($0) }
           }
           Button("Try It") { model.signs.rehearse() }
             .controlSize(.small)

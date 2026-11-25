@@ -53,10 +53,16 @@ struct AppSettings: Codable, Sendable, Equatable {
   /// Open the notch for a file that is being dragged.
   var notchZone: Bool = false
   /// Where it is seen that something is being converted, and what came of it.
-  var workSign: WorkSign = .menuBar
+  /// In the notch, or in the menu bar of a Mac without one.
+  var workSign: WorkSign = .notch
 
   enum WorkSign: String, Codable, CaseIterable, Sendable {
-    case nowhere, menuBar, notch, both
+    case notch, menuBar, both, nowhere
+
+    /// What there is to choose from, on a Mac with a notch and on one without.
+    static func choices(hasNotch: Bool) -> [WorkSign] { hasNotch ? allCases : [.menuBar, .nowhere] }
+    /// The one of those that it comes to.
+    func shown(hasNotch: Bool) -> WorkSign { hasNotch || self == .nowhere ? self : .menuBar }
 
     var title: String {
       switch self {
