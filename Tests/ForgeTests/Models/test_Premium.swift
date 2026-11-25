@@ -131,7 +131,7 @@ final class PremiumTests: BaseTestCase {
     for word in ["gray", "crop1x1", "round90"] {
       let before = model.history.count
       try FileManager.default.moveItem(at: files.picture, to: files.folder.appendingPathComponent("First light_\(word).png"))
-      for _ in 0..<100 where model.history.count == before { try await Task.sleep(nanoseconds: 100_000_000) }
+      for _ in 0..<5_000 where model.history.count == before { try await Task.sleep(nanoseconds: 2_000_000) }
       XCTAssertEqual(model.history.count, before + 1, word)
       XCTAssertTrue(exists(files.picture), "\(word): \((try? FileManager.default.contentsOfDirectory(atPath: files.folder.path)) ?? [])")
     }
