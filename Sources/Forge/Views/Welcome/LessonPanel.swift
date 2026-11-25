@@ -255,7 +255,7 @@ struct LessonView: View {
     .controlSize(.regular)
     .frame(maxWidth: .infinity)
     .overlay(alignment: .leading) { if isTrying { dots } }
-    .overlay(alignment: .trailing) { if isTrying { sound } }
+    .overlay(alignment: .trailing) { sound }
   }
 
   private var isTrying: Bool { !Self.aside.contains(lesson.step) }
@@ -265,7 +265,9 @@ struct LessonView: View {
   private var sound: some View {
     let name = lesson.isLoud ? "Turn the sound off" : "Turn the sound on"
     return Button { lesson.isLoud.toggle() } label: { Image(systemName: lesson.isLoud ? "speaker.wave.2" : "speaker.slash").frame(width: 18) }
-      .buttonStyle(.plain).foregroundStyle(.secondary)
+      .buttonStyle(.plain)
+      // Where there is something to listen to, and nothing to be heard.
+      .foregroundStyle(lesson.step == .word && !lesson.isLoud ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
       .help(name)
       .accessibilityLabel(Text(name))
   }
