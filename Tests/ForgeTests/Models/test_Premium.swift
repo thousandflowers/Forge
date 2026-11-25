@@ -92,6 +92,18 @@ final class PremiumTests: BaseTestCase {
     }
   }
 
+  /// On while it lasts, and no setting is touched.
+  @MainActor
+  func test_theDragMenuIsOnlyLent() {
+    let model = AppModel(persistence: store)
+    model.settings.dragMenu = false
+    model.lendDragMenu(true)
+    XCTAssertTrue(model.isDragMenuOn)
+    XCTAssertFalse(model.settings.dragMenu)
+    model.lendDragMenu(false)
+    XCTAssertFalse(model.isDragMenuOn)
+  }
+
   /// The sheet is really found in the photo, and comes out upright.
   func test_theRecipeCanBeScanned() async throws {
     let url = path("Recipe.jpg")

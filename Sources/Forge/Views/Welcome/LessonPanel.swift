@@ -210,11 +210,14 @@ struct LessonView: View {
   private var thing: some View {
     switch lesson.step {
     case .hello: LessonFan(size: 42, formats: lesson.formats) { lesson.pop() }
-    case .drag: if let model = lesson.model { DragSwitch(model: model, keys: keys) }
+    case .drag: if let files = lesson.files { HeldFile(file: files.picture, keys: keys) }
     case .end:
-      VStack(spacing: 12) {
+      VStack(spacing: 8) {
         LessonExtras(lesson: lesson)
-        if let model = lesson.model { EndSwitch(model: model) }
+        if let model = lesson.model {
+          EndSwitch(model: model)
+          if lesson.isDragMenuNew { DragSwitch(model: model, keys: keys) }
+        }
       }
     case .scan:
       if let result = lesson.result {
@@ -303,12 +306,35 @@ private struct TypedName: View {
   }
 }
 
+/// The key to hold, and the file to take hold of.
+private struct HeldFile: View {
+  let file: URL
+  let keys: String
+
+  var body: some View {
+    HStack(spacing: 12) {
+      Text(keys)
+        .font(.system(size: 17, weight: .medium))
+        .frame(minWidth: 38, minHeight: 38)
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.7), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+      HStack(spacing: 8) {
+        Image(nsImage: NSWorkspace.shared.icon(forFile: file.path)).resizable().frame(width: 22, height: 22)
+        Text(file.lastPathComponent).font(.system(size: 13, weight: .medium)).lineLimit(1)
+      }
+      .frame(maxWidth: .infinity, minHeight: 38)
+      .background(Color(nsColor: .textBackgroundColor).opacity(0.7), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+    .accessibilityElement()
+    .accessibilityLabel(Text("\(keys) and \(file.lastPathComponent)"))
+  }
+}
+
 private struct DragSwitch: View {
   @ObservedObject var model: AppModel
   let keys: String
 
   var body: some View {
-    Toggle("Menu with \(keys)", isOn: Binding(get: { model.settings.dragMenu }, set: { model.settings.dragMenu = $0; model.saveSettings() }))
+    Toggle("Keep the menu with \(keys)", isOn: Binding(get: { model.settings.dragMenu }, set: { model.settings.dragMenu = $0; model.saveSettings() }))
       .toggleStyle(.switch).controlSize(.small)
       .font(.system(size: 13))
   }

@@ -560,7 +560,7 @@ final class AppModel: ObservableObject {
     dropZone.take = { [weak self] in self?.dragMenu.present($0) }
     notchZone.take = { [weak self] in self?.dragMenu.present($0, outOf: self?.notchZone.here()) }
     dragMenu.notch = settings.notchZone ? notchZone : nil
-    dragMenu.answersKeys = settings.dragMenu
+    dragMenu.answersKeys = isDragMenuOn
     dragMenu.keys = settings.dragMenuKeys
     dragMenu.ignored = Set(settings.dragMenuIgnored)
     dragMenu.convert = { [weak self] file, preset in try await self?.convertInHand(file, with: preset) ?? [] }
@@ -574,7 +574,17 @@ final class AppModel: ObservableObject {
     }
     signs.place = settings.workSign
     notchSign.follow()
-    settings.dragMenu || settings.notchZone ? dragMenu.start() : dragMenu.stop()
+    isDragMenuOn || settings.notchZone ? dragMenu.start() : dragMenu.stop()
+  }
+
+  /// Lent for the lesson: nothing is written down, and nothing is to be put back.
+  private var isDragMenuLent = false
+  var isDragMenuOn: Bool { settings.dragMenu || isDragMenuLent }
+
+  func lendDragMenu(_ isLent: Bool) {
+    guard isDragMenuLent != isLent else { return }
+    isDragMenuLent = isLent
+    startDragMenu()
   }
 
   func suggestions(for files: [ProcessableFile]) -> [RulePreset] {

@@ -85,6 +85,8 @@ final class Lesson: ObservableObject {
   private func go(to step: Step) {
     going?.cancel()
     score.play(step == .end ? .finale : .latch)
+    // From here to the end: somebody may want to drag something else.
+    if step == .drag { lendDragMenu() }
     before = step == .scan ? files.flatMap { NSImage(contentsOf: $0.recipe) } : nil
     withAnimation(Motion.move) {
       self.step = step
@@ -93,6 +95,15 @@ final class Lesson: ObservableObject {
       problem = nil
     }
     began = Date()
+  }
+
+  /// Whether it was off before, and so whether to keep it is a question.
+  @Published private(set) var isDragMenuNew = false
+
+  private func lendDragMenu() {
+    guard let model, !model.isDragMenuOn else { return }
+    isDragMenuNew = true
+    model.lendDragMenu(true)
   }
 
   func showFolder() {
@@ -115,6 +126,8 @@ final class Lesson: ObservableObject {
     going?.cancel()
     watching = nil
     model?.endLesson()
+    model?.lendDragMenu(false)
+    isDragMenuNew = false
     score.end()
     panel?.close()
     panel = nil
