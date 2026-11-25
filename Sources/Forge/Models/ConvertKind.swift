@@ -62,6 +62,9 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
       self = fileType.conforms(to: .audiovisualContent) && !fileType.conforms(to: .audio)
         ? .video
         : fileType.conforms(to: .audio) ? .audio : .document
+    } else if Tidier.language(of: fileType) != nil {
+      // A style sheet becomes nothing else, and can be tidied.
+      self = .document
     } else {
       return nil
     }

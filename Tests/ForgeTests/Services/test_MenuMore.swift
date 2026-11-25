@@ -87,15 +87,22 @@ final class MenuMoreTests: ToolTestCase {
     tiles.isLive = false
     panel.gather(at: NSPoint(x: before.midX, y: y))
     var frames: [NSRect] = [before]
+    // Looked at late, it has moved further in between: what counts is that no
+    // prompt look found it half the way on.
+    var late: Set<Int> = [], seen = Date()
     for _ in 0..<110 {
       try await Task.sleep(nanoseconds: 12_000_000)
-      if panel.frame != frames.last { frames.append(panel.frame) }
+      let wait = Date().timeIntervalSince(seen)
+      seen = Date()
+      guard panel.frame != frames.last else { continue }
+      frames.append(panel.frame)
+      if wait > 0.03 { late.insert(frames.count - 1) }
     }
     XCTAssertGreaterThan(frames.count, 5, "\(frames.map(\.height))")
     XCTAssertEqual(frames.map(\.height), frames.map(\.height).sorted(by: >), "it only grows small")
     XCTAssertEqual(try XCTUnwrap(frames.last).height, AskView.restingHeight, accuracy: 1)
     XCTAssertEqual(try XCTUnwrap(frames.last).midY, y, accuracy: 2)
-    let steps = zip(frames, frames.dropFirst()).map { $0.height - $1.height }
+    let steps = (1..<frames.count).filter { !late.contains($0) }.map { frames[$0 - 1].height - frames[$0].height }
     XCTAssertLessThan(try XCTUnwrap(steps.max()), (before.height - AskView.restingHeight) / 2)
     if case .done = session.state {} else { XCTFail("\(session.state)") }
   }

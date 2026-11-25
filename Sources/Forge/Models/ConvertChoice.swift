@@ -56,6 +56,14 @@ struct ConvertChoice: Equatable {
     return updated
   }
 
+  /// With that done to the files as well, or no longer.
+  func toggling(_ tool: Tool) -> ConvertChoice {
+    var updated = cleared()
+    let chain = draft.actions
+    updated.draft.actions = chain.contains(.tool(tool)) ? chain.filter { $0 != .tool(tool) } : chain.adding(tool)
+    return updated
+  }
+
   /// The chain as the maker left it. Looking without touching keeps the preset.
   func edited(_ chain: RulePreset) -> ConvertChoice {
     var updated = self

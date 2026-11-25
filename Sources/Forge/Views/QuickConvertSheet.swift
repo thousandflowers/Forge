@@ -11,6 +11,7 @@ struct QuickConvertSheet: View {
   @Environment(\.dismiss) private var dismiss
   @ObservedObject private var installer = ToolInstaller.shared
   @State private var showsAllFormats = false
+  @State private var showsAllTools = false
 
   let kinds: Set<ConvertKind>
   /// The files themselves, since what is offered depends on what each one is.
@@ -85,6 +86,7 @@ struct QuickConvertSheet: View {
   private var fields: some View {
     VStack(alignment: .leading, spacing: 16) {
       if let kind { formatCard(for: kind) } else { mixedNote }
+      if kind != nil { toolCard }
       if !presets.isEmpty { presetField }
       if choice.draft.parameters.contains(where: { $0.source == .prompt }) { questions }
       if !choice.steps.isEmpty {
@@ -131,6 +133,33 @@ struct QuickConvertSheet: View {
       }
     }
   }
+
+  /// How many are shown before all of them are asked for.
+  private static let fewTools = 6
+
+  @ViewBuilder private var toolCard: some View {
+    let all = Tool.all(for: sources)
+    let few = Array(all.prefix(Self.fewTools))
+    // What was chosen stays on show once the rest is folded away.
+    let shown = showsAllTools ? all : few + all.dropFirst(Self.fewTools).filter(isChosen)
+    if !all.isEmpty {
+      card(title: "Do this to it", symbol: "wand.and.stars", tint: LibraryEntry.Group.transform.color) {
+        VStack(alignment: .leading, spacing: 10) {
+          FlowLayout(spacing: 6) {
+            ForEach(shown, id: \.word) { tool in
+              Chip(tool.title, selected: isChosen(tool), large: true) { choice = choice.toggling(tool) }
+                .help("\(tool.kind.summary). In a file\u{2019}s name: _\(tool.word)")
+            }
+          }
+          if all.count > few.count {
+            Button(showsAllTools ? "Fewer" : "All \(all.count)…") { showsAllTools.toggle() }.buttonStyle(.link)
+          }
+        }
+      }
+    }
+  }
+
+  private func isChosen(_ tool: Tool) -> Bool { choice.draft.actions.contains(.tool(tool)) }
 
   private func formatChips(_ formats: [OutputFormat]) -> some View {
     FlowLayout(spacing: 6) {
