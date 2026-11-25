@@ -583,7 +583,7 @@ final class BatchViewModel: ObservableObject {
     lastSaving = nil
     skipped = nil
 
-    let existing = Set(files.map(\.url))
+    var known = Set(files.map(\.url))
     var added: [ProcessableFile] = []
     var unreadable: [URL] = []
 
@@ -592,7 +592,9 @@ final class BatchViewModel: ObservableObject {
         unreadable.append(url)
         continue
       }
-      guard !existing.contains(file.url), !added.contains(where: { $0.url == file.url }) else { continue }
+      // Looked up, not looked for: five thousand of them held the window still
+      // for seconds.
+      guard known.insert(file.url).inserted else { continue }
       added.append(file)
     }
 
