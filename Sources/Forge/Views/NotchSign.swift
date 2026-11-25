@@ -87,6 +87,8 @@ struct NotchSignView: View {
     return word == nil ? notch.width + Self.ear * 2 + shoulders : Self.size(around: notch).width
   }
 
+  private var shape: Hanging { Hanging(radius: word == nil || !isOut ? Hanging.resting : 24) }
+
   var body: some View {
     // Not past its own edge, which is where the panel ends: it lost its corners there.
     let spring = Animation.spring(response: 0.36, dampingFraction: 1)
@@ -97,10 +99,12 @@ struct NotchSignView: View {
       }
       .opacity(isOut ? 1 : 0)
       .frame(width: width, height: notch.height + (word != nil && isOut ? Self.shelf : 0), alignment: .top)
-      .background(Color.black)
       // Cut to the shape itself: what is in it is wider than the notch it comes
       // out of, and a box cut the corners off until there was room for it.
-      .mask(Hanging(radius: word == nil || !isOut ? 11 : 20))
+      .mask(shape)
+      // Drawn as it is, and never a black box cut to it: one that size has been
+      // seen over Mission Control.
+      .background(shape.fill(Color.black))
       Spacer(minLength: 0)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

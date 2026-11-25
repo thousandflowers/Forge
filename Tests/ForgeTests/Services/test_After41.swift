@@ -175,3 +175,18 @@ final class ResultCardsStackTests: XCTestCase {
     XCTAssertEqual(center.cards.map(\.title), ["b", "d"])
   }
 }
+
+final class NotchCornerTests: XCTestCase {
+  /// Rounder than the arc of its radius, and still over the whole of the notch.
+  func test_theCornersAreRound_andTheNotchIsCovered() {
+    let notch = CGRect(x: 0, y: 0, width: 185, height: 32), lip = NotchShape.lip(around: notch)
+    let path = Hanging(radius: Hanging.resting).path(in: CGRect(origin: .zero, size: lip.size))
+    let right = lip.width - Hanging.shoulder, bottom = lip.height
+    // Where the arc of its radius passes, halfway round the corner.
+    let arc = Hanging.resting * (1 - 0.5.squareRoot())
+    XCTAssertFalse(path.contains(CGPoint(x: right - arc, y: bottom - arc)))
+    // The notch's own corner, 10 round and 6 in from the lip's.
+    let own = 6 + 10 * (1 - 0.5.squareRoot())
+    XCTAssertTrue(path.contains(CGPoint(x: right - own, y: bottom - own)))
+  }
+}
