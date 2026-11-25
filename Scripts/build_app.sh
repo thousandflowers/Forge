@@ -66,6 +66,22 @@ cat > "$CONTENTS/Info.plist" <<PLIST
       <key>LSItemContentTypes</key><array><string>public.item</string></array>
     </dict>
   </array>
+  <key>NSServices</key>
+  <array>
+    <dict>
+      <key>NSMenuItem</key><dict><key>default</key><string>Convert with Forge</string></dict>
+      <key>NSMessage</key><string>convertFiles</string>
+      <key>NSPortName</key><string>Forge</string>
+      <key>NSSendFileTypes</key><array><string>public.item</string></array>
+    </dict>
+    <dict>
+      <key>NSMenuItem</key><dict><key>default</key><string>Cut with Forge…</string></dict>
+      <key>NSMessage</key><string>cutFile</string>
+      <key>NSPortName</key><string>Forge</string>
+      <key>NSSendFileTypes</key>
+      <array><string>public.movie</string><string>public.audio</string><string>public.image</string></array>
+    </dict>
+  </array>
   <key>NSSpeechRecognitionUsageDescription</key>
   <string>Forge uses speech recognition on this Mac to turn recordings into text. Nothing is uploaded.</string>
   $ICON_ENTRY

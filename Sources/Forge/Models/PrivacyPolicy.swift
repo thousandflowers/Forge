@@ -40,7 +40,7 @@ enum PrivacyPolicy: String, Codable, Sendable, Hashable, CaseIterable {
       return "Where the file was made is removed. Everything else stays."
     case .stripAll:
       return "Location, device, serial numbers, author and timestamps are removed. "
-        + "The colour profile and the orientation stay: without them the file no longer looks like itself."
+        + "The color profile and the orientation stay: without them the file no longer looks like itself."
     }
   }
 

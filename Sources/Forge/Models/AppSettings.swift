@@ -15,6 +15,73 @@ struct AppSettings: Codable, Sendable, Equatable {
 
   /// Post a notification when a batch finishes.
   var notifyWhenFinished: Bool = true
+  /// What happens once everything in the list has been converted.
+  var whenFinished: WhenFinished = .nothing
+
+  enum WhenFinished: String, Codable, CaseIterable, Sendable {
+    case nothing, show, sleep, quit
+
+    var title: String {
+      switch self {
+      case .nothing: return "Nothing"
+      case .show: return "Show the files in the Finder"
+      case .sleep: return "Put the Mac to sleep"
+      case .quit: return "Quit Forge"
+      }
+    }
+  }
+
+  // MARK: - Without being asked
+  //
+  // All off until somebody turns them on: these work on files nobody handed
+  // over.
+
+  /// Make a picture that is copied lighter before it is pasted.
+  var lighterClipboard: Bool = false
+  /// Make screen recordings lighter when they finish.
+  var lighterRecordings: Bool = false
+  /// Turn HEIC, WebP and AVIF downloads into JPEGs.
+  var friendlyDownloads: Bool = false
+  /// Make a file renamed to another extension into that kind of file.
+  var convertsRenames: Bool = false
+
+  // MARK: - In hand
+
+  /// Bring the menu up over a file dragged with the keys held.
+  var dragMenu: Bool = false
+  var dragMenuKeys: HoldKeys = .usual
+  /// Open the notch for a file that is being dragged.
+  var notchZone: Bool = false
+  /// Where it is seen that something is being converted, and what came of it.
+  /// In the notch, or in the menu bar of a Mac without one.
+  var workSign: WorkSign = .notch
+
+  enum WorkSign: String, Codable, CaseIterable, Sendable {
+    case notch, menuBar, both, nowhere
+
+    /// What there is to choose from, on a Mac with a notch and on one without.
+    static func choices(hasNotch: Bool) -> [WorkSign] { hasNotch ? allCases : [.menuBar, .nowhere] }
+    /// The one of those that it comes to.
+    func shown(hasNotch: Bool) -> WorkSign { hasNotch || self == .nowhere ? self : .menuBar }
+
+    var title: String {
+      switch self {
+      case .nowhere: return "Nowhere"
+      case .menuBar: return "The hammer in the menu bar"
+      case .notch: return "The notch"
+      case .both: return "Both"
+      }
+    }
+
+    /// Where there is no notch, what was to be in it is in the menu bar.
+    func showsHammer(hasNotch: Bool) -> Bool { self == .menuBar || self == .both || (self == .notch && !hasNotch) }
+    func showsNotch(hasNotch: Bool) -> Bool { hasNotch && (self == .notch || self == .both) }
+  }
+  /// Apps the menu keeps out of, by bundle identifier.
+  var dragMenuIgnored: [String] = []
+  /// The presets in the menu, where they were chosen. None, and the menu goes by
+  /// what is used.
+  var menuPresets: [UUID] = []
 
   // MARK: - What everything starts from
   //
@@ -36,6 +103,10 @@ struct AppSettings: Codable, Sendable, Equatable {
   /// original said is a conversion that lost something, and this is a choice
   /// rather than a default anybody should have made for them.
   var privacy: PrivacyPolicy = .keepAll
+
+  /// The language spoken in recordings, when a conversion names none. Empty is
+  /// the Mac's own.
+  var spokenLanguage: String = ""
 
   /// How an output file is named. `{name}` is the original's name without its
   /// extension; a preset's parameters are available by their own keys, so a
@@ -74,6 +145,13 @@ struct AppSettings: Codable, Sendable, Equatable {
     return chain + [.quality(level: defaultQuality)]
   }
 
+  /// What is said is listened to in this language unless the chain says.
+  func addingLanguage(to operations: [Operation], of source: UTType) -> [Operation] {
+    guard !spokenLanguage.isEmpty, [.audio, .video].contains(ConvertKind(fileType: source)),
+          !operations.contains(where: { $0.id == "ocr" }) else { return operations }
+    return operations + [.recognizeText(languages: [spokenLanguage])]
+  }
+
   // MARK: - Persistence
 
   private static let settingsKey = "ForgeSettings"
@@ -94,8 +172,10 @@ struct AppSettings: Codable, Sendable, Equatable {
 
 extension AppSettings {
   private enum CodingKeys: String, CodingKey {
-    case maxConcurrentNative, createBackupBeforeOverwrite, notifyWhenFinished
+    case maxConcurrentNative, createBackupBeforeOverwrite, notifyWhenFinished, whenFinished
     case defaultFitMode, defaultQuality, privacy, nameTemplate, appearance
+    case lighterClipboard, lighterRecordings, friendlyDownloads, convertsRenames
+    case dragMenu, dragMenuKeys, dragMenuIgnored, menuPresets, spokenLanguage, notchZone, workSign
   }
 
   /// Every key is optional on the way in. A setting added in a later version
@@ -107,10 +187,22 @@ extension AppSettings {
     maxConcurrentNative = try c.decodeIfPresent(Int.self, forKey: .maxConcurrentNative) ?? fresh.maxConcurrentNative
     createBackupBeforeOverwrite = try c.decodeIfPresent(Bool.self, forKey: .createBackupBeforeOverwrite) ?? fresh.createBackupBeforeOverwrite
     notifyWhenFinished = try c.decodeIfPresent(Bool.self, forKey: .notifyWhenFinished) ?? fresh.notifyWhenFinished
+    whenFinished = try c.decodeIfPresent(WhenFinished.self, forKey: .whenFinished) ?? fresh.whenFinished
     defaultFitMode = try c.decodeIfPresent(ResizeFitMode.self, forKey: .defaultFitMode) ?? fresh.defaultFitMode
     defaultQuality = try c.decodeIfPresent(Int.self, forKey: .defaultQuality) ?? fresh.defaultQuality
     privacy = try c.decodeIfPresent(PrivacyPolicy.self, forKey: .privacy) ?? fresh.privacy
     nameTemplate = try c.decodeIfPresent(String.self, forKey: .nameTemplate) ?? fresh.nameTemplate
     appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? fresh.appearance
+    lighterClipboard = try c.decodeIfPresent(Bool.self, forKey: .lighterClipboard) ?? fresh.lighterClipboard
+    lighterRecordings = try c.decodeIfPresent(Bool.self, forKey: .lighterRecordings) ?? fresh.lighterRecordings
+    friendlyDownloads = try c.decodeIfPresent(Bool.self, forKey: .friendlyDownloads) ?? fresh.friendlyDownloads
+    convertsRenames = try c.decodeIfPresent(Bool.self, forKey: .convertsRenames) ?? fresh.convertsRenames
+    dragMenu = try c.decodeIfPresent(Bool.self, forKey: .dragMenu) ?? fresh.dragMenu
+    dragMenuKeys = try c.decodeIfPresent(HoldKeys.self, forKey: .dragMenuKeys) ?? fresh.dragMenuKeys
+    dragMenuIgnored = try c.decodeIfPresent([String].self, forKey: .dragMenuIgnored) ?? fresh.dragMenuIgnored
+    notchZone = try c.decodeIfPresent(Bool.self, forKey: .notchZone) ?? fresh.notchZone
+    workSign = try c.decodeIfPresent(WorkSign.self, forKey: .workSign) ?? fresh.workSign
+    menuPresets = try c.decodeIfPresent([UUID].self, forKey: .menuPresets) ?? fresh.menuPresets
+    spokenLanguage = try c.decodeIfPresent(String.self, forKey: .spokenLanguage) ?? fresh.spokenLanguage
   }
 }

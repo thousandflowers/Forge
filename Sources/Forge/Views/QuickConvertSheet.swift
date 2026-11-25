@@ -11,6 +11,7 @@ struct QuickConvertSheet: View {
   @Environment(\.dismiss) private var dismiss
   @ObservedObject private var installer = ToolInstaller.shared
   @State private var showsAllFormats = false
+  @State private var showsAllTools = false
 
   let kinds: Set<ConvertKind>
   /// The files themselves, since what is offered depends on what each one is.
@@ -35,11 +36,12 @@ struct QuickConvertSheet: View {
     VStack(spacing: 0) {
       header
       Divider()
-      ScrollView { fields.padding(24) }
+      ScrollView { fields.padding(.horizontal, 24).padding(.vertical, 16) }
       Divider()
       footer
     }
-    .frame(width: 680, height: 560)
+    // As tall as what has to be answered, with where it goes in sight.
+    .frame(width: 680, height: 588)
     // The sheet is where an install is started, so it is where it is confirmed.
     .confirmsToolInstalls(with: installer)
     .translucentSheet()
@@ -61,7 +63,7 @@ struct QuickConvertSheet: View {
       Spacer()
     }
     .padding(.horizontal, 24)
-    .padding(.vertical, 18)
+    .padding(.vertical, 12)
   }
 
   private var headline: String {
@@ -83,12 +85,13 @@ struct QuickConvertSheet: View {
   // MARK: - Fields
 
   private var fields: some View {
-    VStack(alignment: .leading, spacing: 16) {
+    VStack(alignment: .leading, spacing: 12) {
       if let kind { formatCard(for: kind) } else { mixedNote }
+      if kind != nil { toolCard }
       if !presets.isEmpty { presetField }
       if choice.draft.parameters.contains(where: { $0.source == .prompt }) { questions }
       if !choice.steps.isEmpty {
-        Text("Also: \(choice.steps.map(PresetCard.chip).joined(separator: ", ")). Change it in More…")
+        Text("Also: \(choice.steps.map(PresetChip.text).joined(separator: ", ")). Change it in More…")
           .font(.callout)
           .foregroundStyle(.secondary)
       }
@@ -119,18 +122,45 @@ struct QuickConvertSheet: View {
           // What a tool that is not here would add, with the button that adds
           // it. The formats appear above as soon as it is in.
           ForEach(tools, id: \.id) { tool in
-            ToolOfferRow(tool: tool, because: "With \(tool.formula): \(tool.adds).", installer: installer)
+            ToolOfferRow(tool: tool, because: "With \(tool.name): \(tool.adds).", installer: installer)
           }
         } else {
           formatChips(leading + chosen)
         }
         if leading.count < all.count || !tools.isEmpty {
-          Button(showsAllFormats ? "Fewer formats" : "All formats…") { showsAllFormats.toggle() }
+          Button(showsAllFormats ? "Fewer formats" : "All formats…") { withAnimation(Motion.move) { showsAllFormats.toggle() } }
             .buttonStyle(.link)
         }
       }
     }
   }
+
+  /// How many are shown before all of them are asked for.
+  private static let fewTools = 6
+
+  @ViewBuilder private var toolCard: some View {
+    let all = Tool.all(for: sources)
+    let few = Array(all.prefix(Self.fewTools))
+    // What was chosen stays on show once the rest is folded away.
+    let shown = showsAllTools ? all : few + all.dropFirst(Self.fewTools).filter(isChosen)
+    if !all.isEmpty {
+      card(title: "Do this to it", symbol: "wand.and.stars", tint: LibraryEntry.Group.transform.color) {
+        VStack(alignment: .leading, spacing: 10) {
+          FlowLayout(spacing: 6) {
+            ForEach(shown, id: \.word) { tool in
+              Chip(tool.title, selected: isChosen(tool), large: true) { choice = choice.toggling(tool) }
+                .help("\(tool.kind.summary). In a file\u{2019}s name: _\(tool.word)")
+            }
+          }
+          if all.count > few.count {
+            Button(showsAllTools ? "Fewer" : "All \(all.count)…") { withAnimation(Motion.move) { showsAllTools.toggle() } }.buttonStyle(.link)
+          }
+        }
+      }
+    }
+  }
+
+  private func isChosen(_ tool: Tool) -> Bool { choice.draft.actions.contains(.tool(tool)) }
 
   private func formatChips(_ formats: [OutputFormat]) -> some View {
     FlowLayout(spacing: 6) {
@@ -196,7 +226,7 @@ struct QuickConvertSheet: View {
       if kinds.isEmpty {
         let tools = Dictionary(grouping: sources.compactMap { ToolOffers.opener(for: $0.url) }, by: \.id).compactMap(\.value.first)
         ForEach(tools, id: \.id) { tool in
-          ToolOfferRow(tool: tool, because: "\(tool.formula) opens them. It adds \(tool.adds).", installer: installer)
+          ToolOfferRow(tool: tool, because: "\(tool.name) opens them. It adds \(tool.adds).", installer: installer)
         }
       }
     }
@@ -236,7 +266,7 @@ struct QuickConvertSheet: View {
         Spacer(minLength: 12)
 
         if let last = sameAsLast {
-          let chain = last.preset.actions.map(PresetCard.chip).joined(separator: " · ")
+          let chain = last.preset.actions.map(PresetChip.text).joined(separator: " · ")
           Button {
             dismiss()
             onSameAsLast()
@@ -258,7 +288,8 @@ struct QuickConvertSheet: View {
         .disabled(!canConvert)
       }
     }
-    .padding(20)
+    .padding(.horizontal, 20)
+    .padding(.vertical, 14)
   }
 
   /// Says what is in there for these files, and nothing they cannot use.
@@ -279,7 +310,7 @@ struct QuickConvertSheet: View {
     guard let preset = choice.resolved(against: presets) else { return "Choose what they should become" }
 
     var parts = [sources.count == 1 ? "1 file" : "\(sources.count) files"]
-    let chain = preset.actions.map(PresetCard.chip).joined(separator: " · ")
+    let chain = preset.actions.map(PresetChip.text).joined(separator: " · ")
     if !chain.isEmpty { parts.append(chain) }
 
     switch choice.destinationMode {

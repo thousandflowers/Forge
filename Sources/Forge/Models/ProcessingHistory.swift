@@ -29,6 +29,18 @@ struct ProcessingHistory: Identifiable, Codable, Sendable {
   /// What the preset was called at the time, for naming a preset made from it.
   var presetName: String?
 
+  /// The copy of the original taken before it was replaced, which is what
+  /// Undo puts back. Optional, so history written before this still decodes.
+  var backupURL: URL?
+  /// What was made is about the file, and not the file in another form: the
+  /// tables in it, a picture of it. Optional, so history written before this
+  /// still decodes.
+  var isSomethingElse: Bool?
+  /// When this was undone, if it was.
+  var undoneAt: Date?
+
+  var isUndone: Bool { undoneAt != nil }
+
   /// Every file this conversion produced.
   var outputs: [URL] { [outputURL].compactMap { $0 } + (additionalOutputs ?? []) }
 
@@ -77,7 +89,7 @@ extension ProcessingHistory {
     let formats = actions.compactMap { if case .convertFormat(let to) = $0 { return OutputFormat(type: to).label } else { return nil } }
     let others = actions
       .filter { !$0.isFormat }
-      .map(PresetCard.chip)
+      .map(PresetChip.text)
 
     let into = formats.isEmpty ? "" : "→ " + formats.joined(separator: " + ")
     let head = [from, into].filter { !$0.isEmpty }.joined(separator: " ")

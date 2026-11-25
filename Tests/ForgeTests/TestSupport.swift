@@ -6,6 +6,13 @@ import PDFKit
 import UniformTypeIdentifiers
 @testable import Forge
 
+/// A Mac that is another Mac's program: it has no display that refreshes, nor
+/// what Apple's own networks run on.
+let isVirtualMac: Bool = {
+  var value: Int32 = 0, size = MemoryLayout<Int32>.size
+  return sysctlbyname("kern.hv_vmm_present", &value, &size, nil, 0) == 0 && value == 1
+}()
+
 /// Shared base class for Forge unit tests.
 ///
 /// Every fixture is built at runtime rather than checked in, so the suite runs
@@ -217,6 +224,38 @@ enum Fixture {
   }
 
   /// A sine tone, written as 16-bit PCM in whatever container the extension names.
+  @discardableResult
+  static func heic(at url: URL) throws -> URL {
+    let png = url.deletingPathExtension().appendingPathExtension("fixture.png")
+    try image(at: png, width: 320, height: 200)
+    defer { try? FileManager.default.removeItem(at: png) }
+    let picture = try XCTUnwrap(CGImageSourceCreateWithURL(png as CFURL, nil).flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) })
+    let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, UTType.heic.identifier as CFString, 1, nil))
+    CGImageDestinationAddImage(destination, picture, nil)
+    XCTAssertTrue(CGImageDestinationFinalize(destination))
+    return url
+  }
+
+  /// A picture nothing can store losslessly in little room.
+  @discardableResult
+  static func noise(at url: URL, width: Int, height: Int) throws -> URL {
+    var seed: UInt32 = 7
+    let bytes = (0..<(width * height * 4)).map { _ -> UInt8 in
+      seed = seed &* 1_664_525 &+ 1_013_904_223
+      return UInt8(truncatingIfNeeded: seed >> 24)
+    }
+    let provider = try XCTUnwrap(CGDataProvider(data: Data(bytes) as CFData))
+    let image = try XCTUnwrap(CGImage(
+      width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+      provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
+    ))
+    let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil))
+    CGImageDestinationAddImage(destination, image, nil)
+    XCTAssertTrue(CGImageDestinationFinalize(destination))
+    return url
+  }
+
   @discardableResult
   static func audio(
     at url: URL,

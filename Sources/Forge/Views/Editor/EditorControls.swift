@@ -36,7 +36,7 @@ struct EditableSurface: ViewModifier {
       .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(focused ? 0.1 : (hovering ? 0.08 : 0))))
       .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor.opacity(focused ? 0.8 : 0), lineWidth: 1.5))
       .onHover { hovering = $0 }
-      .animation(.easeOut(duration: 0.12), value: hovering)
+      .animation(Motion.quick, value: hovering)
   }
 }
 
@@ -262,15 +262,18 @@ struct BlockCard<Content: View>: View {
         .onAppear { narrow = geo.size.width < inlineMinimum }
         .onChange(of: geo.size.width) { narrow = $0 < inlineMinimum }
     })
-    .padding(.horizontal, 12).padding(.vertical, 8)
+    // Of several rows, clear of the corners.
+    .padding(.horizontal, oneLine ? 12 : 16).padding(.vertical, oneLine ? 8 : 14)
     .frame(minHeight: Metrics.blockHeight)
     .frame(maxWidth: Metrics.blockColumn, alignment: .leading)
     // The card is the column's width, centred; the background goes on before
     // the frame that centres it, or it spans the whole canvas.
     .background(
       RoundedRectangle(cornerRadius: Metrics.blockRadius, style: .continuous)
-        .fill(Color(nsColor: .controlBackgroundColor))
+        .fill(Color(nsColor: .card))
     )
+    // On white it has nothing else to end at.
+    .overlay(RoundedRectangle(cornerRadius: Metrics.blockRadius, style: .continuous).strokeBorder(Color.primary.opacity(0.07)))
     .frame(maxWidth: .infinity)
   }
 

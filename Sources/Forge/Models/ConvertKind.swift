@@ -21,16 +21,27 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
   case model
   case subtitle
   case font
+  case archive
 
   init?(fileType: UTType) {
     // Subtitles first, and before the media check on purpose: AVFoundation
     // lists WebVTT among the types it opens, so a .vtt was being filed as a
     // video - shown with video controls, and failing with "contains no audio
     // or video tracks" when anybody used them.
-    if Subtitles.reads(fileType.preferredFilenameExtension ?? "") {
+    if fileType.goes(by: Subtitles.readableExtensions) {
       self = .subtitle
-    } else if ExternalBridge.Fonts.handles(fileType.preferredFilenameExtension ?? "") {
+    } else if fileType.goes(by: FontProcessor.readable) {
       self = .font
+    // Before the rest: a glTF is JSON and a COLLADA is XML, and neither is
+    // what anybody means by one.
+    } else if FormatCatalog.isReadableModel(fileType) || (fileType.goes(by: BlenderBridge.extensions) && ExternalTool.blender.isInstalled) {
+      self = .model
+    } else if fileType.goes(by: MidiProcessor.readable) {
+      self = .audio
+    // What is opened through something else is filed by what comes of it. A
+    // sheet is data before it is pages.
+    } else if let way = ThroughProcessor.way(for: fileType), way.kind != .data {
+      self = way.kind
     } else if FormatCatalog.isReadableImage(fileType) {
       self = .image
     } else if FormatCatalog.isReadableMedia(fileType) {
@@ -39,18 +50,21 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
       // while the sheet is being drawn, and it is right for anything with a
       // normal name; a mislabelled file simply gets one control too many.
       self = fileType.conforms(to: .audio) ? .audio : .video
-    } else if DataProcessor.readable.contains(where: { fileType.conforms(to: $0) }) {
+    } else if DataProcessor.handles(fileType) {
       self = .data
-    } else if SimpleDocProcessor.readableTypes.contains(where: { fileType.conforms(to: $0) }) {
+    } else if SimpleDocProcessor.readableTypes.contains(where: { fileType.conforms(to: $0) }) || fileType.goes(by: ComicProcessor.readable) {
       self = .document
-    } else if FormatCatalog.isReadableModel(fileType) {
-      self = .model
+    } else if ArchiveProcessor.reads(fileType) {
+      self = .archive
     } else if ExternalBridge.canHandle(fileType) {
       // Nothing on the machine reads this, but a tool the user installed does.
       // It is filed by what it is, so the sheet offers the right controls.
       self = fileType.conforms(to: .audiovisualContent) && !fileType.conforms(to: .audio)
         ? .video
         : fileType.conforms(to: .audio) ? .audio : .document
+    } else if Tidier.language(of: fileType) != nil {
+      // A style sheet becomes nothing else, and can be tidied.
+      self = .document
     } else {
       return nil
     }
@@ -66,6 +80,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
     case .model: return "3D model"
     case .subtitle: return "subtitle"
     case .font: return "font"
+    case .archive: return "archive"
     }
   }
 
@@ -79,6 +94,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
     case .model: return "3D models"
     case .subtitle: return "subtitles"
     case .font: return "fonts"
+    case .archive: return "archives"
     }
   }
 
@@ -92,6 +108,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
     case .model: return "cube"
     case .subtitle: return "captions.bubble"
     case .font: return "textformat"
+    case .archive: return "doc.zipper"
     }
   }
 
@@ -107,6 +124,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
     case .model: return .model
     case .subtitle: return .subtitle
     case .font: return .font
+    case .archive: return .custom
     }
   }
 
@@ -122,7 +140,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
   var supportsResize: Bool {
     switch self {
     case .image, .video, .document: return true
-    case .audio, .data, .model, .subtitle, .font: return false
+    case .audio, .data, .model, .subtitle, .font, .archive: return false
     }
   }
 
@@ -130,7 +148,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
   var supportsQuality: Bool {
     switch self {
     case .image, .video, .document: return true
-    case .audio, .data, .model, .subtitle, .font: return false
+    case .audio, .data, .model, .subtitle, .font, .archive: return false
     }
   }
 
@@ -138,7 +156,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
   var supportsFilter: Bool {
     switch self {
     case .image, .document: return true
-    case .video, .audio, .data, .model, .subtitle, .font: return false
+    case .video, .audio, .data, .model, .subtitle, .font, .archive: return false
     }
   }
 
@@ -147,7 +165,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
   var supportsCodec: Bool {
     switch self {
     case .video, .audio: return true
-    case .image, .document, .data, .model, .subtitle, .font: return false
+    case .image, .document, .data, .model, .subtitle, .font, .archive: return false
     }
   }
 
@@ -156,7 +174,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
   var supportsSizeLimit: Bool {
     switch self {
     case .image: return true
-    case .video, .audio, .document, .data, .model, .subtitle, .font: return false
+    case .video, .audio, .document, .data, .model, .subtitle, .font, .archive: return false
     }
   }
 
@@ -166,7 +184,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
     switch self {
     case .image, .document, .video, .audio: return true
     case .subtitle: return true
-    case .data, .model, .font: return false
+    case .data, .model, .font, .archive: return false
     }
   }
 
@@ -179,7 +197,7 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
   /// there is nothing to look at in a sound file.
   var previewCost: PreviewCost {
     switch self {
-    case .image, .document, .data, .model, .subtitle, .font: return .runIt
+    case .image, .document, .data, .model, .subtitle, .font, .archive: return .runIt
     case .video: return .oneFrame
     case .audio: return .describeIt
     }
@@ -222,8 +240,8 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
         // the sound and not the film in an MPEG-4 box.
         OutputGroup("Sound", OutputFormat.audio.filter { $0.type.map(MediaProcessor.isSoundOnly) ?? false }),
         OutputGroup("Frames", OutputFormat.images),
-        // The track already inside the film, which ffmpeg pulls out.
-        OutputGroup("Subtitles", ExternalTools.locate("ffmpeg") == nil ? [] : OutputFormat.subtitles),
+        // The track inside the film, or what is said in it.
+        OutputGroup("Subtitles", OutputFormat.subtitles),
         OutputGroup("Text", OutputFormat.text),
         OutputGroup("With your tools", OutputFormat.withTools(for: .video)),
       ]
@@ -234,11 +252,14 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
       ]
     case .font:
       return [OutputGroup("Fonts", OutputFormat.fonts)]
+    case .archive:
+      return [OutputGroup("Archives", ArchiveProcessor.writable.map { OutputFormat(type: $0) })]
     case .audio:
       return [
         OutputGroup("Audio", OutputFormat.audio),
         OutputGroup("Video container", OutputFormat.video),
         OutputGroup("Text", OutputFormat.text),
+        OutputGroup("Subtitles", OutputFormat.subtitles),
         OutputGroup("With your tools", OutputFormat.withTools(for: .audio)),
       ]
     case .document:
@@ -251,9 +272,13 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
         OutputGroup("With your tools", OutputFormat.withTools(for: .document)),
       ]
     case .data:
-      return [OutputGroup("Data", OutputFormat.data)]
+      return [
+        OutputGroup("Data", OutputFormat.data),
+        OutputGroup("Documents", OutputFormat.dataPages),
+        OutputGroup("With your tools", OutputFormat.withTools(for: .data)),
+      ]
     case .model:
-      return [OutputGroup("3D", OutputFormat.models)]
+      return [OutputGroup("3D", OutputFormat.models), OutputGroup("Images", OutputFormat.images)]
     }
   }
 }
@@ -307,10 +332,12 @@ extension ConvertKind {
   private var common: [String] {
     switch self {
     case .image: return ["JPEG", "PNG", "HEIC", "WEBP", "TIFF", "PDF", "GIF", "AVIF"]
-    case .video: return ["MP4", "MOV", "M4V", "GIF", "M4A", "JPEG", "PNG", "TXT"]
-    case .audio: return ["M4A", "MP3", "WAV", "AIFF", "FLAC", "TXT"]
-    case .document: return ["PDF", "DOCX", "RTF", "HTML", "TXT", "JPEG", "PNG", "M4A"]
-    case .data, .model, .subtitle, .font: return []
+    case .video: return ["MP4", "MOV", "GIF", "MP3", "M4A", "SRT", "TXT", "JPEG"]
+    case .audio: return ["M4A", "MP3", "WAV", "FLAC", "TXT", "SRT"]
+    case .document: return ["PDF", "DOCX", "EPUB", "RTF", "HTML", "TXT", "JPEG", "PNG", "M4A"]
+    case .data: return ["CSV", "JSON", "XLSX", "YAML", "XML", "HTML"]
+    case .model: return ["OBJ", "STL", "GLB", "USDZ", "3MF", "PNG"]
+    case .subtitle, .font, .archive: return []
     }
   }
 

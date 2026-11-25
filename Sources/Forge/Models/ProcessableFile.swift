@@ -98,15 +98,9 @@ struct ProcessableFile: Identifiable, Hashable, Sendable {
   private static func namedType(of url: URL) -> UTType? {
     guard let type = UTType(filenameExtension: url.pathExtension) else { return nil }
     guard type.isDynamic else { return type }
-    // TOML for the same reason: `public.toml` does not exist on macOS 14, so
-    // a .toml file gets an invented type there and a real one here.
-    if Toml.handles(url.pathExtension) || Subtitles.reads(url.pathExtension) {
-      return UTType(filenameExtension: url.pathExtension, conformingTo: .plainText)
-    }
-    // WOFF2 has no type either, and is a font rather than text.
-    if ExternalBridge.Fonts.handles(url.pathExtension) {
-      return UTType(filenameExtension: url.pathExtension, conformingTo: .font)
-    }
+    // And the ones Forge reads itself: `public.toml` does not exist on macOS
+    // 14, and WOFF2 has no type anywhere.
+    if let own = ExtraFormats.type(url.pathExtension) { return own }
     // What pandoc reads and macOS has no name for - reStructuredText, Org,
     // LaTeX, notebooks - is text to a tool that is installed.
     if ExternalBridge.pandocIsKnownToRead(url.pathExtension) {

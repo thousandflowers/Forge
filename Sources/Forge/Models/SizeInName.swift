@@ -20,6 +20,10 @@ enum SizeInName {
     ("kb", 1_000),
   ]
 
+  /// A thousand terabytes: past this a number is a slip, and past `Int` it is
+  /// a crash.
+  private static let largest = 1e15
+
   /// The ceiling a filename asks for, or nil if it asks for nothing.
   ///
   /// Read from the end of the name, so `holiday_2024_5MB` works and
@@ -39,7 +43,7 @@ enum SizeInName {
       let number = String(token.dropLast(unit.suffix.count))
       guard !number.isEmpty, let value = Double(number), value > 0 else { continue }
       let bytes = value * unit.bytes
-      guard bytes >= 1 else { continue }
+      guard bytes >= 1, bytes < largest else { continue }
       return Int(bytes)
     }
     return nil

@@ -38,7 +38,23 @@ enum FormatCatalog {
   /// Where the name in the identifier is not the one anybody types. The rule
   /// below prefers the identifier's own word, which is right for TOML (the
   /// system prefers `cfg`) and wrong for Markdown, written as `.markdown`.
-  private static let whatPeopleCallIt: [String: String] = ["net.daringfireball.markdown": "md"]
+  private static let whatPeopleCallIt: [String: String] = ["net.daringfireball.markdown": "md", "public.vcard": "vcf"]
+
+  /// The format an extension names, where Forge knows of one.
+  static func type(named format: String) -> UTType? {
+    if let type = UTType(filenameExtension: format), !type.isDynamic { return type }
+    // Only then: the formats macOS has no type for and Forge writes anyway.
+    // Taking this branch first would have handed back a dynamic type for
+    // `txt`, which has a perfectly good one of its own.
+    if let own = ExtraFormats.type(format) { return own }
+    if Subtitles.writes(format), let text = UTType(filenameExtension: format, conformingTo: .plainText) { return text }
+    // What pandoc writes and macOS has no name for: rst, org, tex, ipynb.
+    if ExternalBridge.pandocWritesFormat(format),
+       let text = UTType(filenameExtension: format, conformingTo: .text) {
+      return text
+    }
+    return nil
+  }
 
   static func fileExtension(for type: UTType) -> String? {
     if let spoken = whatPeopleCallIt[type.identifier] { return spoken }
@@ -102,9 +118,10 @@ enum FormatCatalog {
   /// it is offered, so a host that cannot encode FLAC simply never lists it.
   static let writableAudioTypes: [UTType: AudioFormatID] = Self.probeAudioTypes()
 
-  /// 3D model formats, asked of ModelIO. Notably absent: glTF, GLB and FBX.
-  static let readableModelTypes: Set<UTType> = Self.modelTypes { MDLAsset.canImportFileExtension($0) }
-  static let writableModelTypes: Set<UTType> = Self.modelTypes { MDLAsset.canExportFileExtension($0) }
+  /// 3D model formats, asked of ModelIO, and those Forge reads itself. Notably
+  /// absent: FBX.
+  static let readableModelTypes: Set<UTType> = Self.modelTypes { MDLAsset.canImportFileExtension($0) || ModelProcessor.own.contains($0) }
+  static let writableModelTypes: Set<UTType> = Self.modelTypes { MDLAsset.canExportFileExtension($0) || ModelProcessor.written.contains($0) }
 
   static func isReadableModel(_ type: UTType) -> Bool { readableModelTypes.contains(type) }
   static func isWritableModel(_ type: UTType) -> Bool { writableModelTypes.contains(type) }
@@ -159,7 +176,7 @@ enum FormatCatalog {
   /// Big-endian samples are the AIFF convention; every other PCM container
   /// here is little-endian.
   static func usesBigEndianPCM(_ type: UTType) -> Bool {
-    type.conforms(to: .aiff)
+    type.conforms(to: .aiff) || ["public.aifc-audio", "public.au-audio"].contains(type.identifier)
   }
 
   // MARK: - Probing
@@ -182,6 +199,12 @@ enum FormatCatalog {
       // variant, which describes the type database rather than the file: what
       // gets written is plain AAC in an MP4 container.
       (UTType("com.apple.protected-mpeg-4-audio-b"), kAudioFormatMPEG4AAC),
+      (UTType("public.aifc-audio"), kAudioFormatLinearPCM),
+      (UTType("public.au-audio"), kAudioFormatLinearPCM),
+      (UTType("com.sony.wave64"), kAudioFormatLinearPCM),
+      (UTType("public.aac-audio"), kAudioFormatMPEG4AAC),
+      // An iPhone's ringtone, which is an M4A by another name.
+      (UTType("com.apple.mpeg-4-ringtone"), kAudioFormatMPEG4AAC),
     ]
     // Apple Lossless and Opus are both encodable on macOS but deliberately
     // absent: ALAC shares the .m4a container with AAC and Opus is written into
@@ -229,8 +252,8 @@ enum FormatCatalog {
   /// ModelIO answers per extension, so the candidates are extensions and the
   /// answer decides which survive.
   private static func modelTypes(_ supported: (String) -> Bool) -> Set<UTType> {
-    let candidates = ["obj", "stl", "ply", "abc", "usd", "usda", "usdc", "usdz"]
-    return Set(candidates.filter(supported).compactMap { UTType(filenameExtension: $0) })
+    let candidates = Set(["obj", "stl", "ply", "abc", "usd", "usda", "usdc", "usdz"]).union(ModelProcessor.own).union(ModelProcessor.written)
+    return Set(candidates.filter(supported).compactMap { type(named: $0) })
   }
 
   /// The movie containers AVFoundation exports to.

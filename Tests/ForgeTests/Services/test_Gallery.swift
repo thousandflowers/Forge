@@ -41,13 +41,13 @@ final class PresetGalleryTests: BaseTestCase {
     let entries = try await gallery("""
     [{
       "author": "someone",
-      "summary": "WebP, which macOS cannot write.",
+      "summary": "RAW, which nothing writes.",
       "preset": {
         "name": "WebP",
         "description": "",
         "category": "image",
         "actions": [
-          { "kind": "convertFormat", "format": { "identifier": "org.webmproject.webp" } }
+          { "kind": "convertFormat", "format": { "identifier": "public.camera-raw-image" } }
         ]
       }
     }]

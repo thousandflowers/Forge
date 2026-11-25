@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 import UniformTypeIdentifiers
 
@@ -22,6 +23,10 @@ enum ExternalBridge {
     /// A tool that insists on naming its own output writes into this folder,
     /// and whatever lands there is moved to where the conversion wanted it.
     var collectFrom: URL?
+    /// Run before, where one look is not enough.
+    var before: [String]?
+    /// Put somewhere for it, and to be taken away after it.
+    var leftovers: [URL] = []
   }
 
   /// LibreOffice, which is an application rather than a command on PATH.
@@ -42,33 +47,55 @@ enum ExternalBridge {
     return nil
   }
 
-  /// Fonts, which macOS reads and cannot write: CoreText can list a font's
-  /// tables and has no public API to make one. fonttools can, and this is the
-  /// part of it with a command of its own - WOFF2 in both directions.
-  ///
-  /// WOFF version 1 is deliberately absent: fonttools exposes no command for
-  /// it, and driving its library through `python3 -c` is a different promise
-  /// from running a tool the user installed.
-  enum Fonts {
-    static let sfnt: Set<String> = ["ttf", "otf"]
-    static let packed: Set<String> = ["woff2"]
+  // ponytail: tables of what each is asked for; neither can be asked itself.
+  /// E-books, which are calibre's.
+  static let books: Set<String> = [
+    "mobi", "azw", "azw3", "azw4", "fb2", "fbz", "lit", "lrf", "pdb", "prc", "rb", "snb", "tcr", "chm", "kepub", "htmlz", "txtz", "djvu",
+  ]
+  private static let bookSources = books.union(["epub", "docx", "odt", "html", "txt", "rtf", "md", "cbz", "cbr"])
+  private static let bookTargets: Set<String> = ["epub", "mobi", "azw3", "fb2", "lit", "lrf", "pdb", "rb", "snb", "tcr", "htmlz", "txtz", "pdf", "docx", "rtf", "txt"]
 
-    static func handles(_ ext: String) -> Bool {
-      sfnt.contains(ext.lowercased()) || packed.contains(ext.lowercased())
-    }
+  /// Columns, packed: DuckDB's.
+  static let tables: Set<String> = ["parquet"]
+  private static let tableReaders = ["parquet": "read_parquet", "csv": "read_csv", "tsv": "read_csv", "json": "read_json", "jsonl": "read_json", "ndjson": "read_json"]
+  private static let tableWriters = [
+    "parquet": "FORMAT parquet, COMPRESSION zstd", "csv": "FORMAT csv, HEADER", "tsv": "FORMAT csv, HEADER, DELIMITER '\t'",
+    "json": "FORMAT json, ARRAY true", "jsonl": "FORMAT json", "ndjson": "FORMAT json",
+  ]
 
-    /// What fonttools should be told to do, or nothing when the pair is not
-    /// one it has a command for - ttf to otf among them, which is a change of
-    /// outline format rather than a change of container.
-    static func arguments(from source: String, to target: String, input: URL, output: URL) -> [String]? {
-      if sfnt.contains(source), packed.contains(target) {
-        return ["ttLib.woff2", "compress", "-o", output.path, input.path]
-      }
-      if packed.contains(source), sfnt.contains(target) {
-        return ["ttLib.woff2", "decompress", "-o", output.path, input.path]
-      }
-      return nil
+  private static let typstTargets: Set<String> = ["pdf", "png", "svg", "html"]
+
+  /// The files nobody opens but one tool.
+  static let special: [(extensions: Set<String>, binary: String, isWords: Bool)] = [
+    (books, "ebook-convert", false), (tables, "duckdb", false), (["typ"], "typst", true),
+    (BlenderBridge.extensions, "Blender", false),
+  ]
+
+  /// The one tool for the pair, and what to tell it.
+  private static func specialist(from source: String, to target: String, input: URL, output: URL) -> Plan? {
+    if source == "typ", typstTargets.contains(target), let typst = ExternalTools.locate("typst") {
+      // A page a file where there is a page a file.
+      let place = ["png", "svg"].contains(target)
+        ? output.deletingPathExtension().path + "-{0p}." + target : output.path
+      return Plan(
+        tool: typst, toolName: "Typst",
+        arguments: ["compile", "--root", input.deletingLastPathComponent().path, "--format", target] + (target == "html" ? ["--features", "html"] : []) + [input.path, place]
+      )
     }
+    if tables.contains(source) || tables.contains(target), source != target, let reader = tableReaders[source], let writer = tableWriters[target],
+       let duckdb = ExternalTools.locate("duckdb") {
+      func quoted(_ url: URL) -> String { "'" + url.path.replacingOccurrences(of: "'", with: "''") + "'" }
+      return Plan(tool: duckdb, toolName: "DuckDB", arguments: ["-batch", "-no-init", ":memory:", "-c", "COPY (SELECT * FROM \(reader)(\(quoted(input)))) TO \(quoted(output)) (\(writer))"])
+    }
+    if BlenderBridge.takes(source, target), let blender = ExternalTool.blender.location {
+      return Plan(tool: blender, toolName: "Blender", arguments: BlenderBridge.arguments(input, output))
+    }
+    // Only where one end of it is a book nobody else handles.
+    if books.contains(source) || books.contains(target), source != target, bookSources.contains(source), bookTargets.contains(target),
+       let calibre = ExternalTool.calibre.location {
+      return Plan(tool: calibre, toolName: "calibre", arguments: [input.path, output.path])
+    }
+    return nil
   }
 
   /// pandoc's own answer to what it reads and writes, asked once.
@@ -153,11 +180,13 @@ enum ExternalBridge {
   /// text document does not become a spreadsheet, nor a deck a text.
   // ponytail: a table of LibreOffice's export filters; extend it when a filter is wanted that is not here.
   static let libreOfficeFamilies: [(reads: Set<String>, writes: Set<String>)] = [
-    (["doc", "docx", "odt", "rtf", "wpd", "pages", "txt", "html", "fodt"],
+    (["doc", "docx", "odt", "rtf", "wpd", "pages", "txt", "html", "fodt", "dot", "docm", "dotx", "dotm", "ott", "sxw", "wps", "abw", "lwp", "hwp", "mw", "psw"],
      ["pdf", "docx", "doc", "odt", "rtf", "txt", "html", "epub", "png", "jpg"]),
-    (["xls", "xlsx", "ods", "numbers", "csv", "fods"],
+    (["xls", "xlsx", "ods", "numbers", "csv", "fods", "xlsb", "xlsm", "xltx", "xltm", "xlt", "xlw", "ots", "sxc", "dbf", "slk", "dif", "wk1", "wks", "123", "wb2", "gnumeric"],
      ["pdf", "xlsx", "xls", "ods", "csv", "html", "png"]),
-    (["ppt", "pptx", "odp", "key", "fodp"],
+    (["vsd", "vsdx", "vsdm", "pub", "odg", "otg", "fodg", "sxd", "cdr", "cgm", "wmf", "emf", "svm", "wpg", "zmf", "fh", "p65", "pm", "pmd", "qxp", "dxf", "met", "pct"],
+     ["pdf", "svg", "png", "jpg", "odg", "eps"]),
+    (["ppt", "pptx", "odp", "key", "fodp", "pps", "pot", "ppsx", "potx", "pptm", "ppsm", "potm", "otp", "sxi"],
      ["pdf", "pptx", "ppt", "odp", "png", "jpg", "html"]),
   ]
 
@@ -181,12 +210,16 @@ enum ExternalBridge {
         extensions.formUnion(pandoc.map { byName[$0] ?? $0 })
       }
       if libreOffice != nil { extensions.formUnion(libreOfficeFamilies.flatMap(\.writes)) }
+      if ExternalTool.calibre.isInstalled { extensions.formUnion(bookTargets) }
+    case .data:
+      if libreOffice != nil { extensions.formUnion(libreOfficeFamilies.filter { $0.reads.contains("xlsx") }.flatMap(\.writes)) }
+      if ExternalTools.locate("duckdb") != nil { extensions.formUnion(tables) }
     default:
       return []
     }
     return extensions.compactMap { ext in
-      guard let type = UTType(filenameExtension: ext), !type.isDynamic else { return nil }
-      return type
+      if let type = UTType(filenameExtension: ext), !type.isDynamic { return type }
+      return ExtraFormats.type(ext)
     }
   }
 
@@ -244,8 +277,12 @@ enum ExternalBridge {
 
   static func canHandle(_ type: UTType) -> Bool {
     guard let ext = type.preferredFilenameExtension else { return false }
-    if Fonts.handles(ext) { return ExternalTools.locate("fonttools") != nil }
+    if BlenderBridge.extensions.contains(ext) || BlenderBridge.takes(ext, "fbx") || ext == "fbx" { return ExternalTool.blender.isInstalled }
+    if let one = special.first(where: { $0.extensions.contains(ext) }) { return ExternalTools.locate(one.binary) != nil }
     if pandocReads(ext) { return true }
+    // Read by others, and by these for what only they write.
+    if tableReaders[ext] != nil, ExternalTools.locate("duckdb") != nil { return true }
+    if bookSources.contains(ext), ExternalTool.calibre.isInstalled { return true }
     // ffmpeg is asked about a pair rather than about a file, so anything
     // time-based is worth offering it and nothing else is.
     let isTimeBased = type.conforms(to: .audiovisualContent) || type.conforms(to: .audio)
@@ -255,6 +292,15 @@ enum ExternalBridge {
     // What its filters read, not anything that is not a picture: offered
     // everything else, it took a PDF asked for a JPEG away from the PDF path.
     return libreOffice != nil && libreOfficeFamilies.contains { $0.reads.contains(ext.lowercased()) }
+  }
+
+  /// What would write this, whether or not it is here.
+  static func writer(of type: UTType) -> String? {
+    guard let ext = FormatCatalog.fileExtension(for: type) ?? type.preferredFilenameExtension else { return nil }
+    if type.conforms(to: .image) { return ImageProcessor.isWebP(type) ? "cwebp" : nil }
+    if tables.contains(ext) { return "duckdb" }
+    if books.contains(ext) { return bookTargets.contains(ext) ? ExternalTool.calibre.binary : nil }
+    return type.conforms(to: .audiovisualContent) || type.conforms(to: .audio) ? "ffmpeg" : nil
   }
 
   /// Whether a tool on this Mac writes the format - what `plan` would find a
@@ -267,7 +313,8 @@ enum ExternalBridge {
     if type.conforms(to: .image) {
       return ImageProcessor.isWebP(type) && ExternalTools.locate("cwebp") != nil
     }
-    if Fonts.handles(ext) { return ExternalTools.locate("fonttools") != nil }
+    if tables.contains(ext) { return ExternalTools.locate("duckdb") != nil }
+    if books.contains(ext) { return bookTargets.contains(ext) && ExternalTool.calibre.isInstalled }
     // Only what pandoc has already said: this is asked from view bodies, and
     // running pandoc there waited on a subprocess in the middle of a SwiftUI
     // update - the app aborted at launch. `warmUp` asks it in the background.
@@ -295,10 +342,7 @@ enum ExternalBridge {
   static func couldPlan(from source: String, to target: String) -> Bool {
     if isASubtitleNoToolWrites(target) { return false }
     let nowhere = URL(fileURLWithPath: "/dev/null")
-    if ExternalTools.locate("fonttools") != nil,
-       Fonts.arguments(from: source, to: target, input: nowhere, output: nowhere) != nil {
-      return true
-    }
+    if specialist(from: source, to: target, input: nowhere, output: nowhere) != nil { return true }
     if ExternalTools.locate("pandoc") != nil, let known = formats.peek(),
        source == "txt" ? !known.read.isEmpty : known.read.contains(name(of: source)),
        known.write.contains(name(of: target)) {
@@ -323,17 +367,15 @@ enum ExternalBridge {
     let target = output.pathExtension.lowercased()
     if isASubtitleNoToolWrites(target) { return nil }
 
-    if let fonttools = ExternalTools.locate("fonttools"),
-       let arguments = Fonts.arguments(from: source, to: target, input: input, output: output) {
-      return Plan(tool: fonttools, toolName: "fonttools", arguments: arguments)
-    }
+    if let plan = specialist(from: source, to: target, input: input, output: output) { return plan }
 
     if let pandoc = ExternalTools.locate("pandoc"), pandocReads(source), pandocWrites(target) {
       // Standalone, or an HTML output is a fragment with no <head> and an EPUB
       // has no spine: a file somebody can open, not a piece of one.
       // Built a piece at a time: one long `+` chain of conditionals was more
       // than the macOS 15 compiler would type-check.
-      var arguments = ["--standalone"]
+      // Left to the name, a .txt is written as Markdown, marks and all.
+      var arguments = target == "txt" ? ["-t", "plain"] : ["--standalone"]
       // Plain text is read as Markdown, which it is a subset of: pandoc has
       // no reader called "plain", so a .txt could not become an EPUB.
       if source == "txt" { arguments += ["-f", "markdown"] }
@@ -368,7 +410,23 @@ enum ExternalBridge {
     } ?? false
 
     if !wantsSomethingStill, sourceIsTimeBased, let ffmpeg = ExternalTools.locate("ffmpeg") {
-      var arguments = ["-hide_banner", "-loglevel", "error", "-y", "-i", input.path]
+      // Only where the film itself is what is written.
+      let isSound = targetType.map(MediaProcessor.isSoundOnly) ?? false
+      let edit = MediaEdit(operations)
+      var film = wantsTheSubtitles || isSound ? nil : operations.film
+      // A part named on the file is the part.
+      if edit.part != nil { film?.from = nil; film?.to = nil }
+      if edit.isMuted { film?.sound = .none }
+      var leftovers: [URL] = []
+      // A copy of its own, under a name ffmpeg reads as a name: a colon or an
+      // apostrophe in a folder ends a filter.
+      if let lut = film?.lut {
+        let copy = FileManager.default.temporaryDirectory.appendingPathComponent("forge-\(UUID().uuidString).cube")
+        try? FileManager.default.copyItem(atPath: lut, toPath: copy.path)
+        film?.lut = copy.path
+        leftovers.append(copy)
+      }
+      var arguments = ["-hide_banner", "-loglevel", "error", "-y"] + edit.ffmpegInput + (film?.inputArguments ?? []) + ["-i", input.path]
       if wantsTheSubtitles {
         // The first subtitle track, and nothing else: without a map, ffmpeg
         // would try to carry the picture and the sound into a .srt.
@@ -382,13 +440,20 @@ enum ExternalBridge {
         // Every picture, every soundtrack and every subtitle, not ffmpeg's
         // choice of one of each. The question marks let a film without one
         // through.
-        arguments += ["-map", "0:v?", "-map", "0:a?"]
+        // A capital V leaves out a cover, which no encoder of films takes.
+        arguments += ["-map", film == nil && edit.ffmpegPicture.isEmpty ? "0:v?" : "0:V?"] + (edit.isMuted ? ["-an"] : ["-map", film?.track.map { "0:a:\(max(0, $0 - 1))?" } ?? "0:a?"])
         // Subtitles only where the container has a way to hold them: an MP4 or
         // a MOV as mov_text, Matroska and WebM as text of their own. Mapped into
         // anything else - an MXF, an AVI - ffmpeg stopped looking for an encoder.
-        if ["mp4", "m4v", "mov"].contains(target) { arguments += ["-map", "0:s?", "-c:s", "mov_text"] }
-        if target == "mkv" { arguments += ["-map", "0:s?", "-c:s", "srt"] }
-        if target == "webm" { arguments += ["-map", "0:s?", "-c:s", "webvtt"] }
+        let keepsSubtitles = (film?.keepsSubtitles ?? true) && edit.keepsSubtitles
+        // Words begun before the part are from before its beginning, and left to
+        // itself ffmpeg moves the film along to make room for them.
+        if keepsSubtitles, ["mkv", "webm"].contains(target), edit.part?.from != nil || film?.from != nil {
+          arguments += ["-avoid_negative_ts", "disabled"]
+        }
+        if keepsSubtitles, ["mp4", "m4v", "mov"].contains(target) { arguments += ["-map", "0:s?", "-c:s", "mov_text"] }
+        if keepsSubtitles, target == "mkv" { arguments += ["-map", "0:s?", "-c:s", "srt"] }
+        if keepsSubtitles, target == "webm" { arguments += ["-map", "0:s?", "-c:s", "webvtt"] }
       }
       // An Ogg file holds Opus unless something else was asked for. Left to
       // itself, an ffmpeg built without Vorbis puts FLAC in it - which is what
@@ -396,13 +461,31 @@ enum ExternalBridge {
       if ["ogg", "oga", "opus"].contains(target), MediaProcessor.chosenCodec(in: operations) == nil {
         arguments += ["-c:a", "libopus"]
       }
+      // Matroska takes any sound as it is. Left to ffmpeg, it was made into AC-3.
+      if target == "mkv", film == nil, MediaProcessor.chosenCodec(in: operations).map(\.isVideo) ?? true {
+        arguments += ["-c:a", edit.ffmpegSound.isEmpty ? "copy" : "aac"]
+      }
       // MXF takes sound at 48 kHz and nothing else; a film recorded at 44.1
       // failed with ffmpeg's "only 48khz is implemented".
       if target == "mxf" { arguments += ["-ar", "48000"] }
-      if let filter = Self.scaling(in: operations) { arguments += ["-vf", filter] }
+      if let film {
+        let bars = film.crop == .blackBars ? Self.blackBars(of: input, ffmpeg: ffmpeg) : nil
+        arguments += film.outputArguments(for: target, picture: edit.ffmpegPicture, sound: edit.ffmpegSound, bars: bars)
+      } else {
+        // Encoders want even sides, and a crop or a turn may leave them odd.
+        let picture = edit.ffmpegPicture
+        if !picture.isEmpty, !isSound, !wantsTheSubtitles {
+          let mayBeOdd = operations.tools.contains { $0.kind == .crop || $0.kind == .turn }
+          arguments += ["-vf", (picture + (mayBeOdd ? ["crop=trunc(iw/2)*2:trunc(ih/2)*2"] : [])).joined(separator: ",")]
+        }
+        // Evened out it comes back at 192 kHz, which no player expects.
+        if !edit.ffmpegSound.isEmpty, !edit.isMuted, !wantsTheSubtitles {
+          arguments += ["-af", edit.ffmpegSound.joined(separator: ",")] + (edit.isEvened ? ["-ar", "48000"] : [])
+        }
+      }
       // The encoder that was asked for, and how hard to squeeze: both were
       // dropped on this path, so a codec chosen for an MKV made no difference.
-      for operation in operations {
+      for operation in operations where film == nil {
         switch operation {
         case .encode(let codec):
           if let name = Self.ffmpegName[codec] { arguments += [codec.isVideo ? "-c:v" : "-c:a", name] }
@@ -421,13 +504,17 @@ enum ExternalBridge {
       // ffmpeg carries every tag across unless told otherwise, so a privacy
       // level was a promise this path did not keep. It removes a named tag or
       // all of them; the thorough level takes all, which errs the safe way.
-      switch PrivacyFilter.policy(in: operations) {
-      case .keepAll: break
-      case .stripLocation: arguments += ["-metadata", "location=", "-metadata", "location-eng="]
-      case .stripAll: arguments += ["-map_metadata", "-1"]
+      arguments += privacyArguments(PrivacyFilter.policy(in: operations))
+      var before: [String]?
+      if let film, film.passes > 1 {
+        // Somewhere plain: x265 takes a colon in a path for the end of it.
+        let log = FileManager.default.temporaryDirectory.appendingPathComponent("forge-pass-\(UUID().uuidString)").path
+        leftovers.append(URL(fileURLWithPath: log))
+        before = arguments + film.passArguments(1, log: log) + ["-an", "-sn", "-f", "null", "/dev/null"]
+        arguments += film.passArguments(2, log: log)
       }
       arguments.append(output.path)
-      return Plan(tool: ffmpeg, toolName: "ffmpeg", arguments: arguments)
+      return Plan(tool: ffmpeg, toolName: "ffmpeg", arguments: arguments, before: before, leftovers: leftovers)
     }
 
     if let office = libreOffice, libreOfficeWrites(from: source).contains(target) {
@@ -455,6 +542,44 @@ enum ExternalBridge {
     return nil
   }
 
+  static func privacyArguments(_ policy: PrivacyPolicy) -> [String] {
+    switch policy {
+    case .keepAll: return []
+    case .stripLocation: return ["-metadata", "location=", "-metadata", "location-eng="]
+    case .stripAll: return ["-map_metadata", "-1"]
+    }
+  }
+
+  /// What ffmpeg can encode with, from ffmpeg itself. Runs it: not for a view
+  /// body.
+  static var ffmpegEncoders: Set<String> {
+    guard let ffmpeg = ExternalTools.locate("ffmpeg") else { return [] }
+    return Set(run(ffmpeg, ["-hide_banner", "-encoders"]).split(separator: "\n").compactMap { line in
+      let words = line.split(separator: " ")
+      return words.count > 1 ? String(words[1]) : nil
+    })
+  }
+
+  /// The crop that takes off what is black from beginning to end, or nothing.
+  ///
+  /// Key frames only: it is a look at the film, not a reading of it.
+  static func blackBars(of input: URL, ffmpeg: URL) -> String? {
+    let said = run(ffmpeg, [
+      "-hide_banner", "-loglevel", "error", "-skip_frame", "nokey", "-i", input.path, "-map", "0:V:0",
+      "-vf", "cropdetect=limit=24:round=2:reset=0:skip=0,metadata=mode=print:file=-", "-an", "-f", "null", "-",
+    ])
+    let lines = said.split(separator: "\n")
+    func last(_ key: String) -> Int? {
+      lines.last { $0.contains("lavfi.cropdetect.\(key)=") }.flatMap { $0.split(separator: "=").last }.flatMap { Int($0) }
+    }
+    guard let width = last("w"), let height = last("h"), let x = last("x"), let y = last("y"),
+          width >= smallestPicture, height >= smallestPicture else { return nil }
+    return "crop=\(width):\(height):\(x):\(y)"
+  }
+
+  /// Less than this is a dark film, and not a small one with bars round it.
+  private static let smallestPicture = 64
+
   /// What ffmpeg calls each encoder.
   private static let ffmpegName: [Codec: String] = [
     .h264: "libx264", .hevc: "libx265", .proRes422: "prores_ks", .proRes4444: "prores_ks",
@@ -463,24 +588,20 @@ enum ExternalBridge {
 
   /// The new size as ffmpeg's scale filter, honouring the fit. A bare scale to
   /// both sides stretched every film, whatever fit had been chosen.
-  private static func scaling(in operations: [Operation]) -> String? {
-    for operation in operations {
-      guard case .resize(let width, let height, let mode) = operation, width != nil || height != nil else { continue }
-      // -2 rather than -1 for a side that follows: some encoders refuse an odd
-      // number of pixels, and this rounds to an even one.
-      guard let width, let height else { return "scale=\(width ?? -2):\(height ?? -2)" }
-      switch mode {
-      case .stretch:
-        return "scale=\(width):\(height)"
-      case .proportional:
-        return "scale=\(width):\(height):force_original_aspect_ratio=decrease:force_divisible_by=2"
-      case .cropCenter:
-        return "scale=\(width):\(height):force_original_aspect_ratio=increase,crop=\(width):\(height)"
-      case .pad:
-        return "scale=\(width):\(height):force_original_aspect_ratio=decrease,pad=\(width):\(height):(ow-iw)/2:(oh-ih)/2"
-      }
+  static func scaling(width: Int?, height: Int?, mode: ResizeFitMode) -> String {
+    // -2 rather than -1 for a side that follows: some encoders refuse an odd
+    // number of pixels, and this rounds to an even one.
+    guard let width, let height else { return "scale=\(width ?? -2):\(height ?? -2)" }
+    switch mode {
+    case .stretch:
+      return "scale=\(width):\(height)"
+    case .proportional:
+      return "scale=\(width):\(height):force_original_aspect_ratio=decrease:force_divisible_by=2"
+    case .cropCenter:
+      return "scale=\(width):\(height):force_original_aspect_ratio=increase,crop=\(width):\(height)"
+    case .pad:
+      return "scale=\(width):\(height):force_original_aspect_ratio=decrease,pad=\(width):\(height):(ow-iw)/2:(oh-ih)/2"
     }
-    return nil
   }
 
   /// Who wrote a document and what it is called, where the system reads them
@@ -536,18 +657,7 @@ enum ExternalBridge {
     )
   }
 
-  private static func run(_ tool: URL, _ arguments: [String]) -> String {
-    let process = Process()
-    process.executableURL = tool
-    process.arguments = arguments
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.standardError = Pipe()
-    guard (try? process.run()) != nil else { return "" }
-    let said = pipe.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    return String(decoding: said, as: UTF8.self)
-  }
+  private static func run(_ tool: URL, _ arguments: [String]) -> String { ExternalTools.answer(of: tool, arguments) }
 
   private static func list(_ tool: URL, _ argument: String) -> Set<String> {
     // ffmpeg lists its muxers in a table: flags, then the name.
@@ -564,7 +674,7 @@ enum ExternalBridge {
     process.arguments = [argument]
     let pipe = Pipe()
     process.standardOutput = pipe
-    process.standardError = Pipe()
+    process.standardError = FileHandle.nullDevice
 
     guard (try? process.run()) != nil else { return [] }
     let said = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -604,9 +714,21 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
     let inputType = UTType(filenameExtension: input.pathExtension) ?? .data
     let outputType = UTType(filenameExtension: output.pathExtension) ?? .data
 
+    if let refusal = operations.film?.refusal(for: output.pathExtension.lowercased()), outputType.conforms(to: .audiovisualContent), !MediaProcessor.isSoundOnly(outputType) {
+      throw ProcessingError.conversionFailed(reason: refusal)
+    }
+
+    let edit = MediaEdit(operations)
+    if let refusal = edit.ffmpegRefusal, outputType.conforms(to: .audiovisualContent) {
+      throw ProcessingError.conversionFailed(reason: refusal)
+    }
+
     guard let plan = ExternalBridge.plan(from: input, to: output, operations: operations) else {
       throw ProcessingError.unsupportedConversion(from: inputType, to: outputType)
     }
+
+    defer { Self.clear(plan.leftovers) }
+    if plan.toolName == "ffmpeg" { try await Self.refuseWhatIsNotThere(in: input, for: output.pathExtension.lowercased(), operations: operations, edit: edit) }
 
     // These tools report progress on their own terms and in their own format.
     // Rather than parse it, a file is one step: it either converts or it does
@@ -621,7 +743,20 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
     }
 
     do {
-      try ExternalTools.run(plan.tool, plan.arguments)
+      if let film = operations.film, plan.toolName == "ffmpeg" {
+        // Not only as the system knows it: it knows nothing of a Matroska film,
+        // and those are what comes this way.
+        let length = (try? await Division.length(of: input)) ?? 0
+        let whole = edit.changesTime ? edit.length(of: length) : film.kept(of: length)
+        let passes = [plan.before, plan.arguments].compactMap { $0 }
+        for (index, arguments) in passes.enumerated() {
+          let follower = FilmProgress(length: whole) { share in progress((Double(index) + share) / Double(passes.count)) }
+          defer { follower.finish() }
+          try ExternalTools.run(plan.tool, follower.arguments + arguments)
+        }
+      } else {
+        try ExternalTools.run(plan.tool, plan.arguments)
+      }
     } catch {
       throw Self.explain(error, about: input)
     }
@@ -631,6 +766,7 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
     }
     progress(1.0)
 
+    let extras = plan.toolName == "Typst" ? try Self.gatherPages(of: output) : []
     guard FileManager.default.fileExists(atPath: output.path) else {
       throw ProcessingError.conversionFailed(
         reason: "\(plan.toolName) reported success and wrote nothing"
@@ -642,8 +778,64 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
       outputURL: output,
       outputSize: attributes[.size] as? Int64 ?? 0,
       outputDimensions: nil,
-      duration: Date().timeIntervalSince(start)
+      duration: Date().timeIntervalSince(start),
+      additionalOutputs: extras
     )
+  }
+
+  /// The pages it numbered itself, the first under the name that was asked for.
+  private static func gatherPages(of output: URL) throws -> [URL] {
+    let stem = output.deletingPathExtension().lastPathComponent + "-", folder = output.deletingLastPathComponent()
+    let pages = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+      .filter { $0.pathExtension == output.pathExtension && $0.lastPathComponent.hasPrefix(stem) && $0.deletingPathExtension().lastPathComponent.dropFirst(stem.count).allSatisfy(\.isNumber) }
+      .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    return try pages.enumerated().compactMap { index, page in
+      let place = index == 0 ? output : output.numbered(index + 1, of: pages.count)
+      if place != page { try FileManager.default.moveItem(at: page, to: place) }
+      return index == 0 ? nil : place
+    }
+  }
+
+  private static let longestReversed = 20.0
+
+  /// A part after the end, or a soundtrack there is not: ffmpeg writes a film
+  /// with nothing in it, and says it went well.
+  private static func refuseWhatIsNotThere(in input: URL, for target: String, operations: [Operation], edit: MediaEdit) async throws {
+    if edit.isMuted, UTType(filenameExtension: target).map(MediaProcessor.isSoundOnly) ?? false {
+      throw ProcessingError.conversionFailed(reason: MediaProcessor.nothingLeft(of: input))
+    }
+    // ffmpeg turns a film round with all of it in memory.
+    if edit.isReversed, let length = try? await Division.length(of: input), edit.length(of: length) * edit.pace > longestReversed {
+      throw ProcessingError.conversionFailed(
+        reason: "\(input.lastPathComponent) is too long to be reversed as \(target.uppercased()): more than \(Int(longestReversed)) seconds. Convert it to MP4 and reverse that."
+      )
+    }
+    let film = operations.film
+    if let track = film?.track, ExternalTools.locate("ffprobe") != nil {
+      let there = MediaProcessor.streams(of: input, kind: "audio")
+      guard track <= there else {
+        throw ProcessingError.conversionFailed(
+          reason: "\(input.lastPathComponent) has \(there == 0 ? "no soundtrack" : there == 1 ? "one soundtrack" : "\(there) soundtracks"), and track \(track) was asked for."
+        )
+      }
+    }
+    let part = edit.part ?? film.map { Span(from: $0.from.map(Double.init), to: $0.to.map(Double.init)) }
+    guard let part, part.from != nil || part.to != nil, let length = try? await Division.length(of: input) else { return }
+    guard part.clamped(to: length) != nil else {
+      throw ProcessingError.conversionFailed(
+        reason: "\(input.lastPathComponent) is \(Tool.clock(length)) long: there is nothing in the part asked for."
+      )
+    }
+  }
+
+  /// And whatever was named after them, as ffmpeg names what it writes down.
+  private static func clear(_ leftovers: [URL]) {
+    for left in leftovers {
+      let folder = left.deletingLastPathComponent()
+      for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where name.hasPrefix(left.lastPathComponent) {
+        try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
+      }
+    }
   }
 
   /// Say what went wrong in the terms of the file rather than the tool's.
@@ -669,17 +861,6 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
     if said.contains("matches no streams") {
       return ProcessingError.conversionFailed(
         reason: "There are no subtitles in \(input.lastPathComponent)"
-      )
-    }
-
-    // fonttools reads a WOFF2 with what Python has; writing one needs the
-    // brotli module, which pip does not install alongside it. Its answer is a
-    // traceback ending in "No module named brotli", which says nothing about
-    // what to do next.
-    if said.contains("No module named brotli") {
-      return ProcessingError.conversionFailed(
-        reason: "fonttools is here but cannot write WOFF2 without its brotli module. "
-          + "`pip3 install --user brotli` adds it."
       )
     }
 

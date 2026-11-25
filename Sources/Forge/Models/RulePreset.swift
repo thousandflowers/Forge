@@ -61,6 +61,14 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   /// not to the preset, and saving it would turn a question into a setting.
   var parameterValues: [String: Double] = [:]
 
+  /// Keep what was there when the result would not be lighter. For this run
+  /// only, and outside `CodingKeys` for the same reason.
+  var onlyIfLighter = false
+
+  /// Whether the tools in the file's name are orders. Only where somebody has
+  /// just put them there: anywhere else a name is a name. For this run only.
+  var readsTools = false
+
   init(
     id: UUID = UUID(),
     name: String,
@@ -167,6 +175,13 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
       answered.parameterValues[parameter.key] = value
     }
     return answered
+  }
+
+  /// The same preset with nothing left to ask. A question nobody was there to
+  /// answer - in a watched folder, from the command line - takes its default;
+  /// it used to be dropped, default and all.
+  var settled: RulePreset {
+    parameters.isEmpty || !parameterValues.isEmpty ? self : answered(with: [:])
   }
 
   /// A copy with `action` put in place of the one of its kind already there,

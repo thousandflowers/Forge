@@ -16,23 +16,28 @@ actor WatchRunner {
   /// The other saved presets: a file renamed to carry one's trigger word asks
   /// for that preset, here as in the app.
   private let others: [RulePreset]
+  private let onlyWhenRenamed: Bool
   private var running: [UUID: Task<Void, Never>] = [:]
   private var folderIsGone = false
+  private let settings: AppSettings
 
   init(
     preset: RulePreset, mode: DestinationMode, destination: URL?, settings: AppSettings,
-    others: [RulePreset] = []
+    others: [RulePreset] = [], onlyWhenRenamed: Bool = false
   ) {
     self.others = others
+    self.onlyWhenRenamed = onlyWhenRenamed
     self.preset = preset
     self.mode = mode
     self.destination = destination
+    self.settings = settings
     self.coordinator = ProcessingCoordinator(settings: settings)
   }
 
   func run(folder: MonitoredFolder) async throws {
     let watcher = MonitoredFolderWatcher()
-    try watcher.startWatching(
+    memory.remember(folder.url, subfolders: folder.includeSubfolders)
+    try await watcher.startWatching(
       folder: folder,
       onGone: { [weak self] in Task { await self?.folderWentAway() } }
     ) { [weak self] url in
@@ -61,6 +66,9 @@ actor WatchRunner {
     }
   }
 
+  private let memory = RenameMemory()
+  private let turns = Turns()
+
   private func folderWentAway() { folderIsGone = true }
 
   private func handle(_ url: URL) async {
@@ -71,23 +79,62 @@ actor WatchRunner {
     running[id] = nil
   }
 
+  /// Given another extension, and to become what it says, where it is.
+  private func retype(_ url: URL, _ job: Retype) async {
+    do {
+      try await turns.take(of: settings.maxConcurrentNative) { try await self.retypeNow(url, job) }
+    } catch is CancellationError {
+      // Stopped on the way out; it has cleared up after itself.
+    } catch {
+      FileHandle.standardError.write(Data("failed     \(url.lastPathComponent): \(error.localizedDescription)\n".utf8))
+    }
+  }
+
+  private func retypeNow(_ url: URL, _ job: Retype) async throws {
+    // Its turn may have been a while coming, and it may be called something else.
+    guard FileManager.default.fileExists(atPath: url.path) else { return }
+    let file = try job.putBack(url)
+    memory.know(file)
+    produced.insert(file.standardizedFileURL.path)
+    let entry = try await coordinator.processFile(
+      try ProcessableFile(url: file), with: job.preset,
+      destinationMode: Automatic.mode(for: settings), destinationURL: file.deletingLastPathComponent()
+    ) { _ in }
+    for output in entry.outputs {
+      memory.know(output)
+      produced.insert(output.standardizedFileURL.path)
+      print(output.path)
+    }
+  }
+
   private func convert(_ url: URL) async {
     let path = url.standardizedFileURL.path
+    let before = memory.nameBefore(url)
+    if let before, let job = Retype.wanted(of: url, before: before) { return await retype(url, job) }
+    let renamed = before != nil
     guard !produced.contains(path) else { return }
 
-    // A file named for another preset's word goes to that preset; a preset
-    // that says which files it is for leaves the rest of the folder alone.
-    let preset = others.first { $0.isEnabled && $0.isTriggered(by: url) } ?? preset
-    guard preset.accepts(url) else { return }
+    let preset: RulePreset
+    switch Arrival.of(url, folderPreset: self.preset, presets: others, onlyWhenRenamed: onlyWhenRenamed, renamed: renamed) {
+    case .leave: return
+    case .run(let chosen): preset = chosen
+    case .ask(let request):
+      // There is no window here to ask in. A preset's questions have defaults
+      // to fall back on; a bare `_asksize` has nothing to go on.
+      guard !request.preset.parameters.isEmpty else {
+        FileHandle.standardError.write(
+          Data("left       \(url.lastPathComponent): it asks, and only the app can put the question\n".utf8)
+        )
+        return
+      }
+      preset = request.preset
+    }
     guard let file = try? ProcessableFile(url: url) else { return }
 
     do {
-      let entry = try await coordinator.processFile(
-        file,
-        with: preset,
-        destinationMode: mode,
-        destinationURL: destination
-      ) { _ in }
+      let entry = try await turns.take(of: settings.maxConcurrentNative) { [coordinator, mode, destination] in
+        try await coordinator.processFile(file, with: preset, destinationMode: mode, destinationURL: destination) { _ in }
+      }
       // Every file it wrote, not only the first: a preset that splits, or a
       // PDF with several pages, writes several, and the ones not remembered
       // were picked up as new arrivals and converted again, without end.

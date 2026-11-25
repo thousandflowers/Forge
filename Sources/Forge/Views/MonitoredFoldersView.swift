@@ -8,10 +8,10 @@ struct MonitoredFoldersView: View {
   var body: some View {
     Group {
       if model.folders.isEmpty {
-        EmptyStateView(icon: "folder.badge.gearshape", title: "No monitored folders",
-                       message: "Add a folder and Forge converts new files dropped into it automatically.",
-                       actionTitle: model.usablePresets.isEmpty ? nil : "Add Folder",
-                       action: model.usablePresets.isEmpty ? nil : { showAdd = true })
+        EmptyStateView(icon: "folder.badge.gearshape", title: "No watched folders",
+                       message: "Rename a file on the Desktop to clip_mute.mp4, and it is done. Or add a folder, and Forge converts what is dropped into it.",
+                       actionTitle: "Watch my Desktop and Downloads for names",
+                       action: { model.watchForNames() })
       } else {
         List {
           ForEach(model.folders) { folder in
@@ -43,13 +43,13 @@ private struct FolderRow: View {
   var body: some View {
     HStack(spacing: 14) {
       HStack(spacing: 6) {
-        Image(systemName: folder.isActive ? "folder.fill" : "folder")
-          .font(.title2).foregroundStyle(folder.isActive ? Color.accentColor : .secondary)
+        BlockIcon(symbol: "folder.fill", tint: folder.isActive ? .accentColor : .gray, size: 30)
         Image(systemName: "arrow.right").font(.caption).foregroundStyle(.secondary)
-        Image(systemName: preset?.category.icon ?? "questionmark")
-          .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
-          .frame(width: Metrics.iconSize + 4, height: Metrics.iconSize + 4)
-          .background(folder.isActive ? Color.accentColor : .secondary, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        // Without a preset it is the name that says.
+        BlockIcon(
+          symbol: folder.ruleId == AppModel.noPreset ? "character.cursor.ibeam" : preset?.category.icon ?? "questionmark",
+          tint: folder.isActive ? preset?.category.tint ?? .orange : .gray, size: 30
+        )
       }
       VStack(alignment: .leading, spacing: 2) {
         Text(folder.arrivalSentence).font(.system(size: Metrics.bodyText, weight: .semibold))
@@ -65,6 +65,7 @@ private struct FolderRow: View {
       .help(folder.isActive ? "Stop watching" : "Watch again")
       Menu {
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder.url]) }
+        onlyWhenRenamed
         Divider()
         Button("Remove…", role: .destructive) { confirmingRemoval = true }
       } label: { Image(systemName: "ellipsis.circle") }
@@ -74,6 +75,7 @@ private struct FolderRow: View {
     .padding(.vertical, 6)
     .contextMenu {
       Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder.url]) }
+      onlyWhenRenamed
       Button("Remove…", role: .destructive) { confirmingRemoval = true }
     }
     // Deleting a preset asks; so does clearing the history. This went at once.
@@ -83,6 +85,13 @@ private struct FolderRow: View {
     } message: {
       Text("Forge stops converting what arrives in it. The folder and everything in it stay where they are.")
     }
+  }
+
+  private var onlyWhenRenamed: some View {
+    Toggle("Only when renamed", isOn: Binding(
+      get: { folder.onlyWhenRenamed },
+      set: { model.setOnlyWhenRenamed(folder, $0) }
+    ))
   }
 
   private func remove() {
@@ -99,6 +108,7 @@ private struct AddFolderSheet: View {
   @State private var mode: DestinationMode = .copyTo
   @State private var destinationURL: URL?
   @State private var includeSubfolders = false
+  @State private var onlyWhenRenamed = false
 
   private var canAdd: Bool {
     folderURL != nil && presetID != nil && (mode == .overwrite || destinationURL != nil)
@@ -112,6 +122,10 @@ private struct AddFolderSheet: View {
             Label(folderURL?.path ?? "Choose folder…", systemImage: "folder").lineLimit(1)
           }
           Toggle("Include subfolders", isOn: $includeSubfolders)
+          Toggle(isOn: $onlyWhenRenamed) {
+            Text("Only when renamed")
+            Text("Leaves every file alone until its name says what it wants: photo_2MB, photo_privacy, photo_ask, or a preset’s own word.")
+          }
         }
         Section("Apply") {
           Picker("Preset", selection: $presetID) {
@@ -129,6 +143,8 @@ private struct AddFolderSheet: View {
         }
       }
       .formStyle(.grouped)
+      // One ground, with the buttons under it.
+      .scrollContentBackground(.hidden)
       Divider()
       HStack {
         Spacer()
@@ -140,7 +156,8 @@ private struct AddFolderSheet: View {
               presetID: presetID,
               mode: mode,
               destination: destinationURL,
-              includeSubfolders: includeSubfolders
+              includeSubfolders: includeSubfolders,
+              onlyWhenRenamed: onlyWhenRenamed
             )
           }
           dismiss()
@@ -151,7 +168,7 @@ private struct AddFolderSheet: View {
       }
       .padding()
     }
-    .frame(width: 460, height: 420)
+    .frame(width: 460, height: 430)
     .translucentSheet()
     .onAppear { if presetID == nil { presetID = model.presets.first?.id } }
   }

@@ -20,7 +20,7 @@ struct OutputFormat: Identifiable, Hashable {
   static var audio: [OutputFormat] { Self.sorted(Set(FormatCatalog.writableAudioTypes.keys)) }
   static var video: [OutputFormat] { Self.sorted(FormatCatalog.writableVideoTypes) }
   static var documents: [OutputFormat] {
-    Self.sorted(Set(DocumentText.writable.keys).union([.pdf]))
+    Self.sorted(Set(DocumentText.writable.keys).union([.pdf]).union([Book.type, UTType(filenameExtension: "pptx"), UTType(filenameExtension: "cbz", conformingTo: .data)].compactMap { $0 }))
   }
 
   /// The image formats, plus the ones a tool on this Mac adds. Offered only
@@ -31,6 +31,9 @@ struct OutputFormat: Identifiable, Hashable {
     if ExternalTools.locate("cwebp") != nil, let webp = UTType("org.webmproject.webp") {
       types.insert(webp)
     }
+    types.insert(.svg)
+    if let dxf = FormatCatalog.type(named: "dxf") { types.insert(dxf) }
+    if let slides = UTType(filenameExtension: "pptx") { types.insert(slides) }
     return Self.sorted(types)
   }
 
@@ -47,7 +50,7 @@ struct OutputFormat: Identifiable, Hashable {
     switch kind {
     case .video: fits = { $0.conforms(to: .audiovisualContent) || $0.conforms(to: .audio) }
     case .audio: fits = { $0.conforms(to: .audio) && !$0.conforms(to: .movie) }
-    case .document: fits = { !$0.conforms(to: .audiovisualContent) && !$0.conforms(to: .image) }
+    case .document, .data: fits = { !$0.conforms(to: .audiovisualContent) && !$0.conforms(to: .image) }
     default: return []
     }
     let found = ExternalBridge.formatsWrittenByTools(for: kind)
@@ -57,25 +60,31 @@ struct OutputFormat: Identifiable, Hashable {
   /// The subtitle formats Forge writes. They are named by extension because
   /// macOS has no types for them - `.srt` is not in the type database at all.
   static var subtitles: [OutputFormat] {
-    ["srt", "vtt", "sbv"].compactMap { ext in
+    ["srt", "vtt", "sbv", "ass", "lrc", "ttml"].compactMap { ext in
       UTType(filenameExtension: ext, conformingTo: .plainText).map { OutputFormat(type: $0) }
     }
   }
 
-  /// Fonts, offered only where the tool that writes them is installed, since
-  /// CoreText reads a font's tables and cannot write one.
   static var fonts: [OutputFormat] {
-    guard ExternalTools.locate("fonttools") != nil else { return [] }
-    return ["ttf", "otf", "woff2"].compactMap { ext in
-      UTType(filenameExtension: ext, conformingTo: .font).map { OutputFormat(type: $0) }
+    FontProcessor.writable.compactMap { ext in
+      FormatCatalog.type(named: ext).map { OutputFormat(type: $0) }
     }
   }
 
-  /// What `DataProcessor` writes, which is exactly what it reads: it refuses
-  /// any other pairing rather than writing something nothing can open.
-  static var data: [OutputFormat] { Self.sorted(Set(DataProcessor.readable)) }
+  /// What `DataProcessor` writes: it refuses any other pairing rather than
+  /// writing something nothing can open.
+  static var data: [OutputFormat] {
+    let own = (DataProcessor.records + DataProcessor.tables + DataProcessor.settings + DataProcessor.places + DataProcessor.cards + DataProcessor.palettes + DataProcessor.phrases).compactMap(FormatCatalog.type(named:))
+    return Self.sorted(Set(DataProcessor.readable).union(own.filter { $0 != FormatCatalog.type(named: "ndjson") }))
+  }
 
-  static var models: [OutputFormat] { Self.sorted(FormatCatalog.writableModelTypes) }
+  /// Data as something to look at.
+  static var dataPages: [OutputFormat] { Self.sorted(Set([.html, .pdf, DocumentText.markdown].compactMap { $0 })) }
+
+  static var models: [OutputFormat] {
+    let more = ExternalTool.blender.isInstalled ? ["fbx", "blend"].compactMap { UTType(filenameExtension: $0) } : []
+    return Self.sorted(FormatCatalog.writableModelTypes.union(more))
+  }
 
   private static func sorted(_ types: Set<UTType>) -> [OutputFormat] {
     types.map { OutputFormat(type: $0) }.sorted { $0.label < $1.label }

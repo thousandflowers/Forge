@@ -1,24 +1,19 @@
 import Foundation
 
-/// A converter Forge does not ship, and where to get it from Homebrew.
+/// A converter Forge does not ship.
 ///
 /// Nothing is bundled inside the app: a copy of somebody else's binary in
-/// Forge's own bundle is their licence in Forge's repository. There are two
-/// ways one arrives instead. Homebrew, which is this type - the Mac is asked
-/// what it already has, and the install is the one command the user would have
-/// typed anyway. Or Forge's own hosted build, which is `ExtensionInfo`: a
-/// pinned source, a checksum and a version, downloaded on request. Both end up
-/// somewhere `locate` can find them, and nothing else in the app needs to know
-/// which of the two happened.
+/// Forge's own bundle is their licence in Forge's repository. The Mac is asked
+/// what it already has, however it got there; what it has not, `Toolbox`
+/// fetches from whoever makes it. Both end up somewhere `locate` can find
+/// them, and nothing else in the app needs to know which of the two happened.
 struct ExternalTool: Hashable, Identifiable, Sendable {
   /// The executable's name, as it is called.
   let binary: String
-  /// The Homebrew formula that provides it.
-  let formula: String
+  /// What it is known as, to people and to `Toolbox`.
+  let name: String
   /// What having it adds, in the user's words.
   let adds: String
-  /// Installed as an application rather than a command (LibreOffice).
-  var isCask = false
   /// Where it lives when it is an application, inside Applications.
   var insideApplications: String? = nil
   /// The kinds of file it gives more formats to. The Convert sheet offers to
@@ -39,19 +34,33 @@ struct ExternalTool: Hashable, Identifiable, Sendable {
 
   var isInstalled: Bool { location != nil }
 
-  /// The command that installs it. Shown before it runs, and run only once
-  /// the user has said so: it writes to their machine.
-  var installCommand: String { "brew install \(isCask ? "--cask " : "")\(formula)" }
+  static let blender = ExternalTool(
+    binary: "Blender", name: "Blender", adds: "BLEND, and FBX to write",
+    insideApplications: "Blender.app/Contents/MacOS/Blender", serves: [.model]
+  )
+
+  static let calibre = ExternalTool(
+    binary: "ebook-convert", name: "calibre", adds: "MOBI, AZW3, FB2, LIT, PDB and more",
+    insideApplications: "calibre.app/Contents/MacOS/ebook-convert", serves: [.document]
+  )
+
+  var release: Toolbox.Release? { Toolbox.releases[name] }
+
+  /// How much there is to download.
+  var weight: String {
+    release.map { ByteCountFormatter.string(fromByteCount: $0.build.bytes, countStyle: .file) } ?? ""
+  }
 }
 
 /// Where to look for tools, and what is there.
 enum ExternalTools {
 
   /// The directories a command-line tool lands in on macOS, in the order a
-  /// shell would search them. Homebrew first, because a Homebrew build is
-  /// newer than whatever the system shipped.
+  /// shell would search them. What Forge fetched itself first: it was asked
+  /// for here, and is the version Forge was tried with.
   static var searchPaths: [String] {
     var paths = [
+      Toolbox.shared.commands.path,
       "/opt/homebrew/bin",   // Apple silicon Homebrew
       "/usr/local/bin",      // Intel Homebrew, and most installers
       "/opt/local/bin",      // MacPorts
@@ -92,7 +101,9 @@ enum ExternalTools {
     cache.location(of: binary) { name in
       for path in searchPaths {
         let candidate = URL(fileURLWithPath: path).appendingPathComponent(name)
-        if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }
+        guard FileManager.default.isExecutableFile(atPath: candidate.path) else { continue }
+        // An application started through a link does not find the rest of itself.
+        return path == Toolbox.shared.commands.path ? candidate.resolvingSymlinksInPath() : candidate
       }
       return nil
     }
@@ -107,68 +118,6 @@ enum ExternalTools {
     // count as a change of answer, or the formats it adds stay hidden until
     // the next launch.
     ExternalBridge.forgetToolFormats()
-  }
-
-  /// Whether Homebrew itself is here, which decides whether offering the
-  /// install command makes any sense.
-  static var hasHomebrew: Bool { locate("brew") != nil }
-
-  /// Install a tool with Homebrew, from inside the app.
-  ///
-  /// The formula is one of Forge's own — never something typed in — and it is
-  /// passed as an argument rather than a shell string, so there is nothing for
-  /// a shell to reinterpret. Output is handed back line by line, because an
-  /// install that takes two minutes with no sign of life reads as a hang.
-  static func install(_ tool: ExternalTool, onOutput: @escaping @Sendable (String) -> Void) async throws {
-    guard let brew = locate("brew") else {
-      throw ProcessingError.conversionFailed(
-        reason: "Homebrew is not installed. brew.sh has the one line that installs it."
-      )
-    }
-
-    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-      let process = Process()
-      process.executableURL = brew
-      process.arguments = ["install"] + (tool.isCask ? ["--cask"] : []) + [tool.formula]
-
-      // Homebrew asks questions when it thinks a person is watching. Nobody is.
-      var environment = ProcessInfo.processInfo.environment
-      environment["HOMEBREW_NO_AUTO_UPDATE"] = "1"
-      environment["HOMEBREW_NO_ENV_HINTS"] = "1"
-      environment["NONINTERACTIVE"] = "1"
-      process.environment = environment
-
-      let pipe = Pipe()
-      process.standardOutput = pipe
-      process.standardError = pipe
-
-      pipe.fileHandleForReading.readabilityHandler = { handle in
-        let chunk = handle.availableData
-        guard !chunk.isEmpty, let text = String(data: chunk, encoding: .utf8) else { return }
-        for line in text.split(separator: "\n") where !line.isEmpty {
-          onOutput(String(line))
-        }
-      }
-
-      process.terminationHandler = { finished in
-        pipe.fileHandleForReading.readabilityHandler = nil
-        forgetWhatWasFound()
-        if finished.terminationStatus == 0 {
-          continuation.resume()
-        } else {
-          continuation.resume(throwing: ProcessingError.conversionFailed(
-            reason: "\(tool.installCommand) stopped with status \(finished.terminationStatus)"
-          ))
-        }
-      }
-
-      do {
-        try process.run()
-      } catch {
-        pipe.fileHandleForReading.readabilityHandler = nil
-        continuation.resume(throwing: error)
-      }
-    }
   }
 
   /// How much of a failing tool's complaint is kept. Enough for a stack of
@@ -250,6 +199,29 @@ enum ExternalTools {
           : "\(tool.lastPathComponent): \(message)"
       )
     }
+  }
+
+  /// What a tool says, where what it says is the answer. Its complaints go
+  /// nowhere: kept in a pipe nobody reads, a damaged film fills it and the tool
+  /// stops for ever. And stopped when whoever asked is.
+  static func answer(of tool: URL, _ arguments: [String]) -> String {
+    let process = Process()
+    process.executableURL = tool
+    process.arguments = arguments
+    process.standardInput = FileHandle.nullDevice
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    let collected = Collected(limit: .max)
+    let reading = DispatchGroup()
+    guard (try? process.run()) != nil else { return "" }
+    DispatchQueue.global(qos: .utility).async(group: reading) { collected.append(pipe.fileHandleForReading.readDataToEndOfFile()) }
+    while process.isRunning {
+      if Task.isCancelled { process.terminate() }
+      Thread.sleep(forTimeInterval: 0.01)
+    }
+    reading.wait()
+    return String(decoding: collected.data, as: UTF8.self)
   }
 
   private final class Cache: @unchecked Sendable {

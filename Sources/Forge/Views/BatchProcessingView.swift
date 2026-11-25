@@ -5,10 +5,12 @@ import UniformTypeIdentifiers
 
 struct BatchProcessingView: View {
   @EnvironmentObject private var model: AppModel
-  @StateObject private var vm = BatchViewModel()
+  /// Owned by the window, not by this screen: a screen is made again every time
+  /// it is come back to, and the files, the results and a batch still running
+  /// went with it.
+  @ObservedObject var vm: BatchViewModel
   @ObservedObject private var installer = ToolInstaller.shared
 
-  @State private var choice = ConvertChoice()
   /// Empty until a column header is clicked: the list keeps the order the
   /// files were added in, which is also the order they convert in.
   @State private var sortOrder: [KeyPathComparator<ProcessableFile>] = []
@@ -18,11 +20,6 @@ struct BatchProcessingView: View {
   /// The conversions worth one question, one per kind. Empty means there is
   /// nothing to ask.
   @State private var asking: [ConfirmationGroup] = []
-  /// A chain handed to this screen rather than chosen on it - a row in history
-  /// asking to be run again. It is not one of the saved presets, so it cannot
-  /// be looked up by id, and it stands until the user opens the sheet and says
-  /// something else.
-  @State private var adhoc: RulePreset?
   /// The file being looked through for things to cover up. Redaction is not
   /// part of a conversion: it is irreversible, it needs a person to agree to
   /// every region, and it writes a copy of its own.
@@ -38,7 +35,7 @@ struct BatchProcessingView: View {
     vm.files.reduce(0) { $0 + $1.fileSize }
   }
 
-  private var preset: RulePreset? { adhoc ?? choice.resolved(against: model.presets) }
+  private var preset: RulePreset? { vm.adhoc ?? vm.choice.resolved(against: model.presets) }
 
   var body: some View {
     VStack(spacing: 0) {
@@ -74,7 +71,7 @@ struct BatchProcessingView: View {
           ForEach(openers, id: \.tool.id) { offer in
             ToolOfferRow(
               tool: offer.tool,
-              because: "\(offer.names) needs \(offer.tool.formula) to open. It adds \(offer.tool.adds).",
+              because: "\(offer.names) needs \(offer.tool.name) to open. It adds \(offer.tool.adds).",
               installer: installer,
               then: { vm.retry(offer.urls) }
             )
@@ -93,13 +90,13 @@ struct BatchProcessingView: View {
     } isTargeted: { isTargeted = $0 }
     .overlay {
       if isTargeted, !vm.files.isEmpty {
-        RoundedRectangle(cornerRadius: 8)
-          .strokeBorder(Color.accentColor, lineWidth: 2)
-          .padding(2)
+        RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous)
+          .strokeBorder(Color.accentColor, lineWidth: 2.5)
+          .padding(6)
           .allowsHitTesting(false)
       }
     }
-    .animation(.easeOut(duration: 0.15), value: isTargeted)
+    .animation(Motion.quick, value: isTargeted)
     // A run started from History arrives here. Both hooks are needed: the
     // screen may already be showing, or may be about to appear because
     // something set this.
@@ -111,16 +108,21 @@ struct BatchProcessingView: View {
     .onChange(of: model.opened) { _ in takeOpened() }
     .navigationTitle("Convert")
     .toolbar {
-      ToolbarItemGroup {
-        // Behind the maker these would act on a list nobody can see.
+      // Behind the maker these would act on a list nobody can see. Nothing to
+      // clear is not a reason to show a disabled bin: it is a reason for there to
+      // be no bin.
+      ToolbarItem(placement: .primaryAction) {
+        if model.presetEditor == nil, !vm.files.isEmpty {
+          Button { clear() } label: { Label("Clear", systemImage: "trash") }
+            .help("Clear the list")
+            .disabled(vm.isProcessing)
+        }
+      }
+      ToolbarItem(placement: .primaryAction) {
         if model.presetEditor == nil {
-          Button { addFiles() } label: { Label("Add Files", systemImage: "plus") }
-          // Nothing to clear is not a reason to show a disabled bin: it is a
-          // reason for there to be no bin.
-          if !vm.files.isEmpty {
-            Button(role: .destructive) { clear() } label: { Label("Clear", systemImage: "trash") }
-              .disabled(vm.isProcessing)
-          }
+          // As dark as the others: drawn by itself it looked switched off.
+          Button { addFiles() } label: { Label("Add Files", systemImage: "plus").foregroundStyle(Color(nsColor: .labelColor).opacity(0.65)) }
+            .help("Add files")
         }
       }
     }
@@ -129,7 +131,7 @@ struct BatchProcessingView: View {
         kinds: kinds,
         sources: vm.files,
         presets: offeredPresets,
-        choice: $choice,
+        choice: $vm.choice,
         sameAsLast: LastConversions.offer(for: vm.files),
         onSameAsLast: sameAsLast,
         onMore: openMaker,
@@ -154,7 +156,7 @@ struct BatchProcessingView: View {
       )
     }
     .confirmationDialog(summaryTitle, isPresented: $confirming) {
-      Button(choice.destinationMode == .overwrite ? "Replace Files" : "Move Files", role: .destructive) {
+      Button(vm.choice.destinationMode == .overwrite ? "Replace Files" : "Move Files", role: .destructive) {
         start()
       }
       Button("Cancel", role: .cancel) {}
@@ -164,42 +166,50 @@ struct BatchProcessingView: View {
   }
 
   private var dropZone: some View {
-    VStack(spacing: 14) {
-      Image(systemName: "square.and.arrow.down.on.square")
-        .font(.system(size: 52, weight: .light))
-        .foregroundStyle(isTargeted ? Color.accentColor : Color.secondary)
-      Text("Drop files to convert").font(.title2.weight(.medium))
+    let shape = RoundedRectangle(cornerRadius: Metrics.blockRadius, style: .continuous)
+    return VStack(spacing: 14) {
+      FileFan(isOpen: isTargeted)
+      Text("Drop files to convert").font(.title2.weight(.semibold))
       Button { addFiles() } label: { Label("Choose Files…", systemImage: "folder") }
-        .controlSize(.large).padding(.top, 4)
+        .controlSize(.large)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(
-      RoundedRectangle(cornerRadius: 16)
-        .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [7]))
-        .foregroundStyle(isTargeted ? Color.accentColor : Color.secondary.opacity(0.22))
-    )
-    .padding(28)
+    .background(shape.fill(Color.accentColor.opacity(isTargeted ? 0.08 : 0)))
+    .overlay(DropBorder(isLit: isTargeted))
+    .padding(20)
     .contentShape(Rectangle())
   }
 
   private var fileTable: some View {
     Table(vm.files.sorted(using: sortOrder), sortOrder: $sortOrder) {
       TableColumn("File", value: \.fileName) { f in
-        Text(f.fileName)
-          .lineLimit(1)
-          .truncationMode(.middle)
+        HStack(spacing: 8) {
+          PreviewImage(url: f.url, maxPixels: 64)
+            .frame(width: 24, height: 24)
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            // A white picture on a white list has no edge of its own.
+            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
+            .accessibilityHidden(true)
+          Text(f.fileName)
+            .lineLimit(1)
+            .truncationMode(.middle)
+        }
+          .frame(height: 30)
           .contextMenu {
             // Images only: Vision reads pictures, and offering this for a CSV
             // would be a menu item that finds nothing every time.
             if FormatCatalog.isReadableImage(f.fileType) {
               Button("Review for Redaction…") { reviewing = f }
             }
+            if CutModel(file: f) != nil { Button("Cut…") { model.cut(f) } }
           }
       }
+      .width(min: 180, ideal: 300)
       TableColumn("Type", value: \.kindName) { f in
         Text(f.kindName)
           .foregroundStyle(.secondary)
       }
+      .width(min: 110, ideal: 140)
       TableColumn("Size", value: \.fileSize) { f in
         Text(f.fileSize.formatted(.byteCount(style: .file)))
           .foregroundStyle(.secondary).monospacedDigit()
@@ -237,6 +247,7 @@ struct BatchProcessingView: View {
         }
       }
     }
+    .tableStyle(.inset(alternatesRowBackgrounds: false))
   }
 
   private var processingBar: some View {
@@ -273,6 +284,14 @@ struct BatchProcessingView: View {
         Text(saving).font(.callout).foregroundStyle(.secondary)
       }
       Spacer()
+      Menu {
+        StartChoices(batch: vm)
+      } label: {
+        Label(vm.startsAt.map { "Starts at \($0.formatted(date: .omitted, time: .shortened))" } ?? "Start now", systemImage: "clock")
+      }
+      .menuStyle(.borderlessButton)
+      .fixedSize()
+      .help("Start this conversion now, or later")
       Button(vm.convertTitle) { openOptions() }
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
@@ -294,7 +313,7 @@ struct BatchProcessingView: View {
       // batch's choice is one press away, as "Same as Last", instead of
       // riding along where it may not fit - a film's MOV · 1280×720 · HEVC
       // showed on the next song.
-      choice = choice.cleared()
+      vm.choice = vm.choice.cleared()
     }
     route()
   }
@@ -317,7 +336,7 @@ struct BatchProcessingView: View {
     guard preset != nil else { openOptions(); return }
 
     let plans = vm.files.map {
-      ConversionPlan(file: $0, preset: preset, destinationMode: choice.destinationMode)
+      ConversionPlan(file: $0, preset: preset, destinationMode: vm.choice.destinationMode)
     }
 
     switch ConfirmationLevel.forBatch(plans) {
@@ -369,7 +388,7 @@ struct BatchProcessingView: View {
           count: group.count,
           preset: preset,
           plan: group.plan,
-          destination: choice.destinationURL
+          destination: vm.choice.destinationURL
         )
       }
       .sorted { $0.kind.rawValue < $1.kind.rawValue }
@@ -387,32 +406,32 @@ struct BatchProcessingView: View {
 
   private func clear() {
     vm.clear()
-    adhoc = nil
+    vm.adhoc = nil
   }
 
   /// The sheet is the place where the user says what they want, so opening it
   /// puts them back in charge of the chain.
   private func openOptions() {
-    adhoc = nil
-    choice = choice.cleared()
+    vm.adhoc = nil
+    vm.choice = vm.choice.cleared()
     showingOptions = true
   }
 
   /// Overwrite and Move both change what is already on disk, so they are worth
   /// a sentence before rather than an apology after.
   private func convert() {
-    if choice.destinationMode == .copyTo { start() } else { confirming = true }
+    if vm.choice.destinationMode == .copyTo { start() } else { confirming = true }
   }
 
   /// The maker with these files in it, and back here however it is left.
   private func openMaker() {
     model.presetEditor = PresetEditorRequest(
-      preset: choice.draftForMaker,
+      preset: vm.choice.draftForMaker,
       conversion: EditorConversion(
         sources: vm.files,
         fitMode: model.settings.defaultFitMode,
-        mode: choice.destinationMode,
-        destination: choice.destinationURL,
+        mode: vm.choice.destinationMode,
+        destination: vm.choice.destinationURL,
         onBack: { take($0); showingOptions = true },
         onConvert: { take($0); convert() }
       )
@@ -420,9 +439,9 @@ struct BatchProcessingView: View {
   }
 
   private func take(_ outcome: EditorConversion.Outcome) {
-    choice = choice.edited(outcome.chain)
-    choice.destinationMode = outcome.mode
-    choice.destinationURL = outcome.destination
+    vm.choice = vm.choice.edited(outcome.chain)
+    vm.choice.destinationMode = outcome.mode
+    vm.choice.destinationURL = outcome.destination
   }
 
   /// The last conversion of this kind, run on these files: the same chain and
@@ -430,9 +449,9 @@ struct BatchProcessingView: View {
   /// originals.
   private func sameAsLast() {
     guard let last = LastConversions.offer(for: vm.files) else { return }
-    adhoc = last.preset
-    choice.destinationMode = last.mode
-    choice.destinationURL = last.destination
+    vm.adhoc = last.preset
+    vm.choice.destinationMode = last.mode
+    vm.choice.destinationURL = last.destination
     if last.mode == .copyTo { start() } else { confirming = true }
   }
 
@@ -452,9 +471,9 @@ struct BatchProcessingView: View {
     // dropped on a preset join what is already here.
     if pending.replacesList, !vm.isProcessing { vm.clear() }
     vm.add(pending.files)
-    adhoc = pending.preset
-    choice.destinationMode = pending.mode
-    choice.destinationURL = pending.destination
+    vm.adhoc = pending.preset
+    vm.choice.destinationMode = pending.mode
+    vm.choice.destinationURL = pending.destination
     model.pending = nil
     guard !vm.files.isEmpty else { return }
     route()
@@ -463,21 +482,21 @@ struct BatchProcessingView: View {
   private func start() {
     guard let preset else { return }
     LastConversions.record(
-      LastConversion(preset: preset, mode: choice.destinationMode, destination: choice.destinationURL),
+      LastConversion(preset: preset, mode: vm.choice.destinationMode, destination: vm.choice.destinationURL),
       for: kinds
     )
     Task {
       await vm.convert(
         model: model,
         preset: preset,
-        mode: choice.destinationMode,
-        destination: choice.destinationURL
+        mode: vm.choice.destinationMode,
+        destination: vm.choice.destinationURL
       )
     }
   }
 
   private var summaryTitle: String {
-    choice.destinationMode == .overwrite
+    vm.choice.destinationMode == .overwrite
       ? (vm.files.count == 1 ? "Replace this file?" : "Replace these \(vm.files.count) files?")
       : (vm.files.count == 1 ? "Move this file?" : "Move these \(vm.files.count) files?")
   }
@@ -490,11 +509,11 @@ struct BatchProcessingView: View {
     lines.append("\(vm.files.count) file\(vm.files.count == 1 ? "" : "s"), \(totalSize.formatted(.byteCount(style: .file)))")
 
     if let preset {
-      let chain = preset.actions.map(PresetCard.chip).joined(separator: " · ")
+      let chain = preset.actions.map(PresetChip.text).joined(separator: " · ")
       if !chain.isEmpty { lines.append(chain) }
     }
 
-    switch choice.destinationMode {
+    switch vm.choice.destinationMode {
     case .overwrite:
       lines.append(
         model.settings.createBackupBeforeOverwrite
@@ -522,12 +541,23 @@ struct BatchProcessingView: View {
 @MainActor
 final class BatchViewModel: ObservableObject {
   @Published var files: [ProcessableFile] = []
+  /// Put here, and nothing done about them yet.
+  var waiting: Int { files.filter { statusMap[$0.id] == nil }.count }
+  /// What they should become, kept with them.
+  @Published var choice = ConvertChoice()
+  /// A chain handed to the screen rather than chosen on it - a row in history
+  /// asking to be run again. It is not one of the saved presets, so it cannot
+  /// be looked up by id, and it stands until the user opens the sheet and says
+  /// something else.
+  @Published var adhoc: RulePreset?
   @Published var statusMap: [UUID: ProcessingStatus] = [:]
   /// Why a file failed, as the engine said it. The row used to say "Failed"
   /// and nothing else, with the reason thrown away.
   @Published var failures: [UUID: String] = [:]
   @Published var fileProgress: [UUID: Double] = [:]
   @Published var isProcessing = false
+  /// When to begin, where that is not now.
+  @Published var startsAt: Date?
   @Published var progress: Double = 0
   /// What the last batch actually cost, once it is known. Guessing beforehand
   /// would be a guess; this is measured.
@@ -558,7 +588,7 @@ final class BatchViewModel: ObservableObject {
     lastSaving = nil
     skipped = nil
 
-    let existing = Set(files.map(\.url))
+    var known = Set(files.map(\.url))
     var added: [ProcessableFile] = []
     var unreadable: [URL] = []
 
@@ -567,7 +597,9 @@ final class BatchViewModel: ObservableObject {
         unreadable.append(url)
         continue
       }
-      guard !existing.contains(file.url), !added.contains(where: { $0.url == file.url }) else { continue }
+      // Looked up, not looked for: five thousand of them held the window still
+      // for seconds.
+      guard known.insert(file.url).inserted else { continue }
       added.append(file)
     }
 
@@ -599,7 +631,7 @@ final class BatchViewModel: ObservableObject {
       guard let tool = ToolOffers.opener(for: url) else { continue }
       grouped[tool.binary, default: (tool, [])].urls.append(url)
     }
-    return grouped.values.map { Opener(tool: $0.tool, urls: $0.urls) }.sorted { $0.tool.formula < $1.tool.formula }
+    return grouped.values.map { Opener(tool: $0.tool, urls: $0.urls) }.sorted { $0.tool.name < $1.tool.name }
   }
 
   /// Once a tool is in, the files it opens are taken in again.
@@ -696,6 +728,12 @@ final class BatchViewModel: ObservableObject {
     lastSaving = nil
     defer { isProcessing = false }
 
+    // Not yet, where it was asked for later. Stopped in the meantime it is not
+    // begun at all.
+    while let startsAt, startsAt > Date(), !cancellation.withLock({ $0 }) { try? await Task.sleep(nanoseconds: 500_000_000) }
+    self.startsAt = nil
+    guard !cancellation.withLock({ $0 }) else { return }
+
     let total = files.count
     let coordinator = model.coordinator
     let limit = await coordinator.maxConcurrentNative
@@ -718,8 +756,14 @@ final class BatchViewModel: ObservableObject {
     }
     defer { watching.cancel() }
 
-    _ = await Batch.run(
-      files,
+    // What is added while it works is worked on as well, the same way.
+    var begun: Set<UUID> = []
+    while !cancellation.withLock({ $0 }) {
+      let next = files.filter { !begun.contains($0.id) }
+      guard !next.isEmpty else { break }
+      begun.formUnion(next.map(\.id))
+      _ = await Batch.run(
+      next,
       preset: preset,
       mode: mode,
       destination: destination,
@@ -743,7 +787,8 @@ final class BatchViewModel: ObservableObject {
       if case .finished(_, _, _, let written, _) = event, !written.isEmpty {
         outputs.withLock { $0.append(contentsOf: written) }
       }
-      Task { @MainActor [weak self] in self?.apply(event, of: total, in: model) }
+      Task { @MainActor [weak self] in self?.apply(event, of: max(total, self?.files.count ?? total), in: model) }
+    }
     }
 
     watching.cancel()
@@ -754,7 +799,8 @@ final class BatchViewModel: ObservableObject {
     // as 94% smaller.
     lastSaving = Self.saving(
       from: outputs.withLock { $0 },
-      sources: files.filter { statusMap[$0.id] == .completed }
+      sources: files.filter { statusMap[$0.id] == .completed },
+      isSomethingElse: files.contains { preset.tools(for: $0).contains(where: \.makesSomethingElse) }
     )
     await model.refreshHistory()
 
@@ -765,11 +811,14 @@ final class BatchViewModel: ObservableObject {
         failed: finished.filter { $0 == .failed }.count
       )
     }
+    // Stopped by hand is not finished.
+    if !cancellation.withLock({ $0 }) { model.settings.whenFinished.run(outputs.withLock { $0 }) }
   }
 
   /// What the batch cost, compared with what went in. A pure reading of file
   /// sizes, so it belongs to nobody's actor.
-  nonisolated static func saving(from outputs: [URL], sources: [ProcessableFile]) -> String? {
+  /// - Parameter isSomethingElse: what was made is not the files in another form.
+  nonisolated static func saving(from outputs: [URL], sources: [ProcessableFile], isSomethingElse: Bool = false) -> String? {
     guard !outputs.isEmpty else { return nil }
     let before = sources.reduce(Int64(0)) { $0 + $1.fileSize }
     let after = outputs.reduce(Int64(0)) { total, url in
@@ -779,6 +828,7 @@ final class BatchViewModel: ObservableObject {
     guard before > 0, after > 0 else { return nil }
 
     let written = after.formatted(.byteCount(style: .file))
+    if isSomethingElse { return "\(written) written" }
     let change = Int(((Double(before) - Double(after)) / Double(before) * 100).rounded())
     if change > 0 { return "\(written) written, \(change)% smaller" }
     if change < 0 { return "\(written) written, \(-change)% larger" }
@@ -808,4 +858,44 @@ final class BatchViewModel: ObservableObject {
 private extension ProcessableFile {
   /// What the Type column shows and sorts by.
   var kindName: String { fileType.localizedDescription ?? fileType.preferredFilenameExtension ?? "—" }
+}
+
+/// When the next conversion starts.
+struct StartChoices: View {
+  @ObservedObject var batch: BatchViewModel
+
+  var body: some View {
+    Button(batch.startsAt == nil ? "✓ Now" : "Now") { batch.startsAt = nil }
+    ForEach([15, 60, 180, 480], id: \.self) { minutes in
+      Button(minutes < 60 ? "In \(minutes) minutes" : "In \(minutes / 60) \(minutes == 60 ? "hour" : "hours")") {
+        batch.startsAt = Date().addingTimeInterval(Double(minutes) * 60)
+      }
+    }
+    if let startsAt = batch.startsAt { Text("At \(startsAt.formatted(date: .omitted, time: .shortened))") }
+  }
+}
+
+/// A picture, a film and a page, which make room for what is being brought.
+struct FileFan: View {
+  let isOpen: Bool
+  var size: CGFloat = 62
+  @Environment(\.accessibilityReduceMotion) private var isStill
+
+  private static let kinds: [PresetCategory] = [.image, .document, .video]
+
+  var body: some View {
+    ZStack {
+      ForEach(Array(Self.kinds.enumerated()), id: \.offset) { index, kind in
+        let side = CGFloat(index - 1)
+        BlockIcon(symbol: kind.icon, tint: kind.tint, size: size)
+          .shadow(color: .black.opacity(0.18), radius: 5, y: 3)
+          .rotationEffect(.degrees(Double(side) * (isOpen ? 16 : 9)))
+          .offset(x: side * size * (isOpen ? 0.86 : 0.6), y: abs(side) * size * 0.1)
+          .zIndex(index == 1 ? 1 : 0)
+      }
+    }
+    .frame(width: size * 3, height: size * 1.4)
+    .animation(isStill ? nil : Motion.arrive, value: isOpen)
+    .accessibilityHidden(true)
+  }
 }

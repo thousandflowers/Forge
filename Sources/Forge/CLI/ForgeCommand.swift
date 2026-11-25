@@ -12,7 +12,7 @@ struct ForgeCommand: AsyncParsableCommand {
     commandName: LaunchMode.toolName,
     abstract: "Batch file conversion on macOS, using only Apple frameworks.",
     version: Bundle.main.shortVersion,
-    subcommands: [Convert.self, Presets.self, Formats.self, Watch.self],
+    subcommands: [Convert.self, Join.self, MCP.self, Presets.self, Formats.self, Watch.self],
     defaultSubcommand: Convert.self
   )
 }
@@ -97,6 +97,9 @@ struct RecipeOptions: ParsableArguments {
   @Option(help: "Answer a question the preset asks, as key=value, e.g. width=640. Unanswered questions take their default.")
   var answer: [String] = []
 
+  @Option(name: .customLong("do"), help: "Something to do to it: mute, speed2x, trim10-45, rotate90, crop1x1, nobg, pages2-5, split4… The same words work in a file's name. Repeat it for more than one.")
+  var tools: [Tool] = []
+
   /// The languages asked for, whether given one option each or in one list.
   var languages: [String] {
     ocrLanguages.flatMap { $0.split(separator: ",") }.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
@@ -113,6 +116,7 @@ struct RecipeOptions: ParsableArguments {
       let beside = [
         format.map { _ in "--to" }, resize.map { _ in "--resize" }, quality.map { _ in "--quality" },
         fit.map { _ in "--fit" }, filter.isEmpty ? nil : "--filter", codec.map { _ in "--codec" },
+        tools.isEmpty ? nil : "--do",
       ].compactMap { $0 }
       guard beside.isEmpty else {
         throw ValidationError(
@@ -139,8 +143,8 @@ struct RecipeOptions: ParsableArguments {
       throw ValidationError("--fit says how to fit a new size, and no --resize was given.")
     }
 
-    guard format != nil || resize != nil || quality != nil || !filter.isEmpty || !ocrLanguages.isEmpty || codec != nil else {
-      throw ValidationError("Nothing to do: pass --preset, or one of --to, --resize, --quality, --filter.")
+    guard format != nil || resize != nil || quality != nil || !filter.isEmpty || !ocrLanguages.isEmpty || codec != nil || !tools.isEmpty else {
+      throw ValidationError("Nothing to do: pass --preset, or one of --to, --do, --resize, --quality, --filter.")
     }
 
     var preset = RulePreset(
@@ -153,6 +157,7 @@ struct RecipeOptions: ParsableArguments {
       category: .custom,
       ocrLanguages: languages
     )
+    for tool in tools { preset.actions = preset.actions.adding(tool) }
     // The extension as typed, where the format goes by more than one.
     if let format { preset.outputExtension = format.lowercased() }
     if let codec {
@@ -166,24 +171,7 @@ struct RecipeOptions: ParsableArguments {
 
   private func targetType() throws -> UTType? {
     guard let format else { return nil }
-    if let type = UTType(filenameExtension: format), !type.isDynamic { return type }
-    // Only then: the formats macOS has no type for and Forge writes anyway.
-    // Taking this branch first would have handed back a dynamic type for
-    // `txt`, which has a perfectly good one of its own.
-    if Toml.handles(format) || Subtitles.writes(format),
-       let text = UTType(filenameExtension: format, conformingTo: .plainText) {
-      return text
-    }
-    // WOFF2 has no type on macOS either, and is a font rather than text.
-    if ExternalBridge.Fonts.handles(format),
-       let font = UTType(filenameExtension: format, conformingTo: .font) {
-      return font
-    }
-    // What pandoc writes and macOS has no name for: rst, org, tex, ipynb.
-    if ExternalBridge.pandocWritesFormat(format),
-       let text = UTType(filenameExtension: format, conformingTo: .text) {
-      return text
-    }
+    if let type = FormatCatalog.type(named: format) { return type }
     throw ValidationError("“\(format)” is not a format this Mac knows. Try `forge formats`.")
   }
 
@@ -199,7 +187,7 @@ struct RecipeOptions: ParsableArguments {
       notes.append("--quality does nothing for \(format?.uppercased() ?? "this format"): it keeps every pixel as it is.")
     }
     if let codec, !kinds.isEmpty, kinds.isDisjoint(with: [.audio, .video]) {
-      notes.append("--codec \(codec.rawValue) is for sound and film, and none of these files is either.")
+      notes.append("--codec \(codec.rawValue) is for sound and video, and none of these files is either.")
     }
     return notes
   }
@@ -264,6 +252,9 @@ struct RecipeOptions: ParsableArguments {
 
 extension ResizeFitMode: ExpressibleByArgument {}
 extension FilterType: ExpressibleByArgument {}
+extension Tool: ExpressibleByArgument {
+  init?(argument: String) { self.init(word: argument) }
+}
 
 /// Entry point for the command-line side.
 ///
@@ -280,6 +271,8 @@ enum CLI {
     // buffer fills or the process exits - and a watcher killed with a signal
     // never gets that far. A terminal line-buffers; a log should too.
     setvbuf(stdout, nil, _IOLBF, 0)
+    // Typed where it is not shown, and only where somebody is there to type.
+    if isatty(STDIN_FILENO) == 1 { PDFLock.ask = { typedPassword($0) } }
 
     let work = Task {
       do {
@@ -310,6 +303,17 @@ enum CLI {
     }
     await work.value
     stops.forEach { $0.cancel() }
+  }
+
+  private static func typedPassword(_ question: PDFLock.Question) -> String? {
+    func type(_ prompt: String) -> String? { getpass(prompt).map { String(cString: $0) } }
+    if question.isAgain { FileHandle.standardError.write(Data("That was not it.\n".utf8)) }
+    guard question.isNew else { return type("Password of \(question.fileName): ") }
+    while true {
+      guard let first = type("New password for \(question.fileName): "), !first.isEmpty else { return nil }
+      if type("Again: ") == first { return first }
+      FileHandle.standardError.write(Data("They are not the same.\n".utf8))
+    }
   }
 
   /// What a shell reports for a command stopped with Ctrl-C: 128 + SIGINT.

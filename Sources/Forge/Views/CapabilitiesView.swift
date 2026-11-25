@@ -7,7 +7,7 @@ import SwiftUI
 /// computed from the frameworks at run time, so it describes the machine it is
 /// running on rather than a claim written months ago.
 struct CapabilitiesView: View {
-  private let columns = [GridItem(.adaptive(minimum: 300), spacing: 16)]
+  private let columns = [GridItem(.adaptive(minimum: 250), spacing: 16)]
 
   @State private var search = ""
   @State private var kind: Capability.Status.Kind?
@@ -20,12 +20,11 @@ struct CapabilitiesView: View {
   var body: some View {
     VStack(spacing: 0) {
       filterBar
-      Divider()
       if visible.isEmpty {
         EmptyStateView(
           icon: "magnifyingglass",
           title: "Nothing matches",
-          message: "No capability fits what you are looking for.",
+          message: "No tool fits what you are looking for.",
           actionTitle: "Clear Filters",
           action: clearFilters
         )
@@ -33,10 +32,8 @@ struct CapabilitiesView: View {
         list
       }
     }
-    .navigationTitle("Capabilities")
-    .searchable(text: $search, placement: .toolbar, prompt: "Search capabilities")
-    // Installing writes to the user's Mac, so the exact command is shown once
-    // before it runs. Everything after that happens in here.
+    // What comes from somewhere else is said once, with where from and how much,
+    // before it is fetched. Everything after that happens in here.
     .confirmsToolInstalls(with: installer)
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
@@ -44,7 +41,8 @@ struct CapabilitiesView: View {
           ExternalTools.forgetWhatWasFound()
           Task { await scan() }
         } label: {
-          Label(hasScanned ? "Scan Again" : "Suggest From My Files", systemImage: "sparkle.magnifyingglass")
+          Label(hasScanned ? "Look Again" : "Suggest from My Files", systemImage: "sparkle.magnifyingglass")
+            .labelStyle(.titleAndIcon)
         }
         .disabled(scanning)
         .help("Look at the kinds of file you have, and put what would help first")
@@ -63,7 +61,7 @@ struct CapabilitiesView: View {
         } else if !suggested.isEmpty {
           section("Suggested for your files", suggested, showEvidence: true)
         } else if hasScanned {
-          Text("Nothing on this Mac needs a capability Forge is missing.")
+          Text("Nothing on this Mac needs a tool Forge is missing.")
             .font(.callout)
             .foregroundStyle(.secondary)
         }
@@ -83,13 +81,14 @@ struct CapabilitiesView: View {
 
   private var filterBar: some View {
     HStack(spacing: 10) {
+      SearchField(prompt: "Search tools", text: $search).frame(maxWidth: 260)
       Picker("Status", selection: $kind) {
-        Text("Anything").tag(Capability.Status.Kind?.none)
+        Text("Any status").tag(Capability.Status.Kind?.none)
         ForEach(Capability.Status.Kind.allCases, id: \.self) { kind in
           Text(kind.title).tag(Optional(kind))
         }
       }
-      .pickerStyle(.menu).fixedSize()
+      .labelsHidden().pickerStyle(.menu).fixedSize()
 
       if isFiltered {
         Button("Clear", action: clearFilters)
@@ -103,7 +102,8 @@ struct CapabilitiesView: View {
         .monospacedDigit()
     }
     .padding(.horizontal, 20)
-    .padding(.vertical, 10)
+    .padding(.top, 14)
+    .padding(.bottom, 2)
   }
 
   private var isFiltered: Bool { kind != nil || !search.isEmpty }
@@ -116,7 +116,7 @@ struct CapabilitiesView: View {
   private var countLabel: String {
     isFiltered
       ? "\(visible.count) of \(Capabilities.all.count)"
-      : "\(Capabilities.all.count) capabilities"
+      : "\(Capabilities.all.count) in all"
   }
 
   // MARK: - What to show
@@ -157,7 +157,7 @@ struct CapabilitiesView: View {
       haystack.append(install.adds)
     case .needsPack(let pack):
       haystack.append(pack.name)
-      if let tool = pack.tool { haystack.append(contentsOf: [tool.binary, tool.formula, tool.adds]) }
+      if let tool = pack.tool { haystack.append(contentsOf: [tool.binary, tool.name, tool.adds]) }
     case .unavailable(let reason):
       haystack.append(reason)
     case .planned:
@@ -201,16 +201,13 @@ private struct CapabilityCard: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 8) {
-        Image(systemName: capability.symbol)
-          .font(.title3)
-          .foregroundStyle(tint)
-        Spacer()
-        if !offersAction { badge }
+        BlockIcon(symbol: capability.symbol, tint: tint, size: 30)
+        Text(capability.title)
+          .font(.headline)
+          .lineLimit(1)
+        Spacer(minLength: 4)
+        if saysMore { badge }
       }
-
-      Text(capability.title)
-        .font(.headline)
-        .lineLimit(1)
 
       Text(capability.summary)
         .font(.callout)
@@ -231,9 +228,8 @@ private struct CapabilityCard: View {
     .padding(14)
     // A minimum, not a fixed height: a fixed one left a hole under every short
     // summary and clipped the long ones.
-    .frame(minHeight: 176, alignment: .top)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.12)))
+    .frame(minHeight: 132, maxHeight: .infinity, alignment: .top)
+    .forgeCard()
   }
 
   @ViewBuilder
@@ -279,14 +275,7 @@ private struct CapabilityCard: View {
   private func toolDetail(_ tool: ExternalTool, wired: Bool) -> some View {
     switch installer.state(of: tool.binary) {
     case .running(let line):
-      HStack(spacing: 8) {
-        ProgressView().controlSize(.small)
-        Text(line.isEmpty ? "Installing \(tool.formula)…" : line)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .truncationMode(.middle)
-      }
+      ToolProgress(tool: tool, share: line)
 
     case .failed(let reason):
       VStack(alignment: .leading, spacing: 6) {
@@ -307,17 +296,20 @@ private struct CapabilityCard: View {
   private func settled(_ tool: ExternalTool, wired: Bool) -> some View {
     if tool.isInstalled {
       caption(wired
-        ? "\(tool.binary) is installed, and Forge uses it for \(tool.adds)."
-        : "\(tool.binary) is installed. Forge does not call it yet.")
+        ? "\(tool.name) is here, and Forge uses it for \(tool.adds)."
+        : "\(tool.name) is here. Forge does not call it yet.")
+      if Toolbox.shared.has(tool.name) {
+        Button("Remove") { installer.remove(tool) }
+          .controlSize(.small)
+          .help("Delete the copy Forge downloaded")
+      }
     } else {
-      VStack(alignment: .leading, spacing: 6) {
-        caption("\(tool.binary) would add \(tool.adds). Homebrew installs it here.")
-        if ExternalTools.hasHomebrew {
-          Button("Install \(tool.formula)") { installer.ask(tool) }
-            .controlSize(.small)
-        } else {
-          caption("Homebrew is not here either, and installing that is a step Forge will not take for you. brew.sh has the one line.")
-        }
+      HStack(spacing: 8) {
+        Tag(text: tool.name)
+        Spacer(minLength: 4)
+        Button("Download, \(tool.weight)…") { installer.ask(tool) }
+          .controlSize(.small)
+          .help("\(tool.name) adds \(tool.adds).")
       }
     }
   }
@@ -330,50 +322,30 @@ private struct CapabilityCard: View {
   private func caption(_ text: String) -> some View {
     Text(text)
       .font(.caption)
-      .foregroundStyle(.tertiary)
+      .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
       .frame(maxWidth: .infinity, alignment: .leading)
   }
 
-  /// A card with an Install button already says what can be done;
-  /// a pill saying "Add" or "Needs a tool" beside it only repeats it.
-  private var offersAction: Bool {
-    guard case .needsPack(let pack) = capability.status, let tool = pack.tool, !tool.isInstalled else {
-      return false
-    }
-    return ExternalTools.hasHomebrew
-  }
-
-  @ViewBuilder
-  private var badge: some View {
+  /// The heading over the cards says what they all are; a badge is for the one
+  /// that is something else.
+  private var saysMore: Bool {
     switch capability.status {
-    case .available: label("Available", .green)
-    case .installable: label("Add", .accentColor)
-    case .planned: label("Coming", .blue)
-    case .needsPack(let pack):
-      if pack.tool?.isInstalled == true {
-        label(pack.isWired ? "Available" : "Installed", pack.isWired ? .green : .orange)
-      } else {
-        label("Needs a tool", .orange)
-      }
-    case .unavailable: label("Unavailable", .secondary)
+    case .needsPack(let pack): return pack.tool?.isInstalled == true && !pack.isWired
+    default: return false
     }
   }
 
-  private func label(_ text: String, _ color: Color) -> some View {
-    Text(text)
-      .font(.caption2.weight(.medium))
-      .padding(.horizontal, 7)
-      .padding(.vertical, 2)
-      .background(Capsule().fill(color.opacity(0.18)))
-      .foregroundStyle(color)
+  private var badge: some View {
+    label("Installed", .orange)
   }
+
+  private func label(_ text: String, _ color: Color) -> some View { Tag(text: text, tint: color) }
 
   private var tint: Color {
     switch capability.status {
-    case .available, .installable: return .accentColor
-    case .needsPack(let pack): return pack.tool?.isInstalled == true ? .accentColor : .secondary
-    default: return .secondary
+    case .unavailable, .planned: return .gray
+    default: return capability.status.kind == .ready ? .green : .accentColor
     }
   }
 }
@@ -381,17 +353,17 @@ private struct CapabilityCard: View {
 extension Capability.Status {
   /// The shelves the list is sorted onto, and what the filter offers.
   enum Kind: String, CaseIterable, Hashable {
-    case ready
-    case addFromMacOS
     case needsTool
+    case addFromMacOS
+    case ready
     case coming
     case notPossible
 
     var title: String {
       switch self {
-      case .ready: return "Ready to use"
+      case .ready: return "Ready on this Mac"
       case .addFromMacOS: return "Add from macOS"
-      case .needsTool: return "Needs a tool"
+      case .needsTool: return "Can be added"
       case .coming: return "Coming"
       case .notPossible: return "Not possible on macOS"
       }

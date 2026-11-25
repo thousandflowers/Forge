@@ -188,7 +188,7 @@ final class PreviewRun: ObservableObject {
       state = .ready(Outcome(
         before: await Self.frame(of: group.representative.url),
         summary: describe(group),
-        note: "Encoding it to show you would be the conversion itself, so this is the film as it stands."
+        note: "Encoding it to show you would be the conversion itself, so this is the video as it stands."
       ))
 
     case .describeIt:

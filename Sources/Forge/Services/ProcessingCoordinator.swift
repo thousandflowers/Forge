@@ -20,7 +20,10 @@ actor ProcessingCoordinator {
   ) {
     self.settings = settings
     self.persistence = persistence
+    claims = Claims(root: persistence.root)
   }
+
+  private let claims: Claims
 
   /// Settings are pushed in rather than snapshotted at init, so changing the
   /// concurrency limit takes effect without relaunching the app.
@@ -35,6 +38,11 @@ actor ProcessingCoordinator {
   /// - Parameter counter: which file this is in the batch, counting from one,
   ///   for a name template that numbers them. Nil where there is no batch to
   ///   count - a watched folder, or one file on its own.
+  /// Who wants to know what is being converted.
+  private var hears: (@Sendable (Running.Event) -> Void)?
+
+  func tell(_ hears: @escaping @Sendable (Running.Event) -> Void) { self.hears = hears }
+
   func processFile(
     _ file: ProcessableFile,
     with preset: RulePreset,
@@ -43,7 +51,12 @@ actor ProcessingCoordinator {
     counter: Int? = nil,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingHistory {
+    let preset = preset.settled
     let fileId = file.id
+    let hears = hears, job = UUID()
+    hears?(.began(job, file.url))
+    var outcome = Running.Outcome.quiet
+    defer { hears?(.ended(job, outcome)) }
 
     let started = Date()
     let task = Task {
@@ -54,7 +67,10 @@ actor ProcessingCoordinator {
           destinationMode: destinationMode,
           destinationURL: destinationURL,
           counter: counter,
-          progress: progress
+          progress: { fraction in
+            progress(fraction)
+            hears?(.reached(job, fraction))
+          }
         )
 
         let history = ProcessingHistory(
@@ -67,7 +83,9 @@ actor ProcessingCoordinator {
           additionalOutputs: result.additionalOutputs.isEmpty ? nil : result.additionalOutputs,
           destinationFolder: destinationURL,
           actions: preset.actions,
-          presetName: preset.name
+          presetName: preset.name,
+          backupURL: result.backupURL,
+          isSomethingElse: preset.tools(for: file).contains(where: \.makesSomethingElse) ? true : nil
         )
         // The record is bookkeeping. A conversion whose output is written and
         // whose history could not be saved is a conversion that worked.
@@ -108,10 +126,26 @@ actor ProcessingCoordinator {
     // id, and a task of its own does not hear its caller being cancelled. The
     // CLI's Ctrl-C and the editor's Preview cancel from outside, so it is
     // passed on here: otherwise the export ran to the end regardless.
-    return try await withTaskCancellationHandler {
-      try await task.value
-    } onCancel: {
-      task.cancel()
+    do {
+      let history = try await withTaskCancellationHandler {
+        try await task.value
+      } onCancel: {
+        task.cancel()
+      }
+      outcome = .done(preset.words(for: file))
+      return history
+    } catch {
+      outcome = Self.outcome(of: error)
+      throw error
+    }
+  }
+
+  /// What is not Forge's to convert, and what was stopped, is nothing to say.
+  private static func outcome(of error: Error) -> Running.Outcome {
+    switch error {
+    case is CancellationError, ProcessingError.unreadableFormat, ProcessingError.unsupportedConversion, ProcessingError.unknownType: return .quiet
+    case ProcessingError.leftAlone(let reason): return .leftAlone(reason)
+    default: return .failed(error.localizedDescription)
     }
   }
 
@@ -130,7 +164,7 @@ actor ProcessingCoordinator {
   ) async throws -> ProcessingResult {
     try await run(
       file: file,
-      preset: preset,
+      preset: preset.settled,
       destinationMode: .copyTo,
       destinationURL: folder,
       counter: nil,
@@ -165,6 +199,26 @@ actor ProcessingCoordinator {
     counter: Int?,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
+    let asked = preset.tools(for: file).filter(\.asksAPassword)
+    let work = {
+      try await self.runSettled(
+        file: file, preset: preset, destinationMode: destinationMode, destinationURL: destinationURL, counter: counter, progress: progress
+      )
+    }
+    guard !asked.isEmpty else { return try await work() }
+    // Before anything is begun, and once, however many files come of it.
+    let passwords = try await PDFLock.passwords(for: asked, of: file)
+    return try await PDFLock.$passwords.withValue(passwords) { try await work() }
+  }
+
+  private func runSettled(
+    file: ProcessableFile,
+    preset: RulePreset,
+    destinationMode: DestinationMode,
+    destinationURL: URL?,
+    counter: Int?,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> ProcessingResult {
     // A preset with a gate leaves alone whatever does not pass it, and says so.
     if let gate = preset.gate, !gate.holds(for: file) {
       throw ProcessingError.leftAlone(reason: "\(gate.measured(in: file)). Only if: \(gate.summary).")
@@ -172,8 +226,44 @@ actor ProcessingCoordinator {
 
     // Every `if` decided for this file, every split fanned out: what is left
     // is one flat chain per output, and the processors only ever see those.
+    var preset = preset
     let resolution = preset.actions.resolved(for: file)
-    let chains = resolution.chains
+    // What is written into the file's own name beats the preset, because
+    // somebody typed it onto that file for this conversion.
+    var chains: [(branch: String?, actions: [Operation])] = []
+    // `_800px_1600px`: one of each.
+    let widths = NameTokens.widths(file.fileName)
+    let wanted: [(branch: String?, actions: [Operation])] = widths.count < 2 ? resolution.chains : resolution.chains.flatMap { chain in
+      widths.map { width in
+        ([chain.branch, "\(width)px"].compactMap { $0 }.joined(separator: "-"),
+         chain.actions.filter { $0.id != "resize" } + [.resize(width: width, height: nil, fitMode: .proportional)])
+      }
+    }
+    for chain in wanted {
+      var actions = NameTokens.applying(to: chain.actions, from: file.fileName, tools: preset.readsTools, width: widths.count < 2).settlingFormat(of: file.fileType)
+      if actions.tools.contains(.pictures) { actions = try PDFPictures.settled(actions, for: file) }
+      if actions.tools.contains(.lighter) {
+        preset.onlyIfLighter = true
+        actions = try Lighter.settled(actions, for: file)
+      }
+      try Self.refuseToolsThatDoNotSuit(file, in: actions)
+      guard let parts = try await Division.chains(for: actions, of: file) else {
+        chains.append((chain.branch, actions))
+        continue
+      }
+      chains += parts.map { ([chain.branch, $0.label].compactMap { $0 }.joined(separator: "-"), $0.actions) }
+    }
+    // A fingerprint, or pictures of a film, are not the file in another form:
+    // nothing takes the original's place.
+    var destinationMode = destinationMode, destinationURL = destinationURL
+    if destinationMode != .copyTo, chains.contains(where: { $0.actions.tools.contains(where: \.leavesTheOriginal) }) {
+      destinationURL = destinationMode == .overwrite ? file.url.deletingLastPathComponent() : destinationURL
+      destinationMode = .copyTo
+    }
+    // Told apart from the one it is beside.
+    if preset.nameTemplate == nil, chains.contains(where: { $0.actions.tools.contains(.lock) }) {
+      preset.nameTemplate = settings.nameTemplate + " locked"
+    }
     guard chains.count > 1 || chains.first?.branch != nil || resolution.merge != nil else {
       var flat = preset
       flat.actions = chains.first?.actions ?? []
@@ -208,16 +298,21 @@ actor ProcessingCoordinator {
         copy.nameTemplate = Self.template(preset.nameTemplate ?? settings.nameTemplate, branch: branch)
       }
       let step = 1.0 / Double(chains.count)
-      results.append(
-        try await runFormats(
-          file: file,
-          preset: copy,
-          destinationMode: scratch == nil && !movesAfterAll ? destinationMode : .copyTo,
-          destinationURL: scratch ?? destinationURL,
-          counter: counter,
-          progress: { fraction in progress(Double(index) * step + fraction * step) }
+      do {
+        results.append(
+          try await runFormats(
+            file: file,
+            preset: copy,
+            destinationMode: scratch == nil && !movesAfterAll ? destinationMode : .copyTo,
+            destinationURL: scratch ?? destinationURL,
+            counter: counter,
+            progress: { fraction in progress(Double(index) * step + fraction * step) }
+          )
         )
-      )
+      } catch {
+        Self.discard(results)
+        throw error
+      }
     }
     let combined = try Self.merge(results)
     if movesAfterAll { try removeSource(of: file, unlessAmong: [combined.outputURL] + combined.additionalOutputs) }
@@ -256,6 +351,13 @@ actor ProcessingCoordinator {
     )
   }
 
+  /// A tool that does nothing to a file is said, not skipped.
+  private static func refuseToolsThatDoNotSuit(_ file: ProcessableFile, in actions: [Operation]) throws {
+    guard let tool = actions.tools.first(where: { !$0.suits(file.fileType) }) else { return }
+    let what = ConvertKind(fileType: file.fileType)?.plural ?? "this kind of file"
+    throw ProcessingError.conversionFailed(reason: "“\(tool.title)” does not work on \(file.fileType.conforms(to: .pdf) ? "PDFs" : what).")
+  }
+
   /// The name template for one branch of a split: `{branch}` becomes the
   /// branch's name; a template that never mentions it gets the name on the
   /// end, so two copies of one file never fight over one name.
@@ -268,6 +370,12 @@ actor ProcessingCoordinator {
     template.contains("{branch}")
       ? template.replacingOccurrences(of: "{branch}", with: branch)
       : template + "_" + branch
+  }
+
+  /// Some of what was wanted is not what was wanted, and nothing would say whose
+  /// it was.
+  private static func discard(_ results: [ProcessingResult]) {
+    for url in results.flatMap({ [$0.outputURL] + $0.additionalOutputs }) { try? FileManager.default.removeItem(at: url) }
   }
 
   /// Several outputs of one input, reported as one result.
@@ -330,16 +438,21 @@ actor ProcessingCoordinator {
     for (index, format) in formats.enumerated() {
       try Task.checkCancellation()
       let step = 1.0 / Double(formats.count)
-      results.append(
-        try await executeProcessing(
-          file: file,
-          preset: Self.preset(preset, writingOnly: format),
-          destinationMode: moves ? .copyTo : destinationMode,
-          destinationURL: destinationURL,
-          counter: counter,
-          progress: { fraction in progress(Double(index) * step + fraction * step) }
+      do {
+        results.append(
+          try await executeProcessing(
+            file: file,
+            preset: Self.preset(preset, writingOnly: format),
+            destinationMode: moves ? .copyTo : destinationMode,
+            destinationURL: destinationURL,
+            counter: counter,
+            progress: { fraction in progress(Double(index) * step + fraction * step) }
+          )
         )
-      )
+      } catch {
+        Self.discard(results)
+        throw error
+      }
     }
 
     let combined = try Self.merge(results)
@@ -380,16 +493,14 @@ actor ProcessingCoordinator {
     counter: Int?,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
-    guard processors.contains(where: { $0.canProcess(file) }) else {
+    guard processors.contains(where: { $0.canProcess(file) }) || preset.actions.tools.contains(where: { $0.kind == .tidy }) else {
       throw ProcessingError.unreadableFormat(file.fileType)
     }
     try Completeness.refuseIfIncomplete(file.url)
 
-    // A preset says what it cares about; Settings says the rest; and what is
-    // written into the file's own name beats both, because somebody typed it
-    // onto that file for this conversion.
+    // A preset says what it cares about; Settings says the rest.
     let operations = settings.applyingDefaults(
-      to: NameTokens.applying(to: preset.actions, from: file.fileName),
+      to: settings.addingLanguage(to: preset.actions, of: file.fileType),
       writing: preset.targetFormat ?? file.fileType
     )
 
@@ -405,6 +516,9 @@ actor ProcessingCoordinator {
     // Anything written before the conversion succeeds is scratch, and must not
     // survive a failure or a cancellation.
     var succeeded = false
+    let claimed = [plan.workURL] + [plan.reservationURL].compactMap { $0 }
+    claimed.forEach(claims.add)
+    defer { claimed.forEach(claims.remove) }
     defer {
       if !succeeded {
         try? FileManager.default.removeItem(at: plan.workURL)
@@ -439,15 +553,31 @@ actor ProcessingCoordinator {
     // URL, which truncated the source mid-read and destroyed the original.
     var attempt: ProcessingResult?
     var declined: Error?
-    for candidate in processors where candidate.canProcess(file) {
+    // Opened first, so that whatever comes after finds a document like any other.
+    var source = file.url
+    let opened = FileManager.default.temporaryDirectory.appendingPathComponent("forge-open-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: opened) }
+    if operations.tools.contains(.unlock) {
+      try FileManager.default.createDirectory(at: opened, withIntermediateDirectories: true)
+      source = opened.appendingPathComponent(file.fileName)
+      try PDFLock.unlock(file.url, with: PDFLock.passwords.old ?? "", to: source)
+    }
+    if operations.tools.contains(.lock), UTType(filenameExtension: plan.workURL.pathExtension) != .pdf {
+      throw ProcessingError.conversionFailed(reason: "Only a PDF can have a password put on it.")
+    }
+    attempt = try await WholeFileTools.attempt(operations, on: source, of: file.fileType, to: plan.workURL, progress: progress)
+    for candidate in processors where attempt == nil && candidate.canProcess(file) {
       do {
         attempt = try await candidate.process(
-          file.url,
+          source,
           to: plan.workURL,
           with: operations,
           progress: progress
         )
         break
+      } catch ProcessingError.tooBig where preset.onlyIfLighter {
+        // The ceiling was an aim and not a promise.
+        throw ProcessingError.leftAlone(reason: Lighter.notLighter)
       } catch let error as ProcessingError {
         guard case .unsupportedConversion = error else {
           throw Self.naming(error, scratch: plan.workURL, as: file)
@@ -466,11 +596,15 @@ actor ProcessingCoordinator {
     // towards it; for the rest - a PDF, a document, data - there is nothing to
     // turn down, and the ceiling was simply not looked at. It is now: a file
     // over it is not handed over as though it fitted.
-    if let ceiling = ImageProcessor.sizeCeiling(from: operations), result.outputSize > Int64(ceiling) {
+    if !preset.onlyIfLighter, let ceiling = ImageProcessor.sizeCeiling(from: operations), result.outputSize > Int64(ceiling) {
       throw ProcessingError.conversionFailed(
         reason: "\(file.fileName) comes out at \(result.outputSize.formatted(.byteCount(style: .file))), over the "
           + "\(Int64(ceiling).formatted(.byteCount(style: .file))) asked for, and Forge has no way to make this kind of file smaller."
       )
+    }
+
+    if preset.onlyIfLighter, !Lighter.isWorthIt(from: file.fileSize, to: result.outputSize) {
+      throw ProcessingError.leftAlone(reason: Lighter.notLighter)
     }
 
     try Task.checkCancellation()
@@ -483,9 +617,11 @@ actor ProcessingCoordinator {
       to: [plan.workURL] + result.additionalOutputs
     )
 
-    if plan.replacesSource, settings.createBackupBeforeOverwrite {
-      try backUp(file.url)
+    if operations.tools.contains(.lock), let password = PDFLock.passwords.new {
+      for url in [plan.workURL] + result.additionalOutputs { try PDFLock.lock(url, with: password) }
     }
+
+    let backup = plan.replacesSource && settings.createBackupBeforeOverwrite ? try backUp(file.url) : nil
 
     // Now the file exists, the parts of its name that describe it can be
     // filled in - how wide it came out, what a size ceiling settled on.
@@ -498,6 +634,7 @@ actor ProcessingCoordinator {
       plan,
       extras: result.additionalOutputs,
       gatherIntoAFolder: Self.isFrameExport(from: file, to: plan.finalURL, extras: result.additionalOutputs)
+        || (!result.additionalOutputs.isEmpty && operations.tools.contains(where: \.makesASet))
     )
 
     if plan.removesSource, plan.finalURL != file.url,
@@ -513,7 +650,8 @@ actor ProcessingCoordinator {
       outputDimensions: result.outputDimensions,
       duration: result.duration,
       additionalOutputs: committed.extras,
-      appliedQuality: result.appliedQuality
+      appliedQuality: result.appliedQuality,
+      backupURL: backup
     )
   }
 
@@ -597,7 +735,7 @@ actor ProcessingCoordinator {
     return (primary, moved)
   }
 
-  private func backUp(_ url: URL) throws {
+  private func backUp(_ url: URL) throws -> URL {
     let backups = persistence.backupsDirectory
     try FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
     let stamp = Self.backupStamp.string(from: Date())
@@ -606,7 +744,9 @@ actor ProcessingCoordinator {
     let desired = backups.appendingPathComponent(
       ext.isEmpty ? "\(name)-\(stamp)" : "\(name)-\(stamp).\(ext)"
     )
-    try FileManager.default.copyItem(at: url, to: try Self.freeURL(desired))
+    let copy = try Self.freeURL(desired)
+    try FileManager.default.copyItem(at: url, to: copy)
+    return copy
   }
 
   private func makeOutputPlan(
@@ -703,6 +843,18 @@ actor ProcessingCoordinator {
     return candidate
   }
 
+  var privacyPolicy: PrivacyPolicy { settings.privacy }
+
+  func claim(_ desired: URL) throws -> URL { try reserveUniqueURL(desired) }
+
+  func record(_ entry: ProcessingHistory) async {
+    do {
+      try await persistence.appendHistory(entry)
+    } catch {
+      NSLog("Forge: converted %@ but could not record it in History: %@", entry.fileURL.lastPathComponent, error.localizedDescription)
+    }
+  }
+
   /// The first name in the `name`, `name 2`, `name 3` sequence that is free.
   private static func freeURL(_ desired: URL) throws -> URL {
     let fileManager = FileManager.default
@@ -754,7 +906,7 @@ actor ProcessingCoordinator {
     }.first
 
     return NameTemplate.Static(
-      name: preset.untriggered(stem: (file.fileName as NSString).deletingPathExtension),
+      name: NameTokens.withoutWidths(preset.untriggered(stem: preset.readsTools ? NameTokens.spent(file.fileName) : (file.fileName as NSString).deletingPathExtension)),
       parent: file.url.deletingLastPathComponent().lastPathComponent,
       // The file's own date where the filesystem knows one, since a template
       // asking for a date is asking about the photograph, not about now.
@@ -781,7 +933,9 @@ actor ProcessingCoordinator {
     fallbackSuffix: String
   ) -> String {
     let template = preset.nameTemplate ?? settings.nameTemplate
-    var name = NameTemplate.resolve(template, with: context)
+    // A file's own name is kept to the letter: what is tidied off the end is what
+    // a token with nothing to say leaves there.
+    var name = template == "{name}" ? context.name : NameTemplate.resolve(template, with: context)
 
     // A template that said nothing keeps the old behaviour, where a resize
     // puts its size in the name.

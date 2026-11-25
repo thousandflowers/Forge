@@ -15,6 +15,8 @@ struct ProcessingResult: Sendable {
   /// fits, so the number that got there is only known afterwards - and it is
   /// the interesting half of "10 MB, and what did that cost".
   let appliedQuality: Int?
+  /// Where the original was copied before it was replaced.
+  let backupURL: URL?
 
   init(
     outputURL: URL,
@@ -22,7 +24,8 @@ struct ProcessingResult: Sendable {
     outputDimensions: (width: Int, height: Int)?,
     duration: TimeInterval,
     additionalOutputs: [URL] = [],
-    appliedQuality: Int? = nil
+    appliedQuality: Int? = nil,
+    backupURL: URL? = nil
   ) {
     self.outputURL = outputURL
     self.outputSize = outputSize
@@ -30,6 +33,7 @@ struct ProcessingResult: Sendable {
     self.duration = duration
     self.additionalOutputs = additionalOutputs
     self.appliedQuality = appliedQuality
+    self.backupURL = backupURL
   }
 }
 
@@ -66,10 +70,17 @@ protocol FileProcessor: AnyObject, Sendable {
 /// file can become something is whether any of them takes it there.
 enum Conversions {
   static let processors: [FileProcessor] = [
+    OutlineProcessor(),
     // Before the image processor, which would claim an SVG through
     // `readableImageTypes` and then hand ImageIO a file it cannot decode.
     VectorProcessor(),
     ImageProcessor(),
+    FontProcessor(),
+    // Before data and film: a glTF is JSON, and macOS calls a COLLADA
+    // audiovisual.
+    ModelProcessor(),
+    // Before the media path, which is handed a sound and finds sheet music.
+    MidiProcessor(),
     // Before the media path: AVFoundation lists WebVTT among the types it
     // opens, and then finds no tracks in one, so a subtitle handed to it fails
     // with "contains no audio or video tracks" rather than being converted.
@@ -78,8 +89,13 @@ enum Conversions {
     // Before the document reader: JSON and CSV are plain text as far as the
     // system is concerned, and the document reader would take them.
     DataProcessor(),
+    // Before the document reader, which would hand a PDF's words to pandoc:
+    // a PDF asked for slides is its pages.
+    SlidesProcessor(),
     SimpleDocProcessor(),
-    ModelProcessor(),
+    ComicProcessor(),
+    ThroughProcessor(),
+    ArchiveProcessor(),
     // Last: a conversion macOS can do itself is still done by macOS, and a
     // tool the user installed is only asked about what is left over.
     ExternalProcessor(),

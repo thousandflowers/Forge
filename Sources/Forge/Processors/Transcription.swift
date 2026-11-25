@@ -14,9 +14,21 @@ enum Transcription {
     SFSpeechRecognizer.supportedLocales().map(\.identifier).sorted()
   }
 
+  /// The same, as people call them.
+  static let languages: [(tag: String, name: String)] = supportedLocales
+    .map { ($0.replacingOccurrences(of: "_", with: "-"), Locale.current.localizedString(forIdentifier: $0) ?? $0) }
+    .sorted { $0.1.localizedStandardCompare($1.1) == .orderedAscending }
+
   static func supports(_ locale: String) -> Bool {
     supportedLocales.contains { $0.caseInsensitiveCompare(locale) == .orderedSame }
       || supportedLocales.contains { $0.hasPrefix(locale + "-") || $0.hasPrefix(locale + "_") }
+  }
+
+  /// The recogniser's way of saying that nobody spoke. It has no name for it
+  /// in the SDK, only this number.
+  static func isSilence(_ error: Error) -> Bool {
+    let error = error as NSError
+    return error.domain == "kAFAssistantErrorDomain" && error.code == 1110
   }
 
   /// Ask once, and report what the answer was.
@@ -28,6 +40,20 @@ enum Transcription {
     }
   }
 
+  /// A word, and when it was said.
+  struct Word: Equatable, Sendable {
+    let text: String
+    let start: TimeInterval
+    let duration: TimeInterval
+    var end: TimeInterval { start + duration }
+  }
+
+  /// What was said, and when each word was.
+  struct Heard: Sendable {
+    let text: String
+    let words: [Word]
+  }
+
   /// Transcribe `url`, which may be audio or a video with a soundtrack.
   ///
   /// - Parameter locale: BCP-47 tag, or nil for the system's own.
@@ -36,6 +62,14 @@ enum Transcription {
     locale: String?,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> String {
+    try await hear(url, locale: locale, progress: progress).text
+  }
+
+  static func hear(
+    _ url: URL,
+    locale: String?,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> Heard {
     // Check the language first: it costs nothing and does not need permission,
     // so a typo is answered immediately rather than after a prompt.
     if let locale, !supports(locale) {
@@ -59,9 +93,9 @@ enum Transcription {
     // does - the recogniser answered most of them "No speech detected".
     await Turn.shared.take()
     do {
-      let text = try await recognise(url, locale: locale, progress: progress)
+      let heard = try await recognise(url, locale: locale, progress: progress)
       await Turn.shared.give()
-      return text
+      return heard
     } catch {
       await Turn.shared.give()
       throw error
@@ -72,17 +106,19 @@ enum Transcription {
     _ url: URL,
     locale: String?,
     progress: @escaping @Sendable (Double) -> Void
-  ) async throws -> String {
+  ) async throws -> Heard {
     let chosen = locale.map(Locale.init(identifier:)) ?? Locale.current
     guard let recognizer = SFSpeechRecognizer(locale: chosen) else {
-      throw ProcessingError.validationFailed(message: "No recogniser for \(chosen.identifier).")
+      throw ProcessingError.validationFailed(message: "There is no speech recognition for \(chosen.identifier).")
     }
     guard recognizer.isAvailable else {
-      throw ProcessingError.conversionFailed(reason: "The recogniser for \(chosen.identifier) is not available right now.")
+      throw ProcessingError.conversionFailed(reason: "Speech recognition for \(chosen.identifier) is not available right now.")
     }
 
     let request = SFSpeechURLRecognitionRequest(url: url)
     request.shouldReportPartialResults = false
+    // Where a sentence ends is where a subtitle wants to.
+    request.addsPunctuation = true
     // Keep the recording on the machine. A conversion is not a reason to send
     // someone's audio to a server.
     request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
@@ -107,9 +143,11 @@ enum Transcription {
       }
       guard let result else { return }
       progress(0.5)
-      stretches.add(result.bestTranscription.formattedString)
+      stretches.add(result.bestTranscription.formattedString, words: result.bestTranscription.segments.map {
+        Word(text: $0.substring, start: $0.timestamp, duration: $0.duration)
+      })
       if result.isFinal {
-        gate.finish(.success(stretches.text))
+        gate.finish(.success(stretches.heard))
       }
     }
     let deadline = Task {
@@ -158,37 +196,37 @@ private actor Turn {
 /// in which case it replaces it, or starts afresh, in which case it follows it.
 private final class Stretches: @unchecked Sendable {
   private let lock = NSLock()
-  private var parts: [String] = []
+  private var parts: [(text: String, words: [Transcription.Word])] = []
 
-  func add(_ text: String) {
+  func add(_ text: String, words: [Transcription.Word]) {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
     lock.lock()
     defer { lock.unlock() }
     // Words said twice are kept twice: a repeat that looks like the start of
     // the stretch before it is still something that was said.
-    if let last = parts.last, trimmed.hasPrefix(last), trimmed != last {
-      parts[parts.count - 1] = trimmed
+    if let last = parts.last?.text, trimmed.hasPrefix(last), trimmed != last {
+      parts[parts.count - 1] = (trimmed, words)
     } else {
-      parts.append(trimmed)
+      parts.append((trimmed, words))
     }
   }
 
-  var text: String {
+  var heard: Transcription.Heard {
     lock.lock()
     defer { lock.unlock() }
-    return parts.joined(separator: " ")
+    return .init(text: parts.map(\.text).joined(separator: " "), words: parts.flatMap(\.words))
   }
 }
 
 /// Delivers the recogniser's answer once, from whichever callback arrives.
 private final class ResultGate: @unchecked Sendable {
   private let lock = NSLock()
-  private var continuation: CheckedContinuation<String, Error>?
-  private var pending: Result<String, Error>?
+  private var continuation: CheckedContinuation<Transcription.Heard, Error>?
+  private var pending: Result<Transcription.Heard, Error>?
   private var settled = false
 
-  func finish(_ result: Result<String, Error>) {
+  func finish(_ result: Result<Transcription.Heard, Error>) {
     lock.lock()
     guard !settled else { lock.unlock(); return }
     settled = true
@@ -199,7 +237,7 @@ private final class ResultGate: @unchecked Sendable {
     waiting?.resume(with: result)
   }
 
-  func value() async throws -> String {
+  func value() async throws -> Transcription.Heard {
     try await withCheckedThrowingContinuation { continuation in
       lock.lock()
       if let pending {

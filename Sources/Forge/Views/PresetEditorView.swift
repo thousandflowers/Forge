@@ -7,6 +7,17 @@ struct PresetEditorRequest: Identifiable {
   let preset: RulePreset?
   /// Files to convert once, when it was opened from Quick convert.
   var conversion: EditorConversion? = nil
+  /// What it is in the Store, which stays as it is whatever is done here.
+  var offer: PresetOffer? = nil
+}
+
+/// A preset that is not in the list yet.
+struct PresetOffer: Equatable {
+  let isInstalled: Bool
+  /// What it needs that this Mac has not got.
+  let tool: ExternalTool?
+
+  var installTitle: String { tool.map { "Install with \($0.name)" } ?? "Install" }
 }
 
 /// The preset editor, laid out the way Shortcuts lays out an automation: the
@@ -18,6 +29,7 @@ struct PresetEditorRequest: Identifiable {
 struct PresetEditorView: View {
   private let existing: RulePreset?
   private let conversion: EditorConversion?
+  private let offer: PresetOffer?
   private let onSave: (RulePreset) -> Void
   private let onClose: () -> Void
 
@@ -78,11 +90,13 @@ struct PresetEditorView: View {
   init(
     preset: RulePreset?,
     conversion: EditorConversion? = nil,
+    offer: PresetOffer? = nil,
     onSave: @escaping (RulePreset) -> Void,
     onClose: @escaping () -> Void
   ) {
     self.existing = preset
     self.conversion = conversion
+    self.offer = offer
     _destinationMode = State(initialValue: conversion?.mode ?? .copyTo)
     _destinationURL = State(initialValue: conversion?.destination)
     self.onSave = onSave
@@ -115,7 +129,7 @@ struct PresetEditorView: View {
           canvas
           // The sample file after each step, small; click for the big view.
           PreviewStrip(preset: draft(), coordinator: model.coordinator, own: conversion?.sources.first) { original, step in
-            withAnimation(.easeOut(duration: 0.15)) { compared = Compared(original: original, step: step) }
+            withAnimation(Motion.quick) { compared = Compared(original: original, step: step) }
           }
         }
         Divider()
@@ -125,7 +139,7 @@ struct PresetEditorView: View {
     .overlay {
       if let compared {
         PreviewCompare(original: compared.original, step: compared.step) {
-          withAnimation(.easeOut(duration: 0.15)) { self.compared = nil }
+          withAnimation(Motion.quick) { self.compared = nil }
         }
         .transition(.opacity)
       }
@@ -203,14 +217,29 @@ struct PresetEditorView: View {
         .hidden()
         .frame(width: 0, height: 0)
 
-      // ⌘S, not Return: Return in the name field used to save a preset that
-      // was not finished being written.
-      Button("Save", action: save)
-        .buttonStyle(.borderedProminent)
-        .keyboardShortcut("s", modifiers: .command)
-        .help("Save the preset (⌘S)")
-        .disabled(cannotSave != nil)
-        .help(cannotSave ?? "")
+      if let offer {
+        if isDirty, let existing {
+          Button("Install Original") { install(existing, offer) }.disabled(offer.isInstalled)
+          Button("Install with Changes") { install(draft(), offer) }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut("s", modifiers: .command)
+            .disabled(cannotSave != nil)
+        } else {
+          Button(offer.isInstalled ? "Installed" : offer.installTitle) { if let existing { install(existing, offer) } }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut("s", modifiers: .command)
+            .disabled(offer.isInstalled)
+        }
+      } else {
+        // ⌘S, not Return: Return in the name field used to save a preset that
+        // was not finished being written.
+        Button("Save", action: save)
+          .buttonStyle(.borderedProminent)
+          .keyboardShortcut("s", modifiers: .command)
+          .help("Save the preset (⌘S)")
+          .disabled(cannotSave != nil)
+          .help(cannotSave ?? "")
+      }
     }
     .padding(.horizontal, 20)
     .padding(.vertical, 12)
@@ -320,10 +349,10 @@ struct PresetEditorView: View {
       // top - a two-way scroll view would otherwise float short content in
       // the middle.
       .frame(minWidth: proxy.size.width, minHeight: proxy.size.height, alignment: .top)
-      .animation(.easeOut(duration: 0.2), value: steps)
-      .animation(.easeOut(duration: 0.2), value: parameters)
-      .animation(.easeOut(duration: 0.2), value: showsFormats)
-      .animation(.easeOut(duration: 0.2), value: showsTemplate)
+      .animation(Motion.move, value: steps)
+      .animation(Motion.move, value: parameters)
+      .animation(Motion.move, value: showsFormats)
+      .animation(Motion.move, value: showsTemplate)
     }
     }
     .frame(maxWidth: .infinity)
@@ -449,9 +478,7 @@ struct PresetEditorView: View {
               .foregroundStyle(.secondary)
               .frame(width: 120, height: 90)
               .background(
-                RoundedRectangle(cornerRadius: 10)
-                  .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
-                  .foregroundStyle(Color.secondary.opacity(0.3))
+                DropBorder(radius: 10)
               )
             }
             .buttonStyle(.plain)
@@ -543,9 +570,7 @@ struct PresetEditorView: View {
       .menuIndicator(.hidden)
       .accessibilityLabel(root ? "Add a block at the end" : "Add a step to this path")
       .background(
-        RoundedRectangle(cornerRadius: Metrics.blockRadius, style: .continuous)
-          .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
-          .foregroundStyle(isDropTarget(.endOf(container)) ? Color.accentColor : Color.secondary.opacity(0.3))
+        DropBorder(isLit: isDropTarget(.endOf(container)))
       )
       .frame(maxWidth: Metrics.blockColumn)
       .frame(maxWidth: .infinity)
@@ -591,9 +616,9 @@ struct PresetEditorView: View {
     guard let entry = LibraryEntry.all(for: category).first(where: { $0.id == payload }), available(entry) else { return }
     switch entry.kind {
     case .step(let kind):
-      let step = blank(kind)
-      if !steps.insert(step, at: spot, root: Self.rootID) { steps.append(step) }
-      steps.ensureJoins()
+      land(blank(kind), at: spot)
+    case .tool(let kind):
+      land(Action(.tool(kind.blank)), at: spot)
     case .formats where spot.target != Self.rootID && !steps.contains(where: { $0.id == spot.target }):
       // Dropped into an arm: that copy gets a format of its own.
       if let type = offeredFormats.first?.type {
@@ -605,6 +630,11 @@ struct PresetEditorView: View {
     }
   }
 
+
+  private func land(_ step: Action, at spot: DropSpot) {
+    if !steps.insert(step, at: spot, root: Self.rootID) { steps.append(step) }
+    steps.ensureJoins()
+  }
 
   func setDropTarget(_ spot: DropSpot, _ on: Bool) {
     if on { dropTarget = spot } else if dropTarget == spot { dropTarget = nil }
@@ -649,7 +679,7 @@ struct PresetEditorView: View {
   private func stepBlock(_ step: Binding<Action>) -> some View {
     BlockCard(title: step.wrappedValue.title, symbol: step.wrappedValue.operation.symbol, tint: step.wrappedValue.tint, remove: {
       _ = steps.removeStep(id: step.wrappedValue.id)
-    }) {
+    }, inline: step.wrappedValue.kind != .film) {
       ActionRow(action: step)
     }
   }
@@ -725,7 +755,7 @@ struct PresetEditorView: View {
     switch entry.kind {
     case .formats: return !showsFormats || trailingSplit != nil
     case .template: return !showsTemplate
-    case .question, .step: return true
+    case .question, .step, .tool: return true
     }
   }
 
@@ -735,6 +765,7 @@ struct PresetEditorView: View {
     case .template: showsTemplate = true
     case .question(let kind): add(kind)
     case .step(let kind): steps.append(blank(kind))
+    case .tool(let kind): steps.append(Action(.tool(kind.blank)))
     }
   }
 
@@ -851,6 +882,12 @@ struct PresetEditorView: View {
     preset.nameTrigger = word.isEmpty ? nil : word
     preset.gate = gate
     return preset
+  }
+
+  private func install(_ preset: RulePreset, _ offer: PresetOffer) {
+    onSave(preset)
+    onClose()
+    if let tool = offer.tool { ToolInstaller.shared.ask(tool) }
   }
 
   private func save() {

@@ -11,15 +11,19 @@ struct HistoryView: View {
         EmptyStateView(icon: "clock", title: "No history yet",
                        message: "Files you convert will show up here.")
       } else {
-        List(model.history) { entry in
-          HistoryRow(entry: entry)
+        List {
+          ForEach(HistoryDay.days(of: model.history)) { day in
+            Section(day.title) {
+              ForEach(day.entries) { HistoryRow(entry: $0) }
+            }
+          }
         }
       }
     }
     .navigationTitle("History")
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
-        Button(role: .destructive) { confirmingClear = true } label: { Label("Clear", systemImage: "trash") }
+        Button(role: .destructive) { confirmingClear = true } label: { Text("Clear History…") }
           .disabled(model.history.isEmpty)
       }
     }
@@ -31,6 +35,28 @@ struct HistoryView: View {
       Text("Every past conversion goes, with what failed and why. The converted files stay where they are.")
     }
     .task { await model.refreshHistory() }
+  }
+}
+
+/// What was converted on one day, the latest first.
+struct HistoryDay: Identifiable {
+  let id: Date
+  let entries: [ProcessingHistory]
+  let title: String
+
+  static func days(of history: [ProcessingHistory], now: Date = Date(), calendar: Calendar = .current) -> [HistoryDay] {
+    Dictionary(grouping: history) { calendar.startOfDay(for: $0.timestamp) }
+      .sorted { $0.key > $1.key }
+      .map { day, entries in HistoryDay(id: day, entries: entries.sorted { $0.timestamp > $1.timestamp }, title: title(of: day, now: now, calendar: calendar)) }
+  }
+
+  private static func title(of day: Date, now: Date, calendar: Calendar) -> String {
+    let ago = calendar.dateComponents([.day], from: day, to: calendar.startOfDay(for: now)).day ?? 0
+    switch ago {
+    case 0: return "Today"
+    case 1: return "Yesterday"
+    default: return day.formatted(Date.FormatStyle(date: .long, time: .omitted, locale: Locale(identifier: "en_US"), calendar: calendar))
+    }
   }
 }
 
@@ -63,22 +89,24 @@ private struct HistoryRow: View {
             .font(.caption)
             .foregroundStyle(entry.status.color)
             .lineLimit(2)
+        } else if entry.isUndone {
+          Text("Undone").font(.caption).foregroundStyle(.secondary)
         } else if let landed {
           Text(landed)
             .font(.caption).foregroundStyle(.secondary)
             .lineLimit(1).truncationMode(.middle)
         }
 
-        Text(entry.timestamp.formatted(date: .abbreviated, time: .shortened))
-          .font(.caption2).foregroundStyle(.tertiary)
       }
 
       Spacer()
 
-      if let duration = entry.durationText {
-        Text(duration)
-          .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+      VStack(alignment: .trailing, spacing: 2) {
+        Text(entry.timestamp.formatted(date: .omitted, time: .shortened))
+        // What took no time is not worth a number.
+        if entry.duration >= 1, let duration = entry.durationText { Text(duration) }
       }
+      .font(.caption).foregroundStyle(.secondary).monospacedDigit()
 
       // The same actions as the context menu, somewhere they can be found
       // without knowing to right-click.
@@ -88,9 +116,11 @@ private struct HistoryRow: View {
         Image(systemName: "ellipsis.circle")
       }
       .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
       .fixedSize()
+      .accessibilityLabel("More")
     }
-    .padding(.vertical, 2)
+    .padding(.vertical, 4)
     .contextMenu { menu }
   }
 
@@ -101,8 +131,8 @@ private struct HistoryRow: View {
     let extras = entry.outputs.count - 1
     let folder = output.deletingLastPathComponent().lastPathComponent
     return extras > 0
-      ? "\(output.lastPathComponent) and \(extras) more, in \(folder)"
-      : "\(output.lastPathComponent), in \(folder)"
+      ? "→ \(output.lastPathComponent) and \(extras) more in the \(folder) folder"
+      : "→ \(output.lastPathComponent) in the \(folder) folder"
   }
 
   /// What can be done about a past run, most useful first.
@@ -113,6 +143,10 @@ private struct HistoryRow: View {
   /// run it again, on files chosen now or on the same ones.
   @ViewBuilder
   private var menu: some View {
+    if Undo.isPossible(for: entry) {
+      Button("Undo") { model.undo(entry) }
+      Divider()
+    }
     if entry.isRepeatable {
       Button("Save as a Preset") { model.savePreset(from: entry) }
 

@@ -34,7 +34,7 @@ struct TemplateField: View {
             }
           }
         } label: {
-          Label("Tokens", systemImage: "curlybraces")
+          Label("Insert", systemImage: "curlybraces")
         }
         .menuStyle(.borderlessButton)
         .fixedSize()

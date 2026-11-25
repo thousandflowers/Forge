@@ -83,8 +83,7 @@ enum Tesseract {
     guard let tesseract = ExternalTools.locate("tesseract"), missing.isEmpty else {
       throw ProcessingError.validationFailed(
         message: "Neither Vision nor tesseract has \(missing.joined(separator: ", ")) on this Mac. "
-          + "Vision knows: \(TextRecognizer.supportedLanguages.joined(separator: ", ")). "
-          + "`brew install tesseract-lang` adds the rest."
+          + "Vision knows: \(TextRecognizer.supportedLanguages.joined(separator: ", "))."
       )
     }
 
@@ -124,7 +123,7 @@ enum Tesseract {
     process.arguments = ["--list-langs"]
     let pipe = Pipe()
     process.standardOutput = pipe
-    process.standardError = Pipe()
+    process.standardError = FileHandle.nullDevice
 
     guard (try? process.run()) != nil else { return [] }
     let said = pipe.fileHandleForReading.readDataToEndOfFile()

@@ -125,8 +125,8 @@ final class CommonFormatTests: BaseTestCase {
 
   /// A kind with few formats has nothing to hide.
   func test_aKindWithNoShortListShowsEverything() {
-    let all = OutputFormat.data
-    XCTAssertEqual(ConvertKind.data.leading(of: all), all)
+    let all = OutputFormat.fonts
+    XCTAssertEqual(ConvertKind.font.leading(of: all), all)
   }
 
   /// A short list none of which can be written is not an empty sheet.
@@ -175,12 +175,13 @@ final class EditorConversionTests: BaseTestCase {
     XCTAssertEqual(one.title, "a.png")
   }
 
-  /// A CSV cannot become a JPEG, so the two together are not offered one.
-  func test_filesWithNothingInCommonAreOfferedNoFormat() throws {
+  /// A CSV cannot become a JPEG, so the two together are not offered one. Both
+  /// can become pages, and that is all.
+  func test_filesWithLittleInCommonAreOfferedThatMuch() throws {
     let csv = path("b.csv")
     try "a,b\n1,2\n".write(to: csv, atomically: true, encoding: .utf8)
     let mixed = try conversion([Fixture.image(at: path("a.png")), csv])
-    XCTAssertTrue(mixed.formats.isEmpty)
+    XCTAssertEqual(mixed.formats, [OutputFormat(type: .pdf)])
     XCTAssertEqual(mixed.category, .custom)
     XCTAssertEqual(mixed.title, "2 files")
   }

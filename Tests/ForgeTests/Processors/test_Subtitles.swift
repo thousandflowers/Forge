@@ -1,4 +1,5 @@
 import XCTest
+import Speech
 import UniformTypeIdentifiers
 @testable import Forge
 
@@ -151,7 +152,11 @@ final class SubtitleTests: BaseTestCase {
   /// ignore this, add a trailing '?' to the map", which is about a flag nobody
   /// typed.
   func test_aFilmWithNoSubtitlesSaysSo() async throws {
-    try XCTSkipUnless(ExternalTools.locate("ffmpeg") != nil, "ffmpeg is not installed here")
+    // With no track in it, what is said is listened for.
+    try XCTSkipUnless(
+      SFSpeechRecognizer.authorizationStatus() == .authorized,
+      "speech recognition not authorised on this machine"
+    )
     let silent = try await Fixture.video(at: path("plain.mp4"), seconds: 1)
 
     do {

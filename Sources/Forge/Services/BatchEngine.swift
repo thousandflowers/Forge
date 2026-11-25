@@ -40,7 +40,7 @@ actor BatchEngine {
       switch kind {
       case .video: return .video
       case .audio: return .audio
-      case .image, .document, .data, .model, .subtitle, .font, nil: return .image
+      case .image, .document, .data, .model, .subtitle, .font, .archive, nil: return .image
       }
     }
   }

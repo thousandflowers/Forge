@@ -59,19 +59,18 @@ final class ModelConversionTests: BaseTestCase {
     XCTAssertGreaterThan(MDLAsset(url: try XCTUnwrap(entry.outputURL)).count, 0)
   }
 
-  /// USDZ reads but does not write, and the catalogue has to say so rather
-  /// than failing at the last moment.
-  func test_usdzIsReadableButNotWritable() throws {
+  /// ModelIO reads a USDZ and does not write one. SceneKit does.
+  func test_usdzIsReadableAndWritable() throws {
     let usdz = try XCTUnwrap(UTType(filenameExtension: "usdz"))
     XCTAssertTrue(FormatCatalog.isReadableModel(usdz))
-    XCTAssertFalse(FormatCatalog.isWritableModel(usdz))
+    XCTAssertTrue(FormatCatalog.isWritableModel(usdz))
   }
 
-  /// glTF, GLB and FBX are not ModelIO's, and nothing should claim they are.
-  func test_theFormatsModelIODoesNotHaveAreNotClaimed() throws {
-    for ext in ["gltf", "glb", "fbx"] {
+  /// FBX is nobody's, and nothing should claim it.
+  func test_theFormatsNobodyHasAreNotClaimed() throws {
+    for ext in ["fbx", "blend", "3ds"] {
       guard let type = UTType(filenameExtension: ext), !type.isDynamic else { continue }
-      XCTAssertFalse(FormatCatalog.isWritableModel(type), "\(ext) is not ModelIO's")
+      XCTAssertFalse(FormatCatalog.isWritableModel(type), "\(ext) is nobody's")
     }
   }
 
@@ -82,11 +81,11 @@ final class ModelConversionTests: BaseTestCase {
     do {
       _ = try await coordinator().processFile(
         try ProcessableFile(url: source),
-        with: .make(format: .jpeg, category: .custom),
+        with: .make(format: .mp3, category: .custom),
         destinationMode: .copyTo,
         destinationURL: destination
       ) { _ in }
-      XCTFail("a model cannot become a JPEG")
+      XCTFail("a model cannot become a sound")
     } catch {
       XCTAssertTrue(error.localizedDescription.contains("OBJ"), error.localizedDescription)
     }

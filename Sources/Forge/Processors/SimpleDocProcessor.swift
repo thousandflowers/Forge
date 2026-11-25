@@ -34,6 +34,8 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     var types: [UTType] = [.pdf]
     types.append(contentsOf: Array(DocumentText.readable.keys))
     if let markdown = DocumentText.markdown { types.append(markdown) }
+    if let email = Email.type { types.append(email) }
+    if let epub = Book.type { types.append(epub) }
     return types
   }()
 
@@ -69,6 +71,25 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     }
 
     let outputType = Self.outputUTI(for: output, operations: operations, fallback: .jpeg)
+
+    // The pages asked for, the way they were asked for, and then whatever it
+    // is to become.
+    var input = input
+    let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("forge-pages-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: scratch) }
+    if inputType.conforms(to: .pdf), PDFTools.change(operations) {
+      if outputType.conforms(to: .pdf) { try PDFTools.refuseIfSigned(input) }
+      try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+      let changed = scratch.appendingPathComponent(input.lastPathComponent)
+      if operations.tools.contains(.numbers) {
+        // What is put on a page is AppKit's, and is let go of where it lives.
+        let from = input
+        try await MainActor.run { try PDFTools.apply(operations, to: from, writing: changed) }
+      } else {
+        try PDFTools.apply(operations, to: input, writing: changed)
+      }
+      input = changed
+    }
 
     // Text asked for audio is spoken, not converted - a PDF included, which is
     // why this comes before the PDF branch rather than after it.
@@ -138,6 +159,11 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       default: return false
       }
     }
+    let ceiling = ImageProcessor.sizeCeiling(from: operations)
+    let weight = (try FileManager.default.attributesOfItem(atPath: input.path)[.size] as? Int64) ?? 0
+    if !redraws, operations.tools.contains(.lighter) || ceiling.map({ weight > Int64($0) }) ?? false {
+      return try lighten(input, at: output, under: ceiling, since: start, progress: progress)
+    }
     guard redraws else {
       try Data(contentsOf: input, options: .mappedIfSafe).write(to: output, options: .atomic)
       progress(1.0)
@@ -160,6 +186,26 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     }
     try Merger.pdf(from: pages, to: output)
     return try Self.result(output, since: start)
+  }
+
+  /// The first level that is under the ceiling, or the first there is.
+  private func lighten(
+    _ input: URL, at output: URL, under ceiling: Int?, since start: Date, progress: @escaping @Sendable (Double) -> Void
+  ) throws -> ProcessingResult {
+    var smallest = Int64.max
+    for (index, level) in PDFLightener.levels.enumerated() {
+      try? FileManager.default.removeItem(at: output)
+      try PDFLightener.write(input, to: output, at: level)
+      progress(Double(index + 1) / Double(PDFLightener.levels.count))
+      let result = try Self.result(output, since: start)
+      smallest = min(smallest, result.outputSize)
+      guard let ceiling, result.outputSize > Int64(ceiling) else { progress(1); return result }
+    }
+    try? FileManager.default.removeItem(at: output)
+    throw ProcessingError.tooBig(
+      reason: "\(input.lastPathComponent) cannot be made to fit in \(Int64(ceiling ?? 0).formatted(.byteCount(style: .file))): "
+        + "the smallest it came out was \(smallest.formatted(.byteCount(style: .file)))."
+    )
   }
 
   /// The PDF's words, written out and given to whichever tool writes the
@@ -265,7 +311,8 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     as uti: UTType,
     operations: [Operation]
   ) async throws -> (width: Int, height: Int) {
-    let bounds = page.bounds(for: .mediaBox)
+    // What is seen of the page, which a crop makes less than there is of it.
+    let bounds = page.bounds(for: .cropBox)
     let turned = page.rotation % 180 != 0
     let shown = CGSize(width: turned ? bounds.height : bounds.width, height: turned ? bounds.width : bounds.height)
     // 2x the PDF's 72 dpi so text stays readable, but capped: a poster-sized
@@ -275,8 +322,10 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     let renderScale = longestSide > 0 ? min(2, maximumSide / longestSide) : 1
     let size = CGSize(width: shown.width * renderScale, height: shown.height * renderScale)
 
-    let thumbnail = page.thumbnail(of: size, for: .mediaBox)
-    guard let cgImage = thumbnail.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+    let dots = operations.tools.compactMap { tool -> Int? in if case .dpi(let dots) = tool { return dots } else { return nil } }.last
+    let picture = dots.map { PageDrawing.image(of: page, dots: CGFloat($0)) }
+      ?? page.thumbnail(of: size, for: .cropBox).cgImage(forProposedRect: nil, context: nil, hints: nil)
+    guard let cgImage = picture else {
       throw ProcessingError.conversionFailed(reason: "Cannot rasterise page")
     }
 
@@ -286,15 +335,21 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     guard let png = CGImageDestinationCreateWithURL(drawn as CFURL, UTType.png.identifier as CFString, 1, nil) else {
       throw ProcessingError.conversionFailed(reason: "Cannot render page")
     }
-    CGImageDestinationAddImage(png, cgImage, nil)
+    let finely = dots.map { [kCGImagePropertyDPIWidth: $0, kCGImagePropertyDPIHeight: $0] as CFDictionary }
+    CGImageDestinationAddImage(png, cgImage, finely)
     guard CGImageDestinationFinalize(png) else {
       throw ProcessingError.conversionFailed(reason: "Cannot render page")
     }
 
     // The format is said outright: the chain may name another (PDF to PDF
     // redraws into PDF pages whatever the preset's own target).
-    let steps = operations.filter { if case .convertFormat = $0 { return false } else { return true } }
-      + [.convertFormat(to: uti)]
+    // And what is done to the page has been done to it.
+    let steps = operations.filter { operation in
+      switch operation {
+      case .convertFormat, .tool: return false
+      default: return true
+      }
+    } + [.convertFormat(to: uti)]
     let result = try await images.process(drawn, to: destination, with: steps) { _ in }
     return result.outputDimensions ?? (cgImage.width, cgImage.height)
   }
@@ -314,7 +369,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
 
     // A scanned PDF has no text layer, so it is read the same way as for .txt.
     let text = inputType.conforms(to: .pdf)
-      ? try pdfPages(from: input, operations: operations) { progress($0 * 0.3) }
+      ? try await pagesAside(from: input, operations: operations) { progress($0 * 0.3) }
         .joined(separator: Self.paragraphBreak)
       : try DocumentText.read(input, as: inputType).string
 
@@ -357,11 +412,19 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
     let start = Date()
-    let text = try pdfPages(from: input, operations: operations) { progress($0 * 0.9) }
+    let text = try await pagesAside(from: input, operations: operations) { progress($0 * 0.9) }
       .joined(separator: Self.paragraphBreak)
     try DocumentText.write(NSAttributedString(string: text), to: output, as: outputType)
     progress(1.0)
     return try Self.result(output, since: start)
+  }
+
+  /// The same, away from the main thread: a scan takes seconds a page to read, and
+  /// the first of all a good deal longer. Read there, it froze the whole app.
+  private nonisolated func pagesAside(
+    from input: URL, operations: [Operation], progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> [String] {
+    try pdfPages(from: input, operations: operations, progress: progress)
   }
 
   /// Text from a PDF, page by page: what is embedded, and OCR for the pages

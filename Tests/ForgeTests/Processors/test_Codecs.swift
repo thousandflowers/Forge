@@ -149,4 +149,17 @@ final class AudioContainerTests: BaseTestCase {
     let duration = try await AVURLAsset(url: output).load(.duration).seconds
     XCTAssertEqual(duration, 2, accuracy: 0.3)
   }
+
+  /// It was refused, whatever the film: what it is compared with has no name.
+  func test_h264GoesIntoAnMP4() async throws {
+    let source = try await Fixture.video(at: path("a.mov"), seconds: 1)
+    let out = try folder("out")
+    let preset = RulePreset(name: "t", description: "", category: .video, actions: [.convertFormat(to: .mpeg4Movie), .encode(codec: .h264)])
+    let entry = try await coordinator().processFile(
+      try ProcessableFile(url: source), with: preset, destinationMode: .copyTo, destinationURL: out
+    ) { _ in }
+    let track = try await AVURLAsset(url: try XCTUnwrap(entry.outputURL)).loadTracks(withMediaType: .video)[0]
+    let format = try await track.load(.formatDescriptions)[0]
+    XCTAssertEqual(CMFormatDescriptionGetMediaSubType(format), kCMVideoCodecType_H264)
+  }
 }

@@ -39,7 +39,7 @@ struct PresetParameter: Codable, Hashable, Identifiable, Sendable {
     /// answered with something the processors would refuse.
     var range: ClosedRange<Double> {
       switch self {
-      case .maxFileSize: return 0.1...2000
+      case .maxFileSize: return 0.01...2000
       case .width: return 16...16384
       case .quality: return 1...100
       }

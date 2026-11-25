@@ -15,6 +15,8 @@ struct Convert: AsyncParsableCommand {
           forge convert photo.heic --preset "Web JPEG" --out ~/Desktop
           forge convert clip.mov --to mp4 --resize 1280x720 --out ./out
           forge convert clip.mov --to gif --out ./out
+          forge convert clip.mov --do trim10-45 --do mute --out ./out
+          forge convert thesis.pdf --do pages2-5 --out ./out
           forge convert scan.pdf --to txt --ocr-language it-IT --out ./text
           forge convert *.png --to jpeg --overwrite
         """
@@ -112,6 +114,51 @@ struct Convert: AsyncParsableCommand {
   }
 }
 
+// MARK: - join
+
+extension ForgeCommand {
+  @available(macOS 13, *)
+  struct Join: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+      abstract: "Make several files into one, in the order given.",
+      discussion: """
+        PDFs and pictures become one PDF, films one film, recordings one recording.
+
+          forge join cover.pdf chapter*.pdf --out ~/Desktop
+          forge join *.jpg --as film --name holiday --out .
+        """
+    )
+
+    @Argument(help: "Files to join.", completion: .file())
+    var files: [String]
+
+    @Option(name: .customLong("as"), help: "What to make: pdf, film, sound. Without it, what the files suggest.")
+    var kind: Joiner.Kind?
+
+    @Option(name: [.customShort("o"), .long], help: "Folder to write into. Without it, beside the first file.")
+    var out: String?
+
+    @Option(help: "What to call it, without an extension.")
+    var name: String?
+
+    func run() async throws {
+      let sources = try files.map { path in
+        do { return try ProcessableFile(url: URL(fileURLWithPath: path)) } catch {
+          throw CLIError("\(path): \(error.localizedDescription)")
+        }
+      }
+      let possible = Joiner.kinds(for: sources)
+      guard let chosen = kind ?? possible.first, possible.contains(chosen) else {
+        throw CLIError(sources.count < 2 ? "Give at least two files to join." : "These files cannot be joined.")
+      }
+      let coordinator = ProcessingCoordinator(settings: AppSettings.load())
+      print(try await coordinator.join(sources, as: chosen, into: out.map { URL(fileURLWithPath: $0) }, named: name).path)
+    }
+  }
+}
+
+extension Joiner.Kind: ExpressibleByArgument {}
+
 // MARK: - the presets the tool knows
 
 extension ForgeCommand {
@@ -173,6 +220,10 @@ struct Presets: AsyncParsableCommand {
         return languages.isEmpty ? "read text" : "read text (\(languages.joined(separator: ", ")))"
       case .encode(let codec):
         return codec.title
+      case .film(let settings):
+        return settings.summary
+      case .tool(let tool):
+        return tool.word
       case .limitSize(let bytes):
         return "under \(Int64(bytes).formatted(.byteCount(style: .file)))"
       case .when(let condition, _, _):
@@ -239,7 +290,7 @@ extension ForgeCommand {
       row("fonts", names(OutputFormat.fonts))
       if !pandoc.write.isEmpty { row("pandoc", pandoc.write.sorted()) }
       if ExternalTools.locate("ffmpeg") != nil {
-        row("ffmpeg", ["sound and film into any container it writes, by extension (see `ffmpeg -muxers`)"])
+        row("ffmpeg", ["sound and video into any container it writes, by extension (see `ffmpeg -muxers`)"])
       }
     }
 
@@ -258,6 +309,7 @@ struct Watch: AsyncParsableCommand {
         ignored, so the destination may sit inside the watched folder.
 
           forge watch ~/Desktop/incoming --preset "Web JPEG" --out ~/Desktop/web
+          forge watch ~/Desktop --preset "Web JPEG" --out ~/Desktop --only-renamed
         """
     )
 
@@ -269,6 +321,9 @@ struct Watch: AsyncParsableCommand {
 
     @Flag(help: "Also watch subfolders.")
     var recursive = false
+
+    @Flag(help: "Leave every file alone but the ones whose names say what they want: photo_2MB.heic, photo_privacy.heic, or a preset's own word.")
+    var onlyRenamed = false
 
     func run() async throws {
       let watched = URL(fileURLWithPath: folder)
@@ -291,7 +346,8 @@ struct Watch: AsyncParsableCommand {
         mode: mode,
         destination: outputURL,
         settings: destination.settings,
-        others: saved
+        others: saved,
+        onlyWhenRenamed: onlyRenamed
       )
       try await runner.run(
         folder: MonitoredFolder(

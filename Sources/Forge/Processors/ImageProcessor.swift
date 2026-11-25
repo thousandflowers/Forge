@@ -30,6 +30,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     // Text is a reading job; WebP is written by cwebp where it is installed.
     if target.conforms(to: .plainText) { return true }
     if Self.isWebP(target), ExternalTools.locate("cwebp") != nil { return true }
+    if target == .svg, file.fileType != .svg { return true }
     return FormatCatalog.isWritableImage(target) || FormatCatalog.isWritableVideo(target)
   }
 
@@ -69,7 +70,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       // picture many times, so only its first frame is read.
       let pages = frames.count > 1 && frames.allSatisfy({ $0.duration == 0 }) ? frames : [frames[0]]
       return try Self.recognizeText(
-        in: try pages.map { try transform($0.image, with: [], orientation: orientation) },
+        in: try pages.map { try transform($0.image, with: operations.filter { if case .tool = $0 { return true } else { return false } }, orientation: orientation) },
         languages: languages(from: operations),
         to: output,
         start: start,
@@ -96,6 +97,17 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       )
     }
 
+    if outputUTI == .svg {
+      let image = try transform(frames[0].image, with: operations, orientation: orientation, onWhite: true)
+      progress(0.5)
+      try Tracer.svg(of: image).write(to: output, atomically: true, encoding: .utf8)
+      progress(1)
+      return ProcessingResult(
+        outputURL: output, outputSize: Int64(try Self.fileSize(of: output)), outputDimensions: (image.width, image.height),
+        duration: Date().timeIntervalSince(start)
+      )
+    }
+
     guard FormatCatalog.isWritableImage(outputUTI) || FormatCatalog.isWritableVideo(outputUTI) else {
       throw ProcessingError.unsupportedConversion(from: inputType, to: outputUTI)
     }
@@ -105,7 +117,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     for (index, frame) in frames.enumerated() {
       try Task.checkCancellation()
       rendered.append(ImageFrame(
-        image: try transform(frame.image, with: operations, orientation: orientation),
+        image: try transform(frame.image, with: operations, orientation: orientation, onWhite: FormatCatalog.isSolid(outputUTI), isAlone: frames.count == 1),
         duration: frame.duration
       ))
       progress(Double(index + 1) / Double(frames.count) * 0.9)
@@ -197,7 +209,9 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
   private func transform(
     _ image: CGImage,
     with operations: [Operation],
-    orientation: CGImagePropertyOrientation = .up
+    orientation: CGImagePropertyOrientation = .up,
+    onWhite: Bool = false,
+    isAlone: Bool = true
   ) throws -> CGImage {
     var ciImage = CIImage(cgImage: image)
     if orientation != .up {
@@ -207,8 +221,9 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
       ))
     }
     for operation in operations {
-      ciImage = try applyOperation(operation, to: ciImage)
+      ciImage = try applyOperation(operation, to: ciImage, isAlone: isAlone)
     }
+    if onWhite, operations.tools.contains(where: { [.removeBackground, .round].contains($0.kind) }) { ciImage = PictureTools.onWhite(ciImage) }
 
     // Whole pixels only. An extent ending at 533.33 was rendered 534 wide, the
     // last column a third picture and the rest nothing.
@@ -421,7 +436,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
 
     let finalSize = try Self.fileSize(of: output)
     guard finalSize <= ceiling else {
-      throw ProcessingError.conversionFailed(
+      throw ProcessingError.tooBig(
         // The input's name: `output` is the hidden scratch file.
         reason: "Cannot get \(input.lastPathComponent) under "
           + "\(Int64(ceiling).formatted(.byteCount(style: .file))); the smallest it goes is "
@@ -453,14 +468,16 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
 
   // MARK: - Operations
 
-  private func applyOperation(_ operation: Operation, to image: CIImage) throws -> CIImage {
+  private func applyOperation(_ operation: Operation, to image: CIImage, isAlone: Bool) throws -> CIImage {
     switch operation {
-    case .convertFormat, .quality, .recognizeText, .encode, .limitSize, .stripMetadata, .when, .split, .join, .merge:
+    case .convertFormat, .quality, .recognizeText, .encode, .film, .limitSize, .stripMetadata, .when, .split, .join, .merge:
       return image // settled when the file is written, or decided before it is read
     case .resize(let width, let height, let mode):
       return applyResize(image, targetWidth: width, targetHeight: height, mode: mode)
     case .filter(let type):
       return applyFilter(image, type: type)
+    case .tool(let tool):
+      return try PictureTools.apply(tool, to: image, isAlone: isAlone)
     }
   }
 

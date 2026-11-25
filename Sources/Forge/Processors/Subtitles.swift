@@ -18,11 +18,11 @@ enum Subtitles {
 
   /// What can be read, by extension. This list is the feature: each entry is a
   /// parser below, and an extension nobody parses is not claimed.
-  static let readableExtensions: Set<String> = ["srt", "vtt", "webvtt", "sbv", "sub"]
+  static let readableExtensions: Set<String> = ["srt", "vtt", "webvtt", "sbv", "sub", "ass", "ssa", "lrc", "ttml", "dfxp", "itt"]
 
   /// What can be written. Fewer than can be read, and deliberately: MicroDVD
   /// counts in frames, so writing one means inventing a frame rate.
-  static let writableExtensions: Set<String> = ["srt", "vtt", "webvtt", "sbv", "txt", "text"]
+  static let writableExtensions: Set<String> = ["srt", "vtt", "webvtt", "sbv", "ass", "lrc", "ttml", "txt", "text"]
 
   /// The formats that carry cues, as against plain text - which is a thing any
   /// of them can be turned into and is not a subtitle format. Asking a film
@@ -44,6 +44,9 @@ enum Subtitles {
     let cues: [Cue]
     switch url.pathExtension.lowercased() {
     case "sbv": cues = parseTimed(text, separator: ",")
+    case "ass", "ssa": cues = parseASS(text)
+    case "lrc": cues = parseLRC(text)
+    case "ttml", "dfxp", "itt": cues = parseTTML(text)
     case "sub": cues = text.contains("{") ? parseMicroDVD(text) : parseTimed(text, separator: ",")
     default: cues = parseTimed(text, separator: "-->")
     }
@@ -150,6 +153,89 @@ enum Subtitles {
     return total
   }
 
+  // MARK: - From speech
+
+  /// What can be read in the time it is on screen: two lines, six seconds.
+  static let longestLine = 42
+  static let longestCue: TimeInterval = 6
+  /// A silence this long is somebody finishing what they were saying.
+  private static let pause: TimeInterval = 0.7
+  /// How long the last words stay up after they are said.
+  private static let linger: TimeInterval = 0.3
+
+  /// Words with times, as cues: one for each thing said, and where that is too
+  /// long to read at once, as many even pieces as it takes - a piece cut off
+  /// where the room ran out left one word alone on screen for half a second.
+  static func cues(from words: [Transcription.Word]) -> [Cue] {
+    let groups = sentences(words.filter { !$0.text.isEmpty }).flatMap(readable)
+    return groups.enumerated().compactMap { index, group in
+      guard let first = group.first, let last = group.last else { return nil }
+      let next = groups.indices.contains(index + 1) ? groups[index + 1][0].start : .infinity
+      return Cue(
+        start: first.start,
+        end: max(first.start, min(last.end + linger, next)),
+        text: lines(group.map(\.text)).joined(separator: "\n")
+      )
+    }
+  }
+
+  private static func sentences(_ words: [Transcription.Word]) -> [[Transcription.Word]] {
+    words.reduce(into: [[Transcription.Word]]()) { groups, word in
+      if let last = groups.last?.last, let end = last.text.last, !".?!".contains(end), word.start - last.end < pause {
+        groups[groups.count - 1].append(word)
+      } else {
+        groups.append([word])
+      }
+    }
+  }
+
+  /// The fewest even pieces that can each be read.
+  private static func readable(_ words: [Transcription.Word]) -> [[Transcription.Word]] {
+    for count in 1...max(1, words.count) {
+      let pieces = split(words, into: count)
+      let fits = pieces.allSatisfy { piece in
+        guard let first = piece.first, let last = piece.last else { return true }
+        return last.end - first.start <= longestCue && lines(piece.map(\.text)).count <= 2
+      }
+      if fits { return pieces }
+    }
+    return words.map { [$0] }
+  }
+
+  /// Cut where the letters are nearest to even.
+  private static func split(_ words: [Transcription.Word], into count: Int) -> [[Transcription.Word]] {
+    let total = words.reduce(0) { $0 + $1.text.count + 1 }
+    var pieces = [[Transcription.Word]](repeating: [], count: count)
+    var passed = 0
+    for word in words {
+      let middle = passed + (word.text.count + 1) / 2
+      pieces[min(count - 1, middle * count / max(1, total))].append(word)
+      passed += word.text.count + 1
+    }
+    return pieces.filter { !$0.isEmpty }
+  }
+
+  /// One line if it fits; two as even as they can be; more only when it does
+  /// not fit in two, which is what says the cue is too long.
+  private static func lines(_ words: [String]) -> [String] {
+    let whole = words.joined(separator: " ")
+    guard whole.count > longestLine, words.count > 1 else { return [whole] }
+    var best: [String] = []
+    for cut in 1..<words.count {
+      let halves = [words[..<cut].joined(separator: " "), words[cut...].joined(separator: " ")]
+      guard halves[0].count <= longestLine, halves[1].count <= longestLine else { continue }
+      if best.isEmpty || abs(halves[0].count - halves[1].count) < abs(best[0].count - best[1].count) { best = halves }
+    }
+    if !best.isEmpty { return best }
+    return words.reduce(into: [String]()) { lines, word in
+      if let line = lines.last, line.count + 1 + word.count <= longestLine {
+        lines[lines.count - 1] = line + " " + word
+      } else {
+        lines.append(word)
+      }
+    }
+  }
+
   // MARK: - Writing
 
   static func write(_ cues: [Cue], to url: URL) throws {
@@ -157,6 +243,9 @@ enum Subtitles {
     switch url.pathExtension.lowercased() {
     case "vtt", "webvtt": text = webVTT(cues)
     case "sbv": text = sbv(cues)
+    case "ass": text = ass(cues)
+    case "lrc": text = lrc(cues)
+    case "ttml": text = ttml(cues)
     case "txt", "text": text = cues.map(\.text).joined(separator: "\n\n") + "\n"
     default: text = subRip(cues)
     }

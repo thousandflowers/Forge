@@ -46,71 +46,101 @@ final class MonitoredFolderWatcher {
     timer?.cancel()
   }
 
+  /// Returns at once: macOS may be asking whether this folder can be seen, and
+  /// opening it waits for the answer.
+  ///
   /// - Parameter onGone: called once if the folder itself is moved or deleted,
   ///   after which nothing more can arrive.
+  /// - Parameter begun: called before anything is handed over, with what went
+  ///   wrong if it could not be watched.
+  func start(
+    folder: MonitoredFolder,
+    onGone: (@Sendable () -> Void)? = nil,
+    begun: @escaping @Sendable (Error?) -> Void,
+    handler: @escaping FileAddedHandler
+  ) {
+    queue.async { [self] in
+      do {
+        try open(folder, onGone: onGone, handler: handler)
+        begun(nil)
+      } catch {
+        begun(error)
+      }
+    }
+  }
+
+  /// The same, for whoever has nothing else to do meanwhile.
   func startWatching(
     folder: MonitoredFolder,
     onGone: (@Sendable () -> Void)? = nil,
     handler: @escaping FileAddedHandler
-  ) throws {
-    try queue.sync {
-      teardown()
-
-      let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
-        guard let info else { return }
-        let watcher = Unmanaged<MonitoredFolderWatcher>.fromOpaque(info).takeUnretainedValue()
-        let paths = paths.assumingMemoryBound(to: UnsafePointer<CChar>.self)
-        for index in 0..<count {
-          watcher.handleEvent(path: String(cString: paths[index]), flags: flags[index])
-        }
-      }
-
-      var context = FSEventStreamContext(
-        version: 0,
-        info: Unmanaged.passUnretained(self).toOpaque(),
-        retain: nil,
-        release: nil,
-        copyDescription: nil
-      )
-
-      guard let stream = FSEventStreamCreate(
-        kCFAllocatorDefault,
-        callback,
-        &context,
-        [folder.url.path] as CFArray,
-        FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-        Self.pollInterval,
-        // WatchRoot: without it a stream goes on "watching" a folder that has
-        // been moved or deleted, and says nothing.
-        UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagWatchRoot)
-      ) else {
-        throw ProcessingError.conversionFailed(
-          reason: "Cannot watch \(folder.url.lastPathComponent)"
-        )
-      }
-
-      FSEventStreamSetDispatchQueue(stream, queue)
-      guard FSEventStreamStart(stream) else {
-        FSEventStreamInvalidate(stream)
-        FSEventStreamRelease(stream)
-        throw ProcessingError.conversionFailed(
-          reason: "Cannot start watching \(folder.url.lastPathComponent)"
-        )
-      }
-
-      self.stream = stream
-      self.root = folder.url
-      self.includeSubfolders = folder.includeSubfolders
-      self.handler = handler
-      self.onGone = onGone
+  ) async throws {
+    try await withCheckedThrowingContinuation { (waiting: CheckedContinuation<Void, Error>) in
+      start(folder: folder, onGone: onGone, begun: { error in
+        if let error { waiting.resume(throwing: error) } else { waiting.resume() }
+      }, handler: handler)
     }
   }
 
+  /// Does not wait either: what is being opened is closed when it has opened.
   func stop() {
-    queue.sync { teardown() }
+    queue.async { [self] in teardown() }
   }
 
   // MARK: - Queue-only
+
+  private func open(_ folder: MonitoredFolder, onGone: (@Sendable () -> Void)?, handler: @escaping FileAddedHandler) throws {
+    dispatchPrecondition(condition: .onQueue(queue))
+    teardown()
+
+    let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
+      guard let info else { return }
+      let watcher = Unmanaged<MonitoredFolderWatcher>.fromOpaque(info).takeUnretainedValue()
+      let paths = paths.assumingMemoryBound(to: UnsafePointer<CChar>.self)
+      for index in 0..<count {
+        watcher.handleEvent(path: String(cString: paths[index]), flags: flags[index])
+      }
+    }
+
+    var context = FSEventStreamContext(
+      version: 0,
+      info: Unmanaged.passUnretained(self).toOpaque(),
+      retain: nil,
+      release: nil,
+      copyDescription: nil
+    )
+
+    guard let stream = FSEventStreamCreate(
+      kCFAllocatorDefault,
+      callback,
+      &context,
+      [folder.url.path] as CFArray,
+      FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+      Self.pollInterval,
+      // WatchRoot: without it a stream goes on "watching" a folder that has
+      // been moved or deleted, and says nothing.
+      UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer | kFSEventStreamCreateFlagWatchRoot)
+    ) else {
+      throw ProcessingError.conversionFailed(
+        reason: "Cannot watch \(folder.url.lastPathComponent)"
+      )
+    }
+
+    FSEventStreamSetDispatchQueue(stream, queue)
+    guard FSEventStreamStart(stream) else {
+      FSEventStreamInvalidate(stream)
+      FSEventStreamRelease(stream)
+      throw ProcessingError.conversionFailed(
+        reason: "Cannot start watching \(folder.url.lastPathComponent)"
+      )
+    }
+
+    self.stream = stream
+    self.root = folder.url
+    self.includeSubfolders = folder.includeSubfolders
+    self.handler = handler
+    self.onGone = onGone
+  }
 
   private func teardown() {
     dispatchPrecondition(condition: .onQueue(queue))

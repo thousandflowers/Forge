@@ -155,12 +155,13 @@ extension Action {
   /// say whether it still applies.
   var kind: ActionKind? {
     switch operation {
-    case .convertFormat: return nil  // a format is not a step from the library
+    case .convertFormat, .tool: return nil  // neither is a step from the library
     case .resize(_, _, let mode): return mode == .cropCenter ? .crop : .resize
     case .quality: return .quality
     case .filter: return .filter
     case .recognizeText: return .recognizeText
     case .encode: return .encode
+    case .film: return .film
     case .limitSize: return .limitSize
     case .stripMetadata: return .privacy
     case .when: return .when
@@ -174,8 +175,8 @@ extension Action {
   var tint: Color {
     switch operation {
     case .convertFormat: return LibraryEntry.Group.output.color
-    case .resize, .filter, .recognizeText: return LibraryEntry.Group.transform.color
-    case .quality, .limitSize, .encode: return LibraryEntry.Group.encode.color
+    case .resize, .filter, .recognizeText, .tool: return LibraryEntry.Group.transform.color
+    case .quality, .limitSize, .encode, .film: return LibraryEntry.Group.encode.color
     case .stripMetadata: return LibraryEntry.Group.privacy.color
     case .when, .split, .join, .merge: return LibraryEntry.Group.logic.color
     }
