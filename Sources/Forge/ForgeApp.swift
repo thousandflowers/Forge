@@ -26,12 +26,14 @@ struct ForgeApp: App {
     // A conversion is usually a small errand, and going to the window for it
     // is more ceremony than the errand deserves.
     MenuBarExtra {
-      MenuBarView()
+      MenuBarView(running: model.running)
         .environmentObject(model)
     } label: {
       // The symbol's own name was what VoiceOver read: "Build" ("Compilazione").
       MenuBarLabel(model: model, delegate: delegate)
     }
+    // Pictures, and things to drag, which a menu cannot hold.
+    .menuBarExtraStyle(.window)
   }
 }
 

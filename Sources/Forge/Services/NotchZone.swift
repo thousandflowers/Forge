@@ -1,19 +1,20 @@
 import AppKit
 import SwiftUI
 
-/// The notch, as a place to let files go on: it opens while a file is being
-/// dragged, and the menu that comes up is the one the drop zone brings up.
+/// The notch, as a place to take files: it stands out a little while a file is
+/// being dragged, and the menu comes out of it when the file comes near.
 ///
 /// macOS gives other people's apps no way into the Dynamic Island, so this is a
 /// panel of Forge's own around whatever the top of the screen leaves out.
 @MainActor
 final class NotchZone {
+  /// Files let go of on it before the menu was out.
   var take: ([URL]) -> Void = { _ in }
+  /// What the top of the screen leaves out, for the drag that is going on.
+  private(set) var cutout: NSRect?
 
   private let find: @MainActor () -> NSRect?
-  private let state = NotchState()
   private var panel: NotchPanel?
-  private var cutout: NSRect = .zero
   private var drag = 0
   /// The button is up before the drop is delivered.
   private static let grace: TimeInterval = 0.6
@@ -21,28 +22,29 @@ final class NotchZone {
   init(find: @escaping @MainActor () -> NSRect? = NotchZone.cutout) { self.find = find }
 
   var isShown: Bool { panel?.isVisible ?? false }
-  var isOpen: Bool { state.isOpen }
   var target: (any NSDraggingDestination)? { panel }
+  func here() -> NSRect? { find() }
 
   /// A file is being dragged.
-  func began(at mouse: NSPoint) {
+  func began() {
     drag += 1
-    guard let cutout = find() else { return }
-    self.cutout = cutout
+    cutout = find()
+    stand()
+  }
+
+  /// With no menu out of it.
+  func stand() {
+    guard let cutout else { return }
     let panel = self.panel ?? make()
     self.panel = panel
     panel.isLive = true
-    state.notch = cutout.size
-    state.isOver = false
-    state.isOpen = false
-    panel.setFrame(NotchShape.open(around: cutout), display: true)
+    panel.setFrame(NotchShape.lip(around: cutout), display: true)
     panel.orderFrontRegardless()
-    moved(to: mouse)
   }
 
-  func moved(to mouse: NSPoint) {
-    let isOpen = NotchShape.isNear(mouse, to: cutout)
-    if state.isOpen != isOpen { state.isOpen = isOpen }
+  func hide() {
+    panel?.isLive = false
+    panel?.orderOut(nil)
   }
 
   func ended(at mouse: NSPoint) {
@@ -54,30 +56,12 @@ final class NotchZone {
     }
   }
 
-  private func hide() {
-    panel?.isLive = false
-    state.isOver = false
-    state.isOpen = false
-    panel?.orderOut(nil)
-  }
-
   private func make() -> NotchPanel {
     let panel = NotchPanel(contentRect: .zero, styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
     panel.title = "Drop zone"
-    // Over the menu bar, which is where the notch is.
-    panel.level = .popUpMenu
-    panel.hidesOnDeactivate = false
-    panel.isReleasedWhenClosed = false
-    panel.hasShadow = false
-    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-    panel.backgroundColor = .clear
-    panel.isOpaque = false
-    panel.animationBehavior = .none
-    let host = NSHostingView(rootView: NotchView(state: state))
-    host.sizingOptions = []
-    panel.contentView = host
+    panel.hang()
+    panel.contentView = NSHostingView(rootView: Hanging(radius: 11).fill(.black).ignoresSafeArea())
     panel.registerForDraggedTypes([.fileURL])
-    panel.over = { [weak self] in self?.state.isOver = $0 }
     panel.drop = { [weak self] files in
       self?.hide()
       self?.take(files)
@@ -93,11 +77,14 @@ final class NotchZone {
   }
 }
 
-/// Where the notch is, and how far around it files are taken.
+/// Where the notch is, and how far around it a file is near.
 enum NotchShape {
-  static let openSize = NSSize(width: 320, height: 92)
-  /// How close a file comes before it opens.
-  static let reach: CGFloat = 90
+  /// How much more than the notch is seen, so as to be noticed.
+  private static let edge: CGFloat = 6
+  private static let nearX: CGFloat = 70
+  private static let nearY: CGFloat = 50
+  /// A hand on its way to a choice strays.
+  private static let stray: CGFloat = 40
 
   /// The areas beside it are in the screens' own coordinates. Nothing where
   /// there is no notch, or where macOS says there is room but not where.
@@ -106,45 +93,54 @@ enum NotchShape {
     return NSRect(x: left.maxX, y: screen.maxY - inset, width: right.minX - left.maxX, height: inset)
   }
 
-  /// Hung from the top of the screen, under the notch's middle.
-  static func open(around cutout: NSRect) -> NSRect {
-    let width = max(openSize.width, cutout.width), height = cutout.height + openSize.height
-    return NSRect(x: cutout.midX - width / 2, y: cutout.maxY - height, width: width, height: height)
+  static func lip(around cutout: NSRect) -> NSRect {
+    NSRect(x: cutout.minX - edge, y: cutout.minY - edge, width: cutout.width + edge * 2, height: cutout.height + edge)
   }
 
-  /// Wider than what opens, so a file is never over it while it is closed.
+  /// Hung from the top of the screen, under the notch's middle.
+  static func origin(of size: NSSize, under cutout: NSRect) -> NSPoint {
+    NSPoint(x: cutout.midX - size.width / 2, y: cutout.maxY - size.height)
+  }
+
   static func isNear(_ mouse: NSPoint, to cutout: NSRect) -> Bool {
-    open(around: cutout).insetBy(dx: -reach, dy: -reach).contains(mouse)
+    cutout.insetBy(dx: -nearX, dy: -nearY).contains(mouse)
+  }
+
+  /// Further than it takes to bring it out, so that it does not flicker.
+  static func keeps(_ mouse: NSPoint, near cutout: NSRect, menu: NSRect?) -> Bool {
+    isNear(mouse, to: cutout) || (menu?.insetBy(dx: -stray, dy: -stray).contains(mouse) ?? false)
   }
 }
 
-@MainActor
-private final class NotchState: ObservableObject {
-  @Published var notch: NSSize = .zero
-  @Published var isOpen = false
-  @Published var isOver = false
+extension NSPanel {
+  /// Over the menu bar, which is where the notch is.
+  func hang() {
+    level = .popUpMenu
+    hidesOnDeactivate = false
+    isReleasedWhenClosed = false
+    hasShadow = false
+    isMovableByWindowBackground = false
+    collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+    backgroundColor = .clear
+    isOpaque = false
+    animationBehavior = .none
+    // It is the notch, and the notch is black.
+    appearance = NSAppearance(named: .darkAqua)
+  }
 }
 
 private final class NotchPanel: NSPanel, NSDraggingDestination {
   var isLive = false
-  var over: (Bool) -> Void = { _ in }
   var drop: ([URL]) -> Void = { _ in }
 
   /// Left to itself AppKit puts it under the menu bar.
   override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 
-  func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-    guard isLive else { return [] }
-    over(true)
-    NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-    return DropTiles.operation(of: sender.draggingSourceOperationMask)
-  }
+  func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { draggingUpdated(sender) }
 
   func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
     isLive ? DropTiles.operation(of: sender.draggingSourceOperationMask) : []
   }
-
-  func draggingExited(_ sender: NSDraggingInfo?) { over(false) }
 
   func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
     let found = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
@@ -154,55 +150,41 @@ private final class NotchPanel: NSPanel, NSDraggingDestination {
   }
 }
 
-private struct NotchView: View {
-  @ObservedObject var state: NotchState
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+/// How far out of the notch its menu is.
+@MainActor
+final class NotchReveal: ObservableObject {
+  let notch: NSSize
+  @Published var isOut = false
+  init(notch: NSSize) { self.notch = notch }
+  static let seconds: TimeInterval = 0.28
+}
 
-  /// Closed, it is a little more than the notch: enough to be noticed.
-  private static let lip: CGFloat = 6
+/// Grows out of the notch, and goes back into it.
+struct OutOfTheNotch: ViewModifier {
+  @ObservedObject var reveal: NotchReveal
+  @Environment(\.accessibilityReduceMotion) private var isStill
+  private static let radius: CGFloat = 24
 
-  var body: some View {
-    let notch = state.notch
-    VStack(spacing: 0) {
-      ZStack(alignment: .bottom) {
-        Hanging(radius: state.isOpen ? 24 : 11).fill(.black)
-        if state.isOpen {
-          content.frame(height: NotchShape.openSize.height).transition(.opacity)
+  func body(content: Content) -> some View {
+    let isOut = reveal.isOut || isStill
+    content
+      .background(Color.black)
+      .mask(alignment: .top) {
+        GeometryReader { place in
+          Hanging(radius: isOut ? Self.radius : 11)
+            .frame(width: isOut ? place.size.width : reveal.notch.width, height: isOut ? place.size.height : reveal.notch.height)
+            .frame(maxWidth: .infinity, alignment: .top)
         }
       }
-      .frame(
-        width: state.isOpen ? max(NotchShape.openSize.width, notch.width) : notch.width + Self.lip * 2,
-        height: state.isOpen ? notch.height + NotchShape.openSize.height : notch.height + Self.lip
-      )
-      .clipped()
-      Spacer(minLength: 0)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    // What is behind the notch is left out of it.
-    .ignoresSafeArea()
-    .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.8), value: state.isOpen)
-    .animation(.easeOut(duration: 0.12), value: state.isOver)
-  }
-
-  private var content: some View {
-    HStack(spacing: 10) {
-      Image(systemName: "arrow.down.doc").font(.system(size: 20, weight: .medium))
-      Text("Drop here").font(.callout.weight(.medium))
-    }
-    .foregroundStyle(.white)
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(
-      RoundedRectangle(cornerRadius: 14, style: .continuous)
-        .fill(state.isOver ? Color.accentColor : Color.white.opacity(0.1))
-    )
-    .padding(.horizontal, 12)
-    .padding(.top, 8)
-    .padding(.bottom, 12)
+      .opacity(reveal.isOut || !isStill ? 1 : 0)
+      .animation(isStill ? nil : .spring(response: NotchReveal.seconds, dampingFraction: 0.86), value: reveal.isOut)
+      .environment(\.colorScheme, .dark)
+      .ignoresSafeArea()
   }
 }
 
 /// Square against the top of the screen, round below.
-private struct Hanging: Shape {
+struct Hanging: Shape {
   var radius: CGFloat
   var animatableData: CGFloat {
     get { radius }

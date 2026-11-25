@@ -28,21 +28,24 @@ final class NotchShapeTests: XCTestCase {
 
   func test_itHangsFromTheTop_underTheMiddleOfTheNotch() throws {
     let notch = try XCTUnwrap(NotchShape.cutout(in: screen, inset: 32, left: left, right: right))
-    let open = NotchShape.open(around: notch)
-    XCTAssertEqual(open.maxY, screen.maxY)
-    XCTAssertEqual(open.midX, notch.midX)
-    XCTAssertTrue(open.contains(notch))
+    let lip = NotchShape.lip(around: notch)
+    XCTAssertEqual(lip.maxY, screen.maxY)
+    XCTAssertEqual(lip.midX, notch.midX)
+    XCTAssertTrue(lip.contains(notch))
+    XCTAssertEqual(NotchShape.origin(of: NSSize(width: 520, height: 300), under: notch), NSPoint(x: 496, y: 682))
   }
 
-  /// The panel is there, unseen, at its full size: it must be open by the time
-  /// a file is over it.
-  func test_aFileIsNeverOverItWhileItIsClosed() throws {
+  /// It goes back further away than it comes out, or it would flicker.
+  func test_itIsKeptFurtherThanItTakesToBringItOut() throws {
     let notch = try XCTUnwrap(NotchShape.cutout(in: screen, inset: 32, left: left, right: right))
-    let open = NotchShape.open(around: notch)
-    for corner in [NSPoint(x: open.minX, y: open.minY), NSPoint(x: open.maxX, y: open.minY), NSPoint(x: notch.midX, y: screen.maxY)] {
-      XCTAssertTrue(NotchShape.isNear(corner, to: notch))
-    }
-    XCTAssertFalse(NotchShape.isNear(NSPoint(x: 756, y: 400), to: notch))
+    let menu = NSRect(x: 496, y: 682, width: 520, height: 300)
+    let inMenu = NSPoint(x: 520, y: 700), beside = NSPoint(x: 470, y: 700), away = NSPoint(x: 300, y: 300)
+    XCTAssertTrue(NotchShape.isNear(NSPoint(x: notch.midX, y: screen.maxY), to: notch))
+    XCTAssertFalse(NotchShape.isNear(inMenu, to: notch))
+    XCTAssertTrue(NotchShape.keeps(inMenu, near: notch, menu: menu))
+    XCTAssertTrue(NotchShape.keeps(beside, near: notch, menu: menu))
+    XCTAssertFalse(NotchShape.keeps(away, near: notch, menu: menu))
+    XCTAssertFalse(NotchShape.keeps(inMenu, near: notch, menu: nil))
   }
 }
 
@@ -81,21 +84,152 @@ final class NotchZoneTests: BaseTestCase {
     menu.look()
   }
 
+  private func settle(_ seconds: Double = 0.4) async throws { try await Task.sleep(nanoseconds: UInt64(seconds * 1e9)) }
+
   func test_aDraggedFileBringsItUp_andLettingGoSendsItAway() {
     let zone = NotchZone(find: { Self.notch }), menu = menu(with: zone)
     fake.mouse = away
     pickUp(with: menu)
     XCTAssertTrue(zone.isShown)
-    XCTAssertFalse(zone.isOpen)
-    fake.mouse = on
-    menu.look()
-    XCTAssertTrue(zone.isOpen)
-    fake.mouse = away
-    menu.look()
-    XCTAssertFalse(zone.isOpen)
+    XCTAssertNil(menu.session, "it only stands out until the file is near")
     fake.isDown = false
     menu.look()
     XCTAssertFalse(zone.isShown)
+  }
+
+  func test_theMenuComesOutNearTheNotch_andGoesBackAwayFromIt() async throws {
+    let zone = NotchZone(find: { Self.notch }), menu = menu(with: zone)
+    fake.files = [try Fixture.image(at: path("a.png"))]
+    fake.mouse = away
+    pickUp(with: menu)
+    try await settle()
+    XCTAssertNil(menu.session)
+
+    fake.mouse = on
+    menu.look()
+    try await settle()
+    XCTAssertEqual(menu.session?.files.map(\.url.lastPathComponent), ["a.png"])
+    XCTAssertTrue(menu.isOutOfNotch)
+    XCTAssertFalse(zone.isShown, "the menu has its place")
+
+    fake.mouse = away
+    menu.look()
+    XCTAssertNil(menu.session)
+    XCTAssertTrue(zone.isShown)
+
+    fake.mouse = on
+    menu.look()
+    try await settle()
+    XCTAssertNotNil(menu.session, "and comes out again")
+    fake.isDown = false
+    menu.look()
+    try await settle(0.9)
+    XCTAssertTrue(menu.open.isEmpty)
+  }
+
+  func test_droppedOnAChoice_itIsMade() async throws {
+    let zone = NotchZone(find: { Self.notch }), menu = menu(with: zone)
+    var made: [RulePreset] = []
+    menu.convert = { file, preset in made.append(preset); return [file.url] }
+    fake.files = [try Fixture.image(at: path("a.png"))]
+    fake.mouse = on
+    pickUp(with: menu)
+    try await settle()
+    let session = try XCTUnwrap(menu.session)
+    let choice = try XCTUnwrap(session.choices(for: .format).first)
+    fake.isDown = false
+    menu.look()
+    XCTAssertTrue(menu.dropped(on: .init(question: .format, answer: choice.value), of: session))
+    try await settle(0.9)
+    XCTAssertEqual(made.count, 1)
+    XCTAssertEqual(menu.open.count, 1, "what came of it is said where it was let go")
+    session.onClose()
+  }
+
+  func test_droppedBesideTheChoices_itWaitsForAClick() async throws {
+    let zone = NotchZone(find: { Self.notch }), menu = menu(with: zone)
+    fake.files = [try Fixture.image(at: path("a.png"))]
+    fake.mouse = on
+    pickUp(with: menu)
+    try await settle()
+    let session = try XCTUnwrap(menu.session)
+    fake.isDown = false
+    menu.look()
+    XCTAssertTrue(menu.dropped(on: nil, of: session))
+    try await settle(0.9)
+    XCTAssertEqual(menu.open.count, 1)
+    menu.pressed()
+    XCTAssertTrue(menu.open.isEmpty, "until the click is somewhere else")
+  }
+
+  func test_whatForgeCannotReadBringsNoMenuOut() async throws {
+    let zone = NotchZone(find: { Self.notch }), menu = menu(with: zone), odd = path("notes.zzz")
+    try Data("x".utf8).write(to: odd)
+    fake.files = [odd]
+    fake.mouse = on
+    pickUp(with: menu)
+    try await settle()
+    XCTAssertNil(menu.session)
+    fake.isDown = false
+    fake.mouse = away
+    menu.look()
+  }
+
+  /// One menu at a time, whichever came first.
+  func test_theKeysDoNotBringASecondOne() async throws {
+    let zone = NotchZone(find: { Self.notch }), menu = menu(with: zone)
+    menu.answersKeys = true
+    fake.files = [try Fixture.image(at: path("a.png"))]
+    fake.flags = .shift
+    fake.mouse = away
+    pickUp(with: menu)
+    try await settle()
+    let first = try XCTUnwrap(menu.session)
+    XCTAssertFalse(menu.isOutOfNotch)
+    fake.mouse = on
+    menu.look()
+    try await settle()
+    XCTAssertTrue(menu.session === first)
+    fake.mouse = away
+    menu.look()
+    XCTAssertTrue(menu.session === first, "the notch takes back only its own")
+    fake.isDown = false
+    menu.look()
+    try await settle(0.9)
+  }
+
+  func test_thePanelHangsFromTheTop_andDropsLandOnItsChoices() async throws {
+    let file = try ProcessableFile(url: try Fixture.image(at: path("a.png")))
+    let session = AskSession(request: AskRequest(word: .everything, over: nil), file: file, convert: { _, _ in [] })
+    let tiles = DropTiles(), panel = AskPanel(session: session, tiles: tiles, notch: Self.notch) {}
+    defer { panel.close() }
+    tiles.isLive = true
+    var landed: [DropTiles.Tile?] = []
+    tiles.drop = { landed.append($0); return true }
+    panel.appear(takingKeys: false)
+    try await settle(1)
+    XCTAssertEqual(panel.frame.width, AskView.notchWidth)
+    XCTAssertEqual(panel.frame.midX, Self.notch.midX, accuracy: 0.5, "a whole point, where there are no halves")
+    XCTAssertEqual(panel.frame.maxY, Self.notch.maxY)
+    let (tile, place) = try XCTUnwrap(tiles.frames.first { $0.key.question == .format })
+    XCTAssertGreaterThan(place.minY, Self.notch.height, "nothing to choose is behind the notch")
+    for frame in tiles.frames.values { XCTAssertTrue(CGRect(origin: .zero, size: panel.frame.size).contains(frame)) }
+    let held = HeldFile(at: NSPoint(x: place.midX, y: panel.frame.height - place.midY))
+    XCTAssertEqual(panel.target.draggingUpdated?(held), .copy)
+    XCTAssertEqual(panel.target.performDragOperation?(held), true)
+    XCTAssertEqual(landed, [tile])
+
+    let top = panel.frame.maxY, before = panel.frame.height
+    session.showsMore = true
+    try await settle(1.2)
+    XCTAssertGreaterThan(panel.frame.height, before)
+    XCTAssertEqual(panel.frame.maxY, top, "it grows downwards")
+  }
+
+  func test_moreToARowInTheNotch() {
+    let notch = { AskView.columns(for: $0, shapes: [6, 3], in: AskView.notchWidth) }
+    XCTAssertEqual(notch(["JPEG", "HEIC", "WEBP"]), 6)
+    XCTAssertEqual(notch(["Make lighter", "Instagram Square"]), 3)
   }
 
   func test_whatIsNotAFileDoesNot() {
@@ -131,7 +265,7 @@ final class NotchZoneTests: BaseTestCase {
     let zone = NotchZone(find: { Self.notch }), file = try Fixture.image(at: path("a.png"))
     var taken: [URL] = []
     zone.take = { taken += $0 }
-    zone.began(at: on)
+    zone.began()
     let target = try XCTUnwrap(zone.target)
     let pasteboard = NSPasteboard.withUniqueName()
     defer { pasteboard.releaseGlobally() }

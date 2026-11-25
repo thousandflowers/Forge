@@ -38,6 +38,11 @@ actor ProcessingCoordinator {
   /// - Parameter counter: which file this is in the batch, counting from one,
   ///   for a name template that numbers them. Nil where there is no batch to
   ///   count - a watched folder, or one file on its own.
+  /// Who wants to know what is being converted.
+  private var hears: (@Sendable (Running.Event) -> Void)?
+
+  func tell(_ hears: @escaping @Sendable (Running.Event) -> Void) { self.hears = hears }
+
   func processFile(
     _ file: ProcessableFile,
     with preset: RulePreset,
@@ -48,6 +53,9 @@ actor ProcessingCoordinator {
   ) async throws -> ProcessingHistory {
     let preset = preset.settled
     let fileId = file.id
+    let hears = hears, job = UUID()
+    hears?(.began(job, file.url))
+    defer { hears?(.ended(job)) }
 
     let started = Date()
     let task = Task {
@@ -58,7 +66,10 @@ actor ProcessingCoordinator {
           destinationMode: destinationMode,
           destinationURL: destinationURL,
           counter: counter,
-          progress: progress
+          progress: { fraction in
+            progress(fraction)
+            hears?(.reached(job, fraction))
+          }
         )
 
         let history = ProcessingHistory(

@@ -54,6 +54,8 @@ final class DragMenu {
   private var isReading = false
   private var isIgnored = false
   private var isCarrying = false
+  /// Whether the menu that is up came out of the notch.
+  private(set) var isOutOfNotch = false
   /// Every menu that is up. Without a panel where there is no screen.
   private(set) var open: [(session: AskSession, panel: AskPanel?)] = []
 
@@ -112,6 +114,11 @@ final class DragMenu {
     guard hand.isDown() else { return released() }
     tellNotch()
     guard answersKeys, !isIgnored, session == nil, !isReading, keys.areHeld(hand.flags()) else { return }
+    read { [weak self] in self?.show($0) }
+  }
+
+  /// What is in the hand, where Forge can do something with it.
+  private func read(then: @escaping @MainActor ([ProcessableFile]) -> Void) {
     let urls = hand.files()
     guard !urls.isEmpty else { return }
     isReading = true
@@ -120,17 +127,37 @@ final class DragMenu {
       let files = await Task.detached { urls.compactMap { try? ProcessableFile(url: $0) }.filter { ConvertKind(fileType: $0.fileType) != nil } }.value
       // Let go of, or dragging something else by now.
       guard this == drag, timer != nil else { return }
-      if !files.isEmpty { show(files) }
+      // Nothing to be done with it, however often it is asked.
+      guard !files.isEmpty else { return }
+      isReading = false
+      then(files)
     }
   }
 
+  /// The notch stands out for a file, and its menu comes and goes with it.
   private func tellNotch() {
     guard let notch else { return }
-    if isCarrying { return notch.moved(to: hand.mouse()) }
-    guard hand.holdsFiles() else { return }
-    isCarrying = true
-    notch.began(at: hand.mouse())
+    if !isCarrying {
+      guard hand.holdsFiles() else { return }
+      isCarrying = true
+      notch.began()
+    }
+    guard let cutout = notch.cutout else { return }
+    let mouse = hand.mouse()
+    if let out = session, isOutOfNotch {
+      guard !NotchShape.keeps(mouse, near: cutout, menu: panel(of: out)?.frame) else { return }
+      close(out)
+      notch.stand()
+    } else if session == nil, !isReading, NotchShape.isNear(mouse, to: cutout) {
+      read { [weak self] files in
+        guard let self, self.session == nil, self.hand.isDown(), NotchShape.isNear(self.hand.mouse(), to: cutout) else { return }
+        self.show(files, outOf: cutout)
+        notch.hide()
+      }
+    }
   }
+
+  private func panel(of session: AskSession) -> AskPanel? { open.first { $0.session === session }?.panel }
 
   /// Dropped on a choice: that choice. Anywhere else on the menu: it stays, to
   /// be answered with a click.
@@ -163,7 +190,7 @@ final class DragMenu {
     seen = hand.changeCount()
   }
 
-  private func show(_ files: [ProcessableFile]) {
+  private func show(_ files: [ProcessableFile], outOf notch: NSRect? = nil) {
     let session = AskSession(
       request: AskRequest(word: .everything, over: nil), file: files[0], convert: convert, preview: preview
     )
@@ -177,9 +204,10 @@ final class DragMenu {
     // The one before, let go of a moment ago and not yet gone.
     if let before = self.session { close(before) }
     self.session = session
+    isOutOfNotch = notch != nil
     guard shows else { return open.append((session, nil)) }
     let tiles = DropTiles()
-    let panel = AskPanel(session: session, tiles: tiles) { [weak self, weak session] in
+    let panel = AskPanel(session: session, tiles: tiles, notch: notch) { [weak self, weak session] in
       if let session { self?.close(session) }
     }
     tiles.isLive = true
@@ -196,7 +224,8 @@ final class DragMenu {
   }
 
   /// The menu for files let go of somewhere, rather than held.
-  func present(_ urls: [URL]) {
+  /// - Parameter notch: what it comes out of, where that is not the pointer.
+  func present(_ urls: [URL], outOf notch: NSRect? = nil) {
     Task {
       let files = await Task.detached { urls.compactMap { try? ProcessableFile(url: $0) }.filter { ConvertKind(fileType: $0.fileType) != nil } }.value
       guard !files.isEmpty else { NSSound.beep(); return }
@@ -207,7 +236,7 @@ final class DragMenu {
       session.cut = cut
       session.onClose = { [weak self, weak session] in if let session { self?.close(session) } }
       guard shows else { return open.append((session, nil)) }
-      let panel = AskPanel(session: session) { [weak self, weak session] in if let session { self?.close(session) } }
+      let panel = AskPanel(session: session, notch: notch) { [weak self, weak session] in if let session { self?.close(session) } }
       open.append((session, panel))
       panel.appear()
       session.measure()
