@@ -14,6 +14,9 @@ final class DragMenu {
       let found = NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
       return found as? [URL] ?? []
     }
+    /// What kind of thing it is, without reading it.
+    var holdsFiles: () -> Bool = { NSPasteboard(name: .drag).types?.contains(.fileURL) ?? false }
+    var mouse: () -> NSPoint = { NSEvent.mouseLocation }
     var flags: () -> NSEvent.ModifierFlags = { NSEvent.modifierFlags }
     /// Whose window it is being dragged from.
     var app: () -> String? = { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }
@@ -21,6 +24,10 @@ final class DragMenu {
   }
 
   var keys = HoldKeys.usual
+  /// Whether holding the keys brings the menu up.
+  var answersKeys = true
+  /// Told of every file being dragged, keys or no keys.
+  var notch: NotchZone?
   /// Apps it keeps out of: ones that mean something else by the keys.
   var ignored: Set<String> = []
   var convert: AskCenter.Convert = { _, _ in [] }
@@ -45,6 +52,8 @@ final class DragMenu {
   private var seen: Int
   private var drag = 0
   private var isReading = false
+  private var isIgnored = false
+  private var isCarrying = false
   /// Every menu that is up. Without a panel where there is no screen.
   private(set) var open: [(session: AskSession, panel: AskPanel?)] = []
 
@@ -88,7 +97,8 @@ final class DragMenu {
   func dragged() {
     guard timer == nil, hand.changeCount() != seen else { return }
     seen = hand.changeCount()
-    if let app = hand.app(), ignored.contains(app) { return }
+    isIgnored = hand.app().map(ignored.contains) ?? false
+    guard notch != nil || (answersKeys && !isIgnored) else { return }
     drag += 1
     let timer = Timer(timeInterval: Self.interval, repeats: true) { [weak self] _ in
       MainActor.assumeIsolated { self?.look() }
@@ -100,7 +110,8 @@ final class DragMenu {
   /// One look at the keys and the button, for as long as the drag lasts.
   func look() {
     guard hand.isDown() else { return released() }
-    guard session == nil, !isReading, keys.areHeld(hand.flags()) else { return }
+    tellNotch()
+    guard answersKeys, !isIgnored, session == nil, !isReading, keys.areHeld(hand.flags()) else { return }
     let urls = hand.files()
     guard !urls.isEmpty else { return }
     isReading = true
@@ -111,6 +122,14 @@ final class DragMenu {
       guard this == drag, timer != nil else { return }
       if !files.isEmpty { show(files) }
     }
+  }
+
+  private func tellNotch() {
+    guard let notch else { return }
+    if isCarrying { return notch.moved(to: hand.mouse()) }
+    guard hand.holdsFiles() else { return }
+    isCarrying = true
+    notch.began(at: hand.mouse())
   }
 
   /// Dropped on a choice: that choice. Anywhere else on the menu: it stays, to
@@ -139,6 +158,8 @@ final class DragMenu {
     timer?.invalidate()
     timer = nil
     isReading = false
+    if isCarrying { notch?.ended(at: hand.mouse()) }
+    isCarrying = false
     seen = hand.changeCount()
   }
 

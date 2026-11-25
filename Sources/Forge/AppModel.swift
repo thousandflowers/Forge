@@ -18,6 +18,7 @@ final class AppModel: ObservableObject {
   private let dragMenu = DragMenu()
   private let cuts = CutCenter()
   let dropZone = DropZone()
+  private let notchZone = NotchZone()
   private var inHand: Set<String> = []
   private var watchedPlaces: [Automatic.Place: URL] = [:]
   private var automatic: [Automatic.Place: MonitoredFolderWatcher] = [:]
@@ -506,6 +507,9 @@ final class AppModel: ObservableObject {
     asks.suggest = dragMenu.suggest
     ResultHand.more = { [weak self] in self?.dragMenu.present($0) }
     dropZone.take = { [weak self] in self?.dragMenu.present($0) }
+    notchZone.take = dropZone.take
+    dragMenu.notch = settings.notchZone ? notchZone : nil
+    dragMenu.answersKeys = settings.dragMenu
     dragMenu.keys = settings.dragMenuKeys
     dragMenu.ignored = Set(settings.dragMenuIgnored)
     dragMenu.convert = { [weak self] file, preset in try await self?.convertInHand(file, with: preset) ?? [] }
@@ -517,7 +521,7 @@ final class AppModel: ObservableObject {
       Task { await self.refreshHistory() }
       return made
     }
-    settings.dragMenu ? dragMenu.start() : dragMenu.stop()
+    settings.dragMenu || settings.notchZone ? dragMenu.start() : dragMenu.stop()
   }
 
   func suggestions(for files: [ProcessableFile]) -> [RulePreset] {

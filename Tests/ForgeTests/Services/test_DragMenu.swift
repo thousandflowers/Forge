@@ -334,14 +334,17 @@ final class DragMenuLayoutTests: BaseTestCase {
   }
 }
 
-private final class HeldFile: NSObject, NSDraggingInfo {
+final class HeldFile: NSObject, NSDraggingInfo {
   let draggingLocation: NSPoint
-  init(at point: NSPoint) { draggingLocation = point }
+  let draggingPasteboard: NSPasteboard
+  init(at point: NSPoint, on pasteboard: NSPasteboard = NSPasteboard(name: .drag)) {
+    draggingLocation = point
+    draggingPasteboard = pasteboard
+  }
   var draggingDestinationWindow: NSWindow? { nil }
   var draggingSourceOperationMask: NSDragOperation { [.copy, .move, .delete] }
   var draggedImageLocation: NSPoint { draggingLocation }
   var draggedImage: NSImage? { nil }
-  var draggingPasteboard: NSPasteboard { NSPasteboard(name: .drag) }
   var draggingSource: Any? { nil }
   var draggingSequenceNumber: Int { 1 }
   var draggingFormation: NSDraggingFormation = .default
