@@ -11,8 +11,8 @@ final class Lesson: ObservableObject {
   static let seenKey = "welcomeSeen"
   static var isNew: Bool { !UserDefaults.standard.bool(forKey: seenKey) }
 
-  /// One file each, and each its own gesture.
-  enum Step: Int, CaseIterable { case hello, kind, word, drag, scan, end }
+  /// One file taken from a photo to a PDF, and then the other two.
+  enum Step: Int, CaseIterable { case hello, scan, kind, word, drag, end }
 
   @Published private(set) var step = Step.hello
   /// It was done: said for a moment before the next thing.
@@ -21,12 +21,11 @@ final class Lesson: ObservableObject {
   @Published private(set) var files: WelcomeSamples.Files?
   /// What the tiles turn into.
   @Published private(set) var formats: [[String]] = []
-  /// What was there and what came of it, to be looked at.
-  @Published private(set) var result: (before: NSImage, after: NSImage)?
+  /// What the recipe has been so far, to be looked at.
+  @Published private(set) var chain: [NSImage] = []
   /// The names given at the end, and the one being given.
   @Published private(set) var tried: Set<String> = []
   @Published private(set) var trying: String?
-  private var before: NSImage?
   /// Which side of the panel the folder is on.
   @Published var isFolderOnTheLeft = true
   @Published var isLoud = true { didSet { score.isOn = isLoud } }
@@ -65,7 +64,8 @@ final class Lesson: ObservableObject {
         model.startLesson(in: made.folder)
         watching = model.$history.dropFirst().sink { [weak self] in self?.heard($0) }
         panel?.follow(made.folder)
-        go(to: .kind)
+        chain = NSImage(contentsOf: made.recipe).map { [$0] } ?? []
+        go(to: .scan)
       } catch {
         problem = error.localizedDescription
       }
@@ -87,10 +87,8 @@ final class Lesson: ObservableObject {
     score.play(step == .end ? .finale : .latch)
     // From here to the end: somebody may want to drag something else.
     if step == .drag { lendDragMenu() }
-    before = step == .scan ? files.flatMap { NSImage(contentsOf: $0.recipe) } : nil
     withAnimation(Motion.move) {
       self.step = step
-      result = nil
       isDone = false
       problem = nil
     }
@@ -112,6 +110,7 @@ final class Lesson: ObservableObject {
   }
 
   func pop() { score.play(.pop) }
+  func touch(_ tile: Int) { score.touch(tile) }
 
   /// And on to the program itself.
   func openForge(_ section: AppSection? = nil) {
@@ -132,8 +131,7 @@ final class Lesson: ObservableObject {
     panel?.close()
     panel = nil
     files = nil
-    before = nil
-    result = nil
+    chain = []
     tried = []
     trying = nil
   }
@@ -156,7 +154,7 @@ final class Lesson: ObservableObject {
     score.play(.shimmer)
     withAnimation(Motion.arrive) {
       isDone = true
-      if step == .scan, let before, let output = entry.outputURL, let after = NSImage(contentsOf: output) { result = (before, after) }
+      if step == .scan || step == .kind, let output = entry.outputURL, let image = NSImage(contentsOf: output) { chain.append(image) }
     }
     if step == .word, let output = entry.outputURL { score.play(output) }
     let pause = UInt64(pause(after: step) * 1_000_000_000)
@@ -171,7 +169,7 @@ final class Lesson: ObservableObject {
   private func pause(after step: Step) -> Double {
     switch step {
     case .word: return WelcomeTune.seconds + 0.2
-    case .scan: return 5
+    case .scan, .kind: return 4
     default: return 1.7
     }
   }
@@ -185,7 +183,7 @@ final class Lesson: ObservableObject {
     let from = entry.fileURL.pathExtension.lowercased(), to = entry.outputURL?.pathExtension.lowercased()
     switch step {
     case .hello, .end: return false
-    case .kind: return name.hasPrefix(WelcomeSamples.letter) && to != nil && to != "md"
+    case .kind: return name.hasPrefix(WelcomeSamples.recipe) && to != nil && to != "jpg"
     case .word: return from == "wav" && name.contains("_")
     case .drag: return from == "png" && !name.contains("_")
     case .scan: return from == "jpg" && name.contains("_scan")
@@ -198,21 +196,27 @@ final class Lesson: ObservableObject {
   func renaming() -> (from: URL, to: URL)? {
     guard let files else { return nil }
     func word(_ file: URL, _ word: String) -> (URL, URL) {
-      (file, file.deletingLastPathComponent().appendingPathComponent(WelcomeSamples.Extra(name: "", word: word).name(from: file.lastPathComponent)))
+      (file, file.deletingLastPathComponent().appendingPathComponent(WelcomeSamples.Extra(name: file.lastPathComponent, word: word).given))
     }
     switch step {
-    case .kind: return word(files.letter, ".pdf")
+    case .kind: return word(files.recipe, ".pdf")
     case .word: return word(files.sound, "_reverse")
     case .scan: return word(files.recipe, "_scan")
     case .hello, .drag, .end: return nil
     }
   }
 
+  /// Asked again whenever something is tried: one of them is no longer a picture.
+  func isThere(_ extra: WelcomeSamples.Extra) -> Bool {
+    guard let folder = files?.folder else { return false }
+    return FileManager.default.fileExists(atPath: folder.appendingPathComponent(extra.name).path)
+  }
+
   /// One of the names at the end.
   func give(_ extra: WelcomeSamples.Extra) {
     guard trying == nil, let folder = files?.folder else { return }
-    let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
-    guard let old = names.sorted().first(where: { ($0 as NSString).deletingPathExtension == extra.name && "." + ($0 as NSString).pathExtension != extra.word }) else {
+    let old = folder.appendingPathComponent(extra.name)
+    guard FileManager.default.fileExists(atPath: old.path) else {
       problem = "“\(extra.name)” is no longer in the folder."
       score.play(.thud)
       return
@@ -220,7 +224,7 @@ final class Lesson: ObservableObject {
     problem = nil
     began = Date()
     trying = extra.word
-    rename(folder.appendingPathComponent(old), to: folder.appendingPathComponent(extra.name(from: old)))
+    rename(old, to: folder.appendingPathComponent(extra.given))
   }
 
   private func came(_ entry: ProcessingHistory) {

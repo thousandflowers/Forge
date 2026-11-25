@@ -181,15 +181,15 @@ struct LessonView: View {
     case .word: return "Say it in the name"
     case .kind: return "Change what it is"
     case .drag: return "Or just drag"
-    case .scan: return "And a little magic"
+    case .scan: return "A little magic"
     case .end: return "That’s all there is to it"
     }
   }
 
   private var more: String {
     switch lesson.step {
-    case .hello: return "A few files to play with, in a folder of their own."
-    case .kind: return "Give the letter another extension. If the Finder asks, choose Use .pdf."
+    case .hello: return "Three files to play with, in a folder of their own."
+    case .kind: return "Give it another extension. If the Finder asks, choose Use .pdf."
     case .word: return "Add _reverse to the recording, and listen."
     case .drag: return "Hold \(keys) while you drag the picture, and let go on a format."
     case .scan: return "Add _scan to the photo of the recipe."
@@ -209,7 +209,7 @@ struct LessonView: View {
   @ViewBuilder
   private var thing: some View {
     switch lesson.step {
-    case .hello: LessonFan(size: 42, formats: lesson.formats) { lesson.pop() }
+    case .hello: LessonFan(size: 42, formats: lesson.formats, touched: lesson.touch, pressed: lesson.pop)
     case .drag: if let files = lesson.files { HeldFile(file: files.picture, keys: keys) }
     case .end:
       VStack(spacing: 8) {
@@ -219,9 +219,9 @@ struct LessonView: View {
           if lesson.isDragMenuNew { DragSwitch(model: model, keys: keys) }
         }
       }
-    case .scan:
-      if let result = lesson.result {
-        LessonResult(before: result.before, after: result.after).transition(.scale(scale: 0.8).combined(with: .opacity))
+    case .scan, .kind:
+      if lesson.isDone, lesson.chain.count > 1 {
+        LessonChain(images: lesson.chain).transition(.scale(scale: 0.8).combined(with: .opacity))
       } else if let (from, to) = lesson.renaming() {
         TypedName(from: from, to: to, isStill: isStill)
       }

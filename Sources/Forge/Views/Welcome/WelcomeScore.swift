@@ -4,7 +4,7 @@ import AVFoundation
 /// happens. Each is worked out here; nothing recorded is in the app.
 @MainActor
 final class WelcomeScore {
-  enum Sound: CaseIterable { case pop, latch, shimmer, thud, finale }
+  enum Sound: CaseIterable { case touch, pop, latch, shimmer, thud, finale }
 
   nonisolated static let rate = 44_100.0
   private let engine = AVAudioEngine()
@@ -32,6 +32,14 @@ final class WelcomeScore {
     do { try engine.start() } catch { return }
     isRunning = true
     for node in effects + [sample] { node.play() }
+  }
+
+  /// The note of one tile, played a little differently every time.
+  func touch(_ tile: Int) {
+    let turn = said[.touch, default: 0] % Self.touches
+    said[.touch] = turn * WelcomeCelesta.motif.count + tile
+    play(.touch)
+    said[.touch] = turn + 1
   }
 
   func play(_ sound: Sound) {
@@ -65,6 +73,8 @@ final class WelcomeScore {
     }
   }
 
+  /// How many ways there are to play one note.
+  private nonisolated static let touches = 3
   /// How long the finale is.
   private nonisolated static let last = 5.2
 
@@ -89,6 +99,7 @@ final class WelcomeScore {
   /// How many of it there are: every touch is the next note of one tune.
   nonisolated static func ways(of sound: Sound) -> Int {
     switch sound {
+    case .touch: return WelcomeCelesta.motif.count * touches
     case .pop: return WelcomeCelesta.tune.count
     case .latch, .shimmer: return 2
     case .thud, .finale: return 1
@@ -98,6 +109,9 @@ final class WelcomeScore {
   nonisolated static func make(_ sound: Sound, _ way: Int = 0) -> AVAudioPCMBuffer? {
     typealias Note = WelcomeCelesta.Note
     switch sound {
+    // Softer than a press, and by itself: across the three it is the motif.
+    case .touch:
+      return celesta(0.9, way) { $0.play([Note(0, WelcomeCelesta.motif[way % WelcomeCelesta.motif.count])], loud: 0.1) }
     case .pop:
       let degree = WelcomeCelesta.tune[way % WelcomeCelesta.tune.count]
       return celesta(0.8, way) { $0.play([Note(0, degree > 8 ? 5 : 3, 0.3), Note(0.055, degree)], loud: 0.17) }

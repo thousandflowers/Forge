@@ -22,6 +22,9 @@ struct WelcomeCelesta {
   /// What every touch is the next note of.
   static let tune = [5, 8, 10, 9, 6, 8, 12, 10]
 
+  /// Sol, do, mi: one for each tile, and what everything else is made of.
+  static let motif = [5, 8, 10]
+
   private static let major = [0, 2, 4, 5, 7, 9, 11]
   private static let root = 74
   private static let highest = 9_500.0

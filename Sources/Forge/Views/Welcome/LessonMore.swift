@@ -1,20 +1,19 @@
 import SwiftUI
 
-/// What it was and what came of it, side by side.
-struct LessonResult: View {
-  let before: NSImage
-  let after: NSImage
+/// One file, all it has been, side by side.
+struct LessonChain: View {
+  let images: [NSImage]
 
   var body: some View {
     HStack(spacing: 14) {
-      ForEach(Array([before, after].enumerated()), id: \.offset) { _, image in
+      ForEach(Array(images.enumerated()), id: \.offset) { _, image in
         Image(nsImage: image).resizable().scaledToFit()
           .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
           .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
       }
     }
     .accessibilityElement()
-    .accessibilityLabel(Text("Before and after"))
+    .accessibilityLabel(Text("What it was, and what it is now"))
   }
 }
 
@@ -36,7 +35,7 @@ struct LessonExtras: View {
             .overlay { if lesson.trying == extra.word { Capsule().strokeBorder(Color.accentColor, lineWidth: 1.5) } }
         }
         .buttonStyle(.plain)
-        .disabled(lesson.trying != nil)
+        .disabled(lesson.trying != nil || !lesson.isThere(extra))
         .accessibilityLabel(Text(extra.word))
         .accessibilityValue(Text(lesson.tried.contains(extra.word) ? "Done" : ""))
       }

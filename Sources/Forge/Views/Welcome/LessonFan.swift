@@ -6,6 +6,7 @@ import SwiftUI
 struct LessonFan: View {
   let size: CGFloat
   let formats: [[String]]
+  let touched: (Int) -> Void
   let pressed: () -> Void
   @State private var isOpen = false
   @Environment(\.accessibilityReduceMotion) private var isStill
@@ -17,7 +18,7 @@ struct LessonFan: View {
     HStack(spacing: 0) {
       ForEach(Array(WelcomeSamples.each.enumerated()), id: \.offset) { index, sample in
         let side = CGFloat(index) - CGFloat(WelcomeSamples.each.count - 1) / 2
-        LessonTile(sample: sample, formats: formats.indices.contains(index) ? formats[index] : [], size: size, side: side, isOpen: isOpen, pressed: pressed)
+        LessonTile(sample: sample, formats: formats.indices.contains(index) ? formats[index] : [], size: size, side: side, isOpen: isOpen, touched: { touched(index) }, pressed: pressed)
           .zIndex(side == 0 ? 1 : 0)
       }
     }
@@ -34,6 +35,7 @@ private struct LessonTile: View {
   let size: CGFloat
   let side: CGFloat
   let isOpen: Bool
+  let touched: () -> Void
   let pressed: () -> Void
   @State private var isUnder = false
   /// What it is now; its own icon when it is nothing else.
@@ -55,7 +57,9 @@ private struct LessonTile: View {
     .buttonStyle(.plain)
     .onHover { isIn in
       withAnimation(isStill ? nil : Motion.move) { isUnder = isIn }
-      isIn ? become() : settle()
+      guard isIn else { return settle() }
+      touched()
+      become()
     }
     .accessibilityLabel(Text("\(sample.name).\(format ?? sample.from)"))
   }

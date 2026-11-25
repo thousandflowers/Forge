@@ -10,26 +10,26 @@ enum WelcomeSamples {
     let folder: URL
     let picture: URL
     let sound: URL
-    let letter: URL
     let recipe: URL
   }
 
-  /// A file by its name, and what is put after it: a word, or another extension.
+  /// A file, and what is put after its name: a word, another extension, or both.
   struct Extra: Sendable {
     let name: String
     let word: String
 
-    func name(from old: String) -> String {
-      let stem = (old as NSString).deletingPathExtension
-      return word.hasPrefix(".") ? stem + word : "\(stem)\(word).\((old as NSString).pathExtension)"
+    /// What it is then called.
+    var given: String {
+      let name = name as NSString
+      return name.deletingPathExtension + word + (word.contains(".") ? "" : "." + name.pathExtension)
     }
   }
 
   /// What is done in a moment: reading the words of a picture keeps somebody
   /// waiting half a minute, the first time.
   static let extras = [
-    Extra(name: "First light", word: "_gray"), Extra(name: "First light", word: "_crop1x1"),
-    Extra(name: "Ember", word: "_speed2x"), Extra(name: "Recipe", word: ".pdf"),
+    Extra(name: "First light.png", word: "_gray"), Extra(name: "First light.png", word: "_crop1x1"),
+    Extra(name: "Ember.wav", word: "_speed2x"), Extra(name: "First light.png", word: "_gray.pdf"),
   ]
 
   struct Sample: Sendable {
@@ -41,7 +41,7 @@ enum WelcomeSamples {
   /// What the three of them are, in the order they are fanned.
   static let each = [
     Sample(kind: .image, name: "First light", from: "png"),
-    Sample(kind: .document, name: letter, from: "md"),
+    Sample(kind: .document, name: recipe, from: "jpg"),
     Sample(kind: .audio, name: "Ember", from: "wav"),
   ]
 
@@ -54,12 +54,14 @@ enum WelcomeSamples {
     return each.map { sample in
       let url = folder.appendingPathComponent("\(sample.name).\(sample.from)")
       guard FileManager.default.createFile(atPath: url.path, contents: nil), let file = try? ProcessableFile(url: url) else { return [] }
-      return AskOptions.choices(for: .format, files: [file]).map { $0.label.lowercased() }
+      let all = AskOptions.choices(for: .format, files: [file]).map { $0.label.lowercased() }
+      // A sheet of paper is wanted as a PDF before anything else.
+      return sample.kind == .document ? all.filter { $0 == "pdf" } + all.filter { $0 != "pdf" } : all
     }
   }
 
   static let width = 1920, height = 1200
-  static let letter = "Letter"
+  static let recipe = "Recipe"
 
   /// What was there from the last time goes to the Trash: somebody may have put
   /// something of theirs in it.
@@ -68,27 +70,12 @@ enum WelcomeSamples {
     if FileManager.default.fileExists(atPath: folder.path) { try FileManager.default.trashItem(at: folder, resultingItemURL: nil) }
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     func file(_ name: String) -> URL { folder.appendingPathComponent(name) }
-    let files = Files(folder: folder, picture: file("First light.png"), sound: file("Ember.wav"), letter: file("\(letter).md"), recipe: file("Recipe.jpg"))
+    let files = Files(folder: folder, picture: file("First light.png"), sound: file("Ember.wav"), recipe: file("\(recipe).jpg"))
     try write(picture(), to: files.picture)
     try writeSound(to: files.sound)
-    try Data(words.utf8).write(to: files.letter)
     try WelcomeRecipe.write(to: files.recipe)
     return files
   }
-
-  private static let words = """
-    # Hello
-
-    This letter was written in **Markdown**, a plain text anybody can read and \
-    few people can print.
-
-    Give it another extension, and it is *really* something else:
-
-    - `.pdf` to send it
-    - `.docx` to let somebody change it
-    - `.epub` to read it on the sofa
-
-    """
 
   // MARK: - The picture
 
