@@ -598,6 +598,73 @@ final class NewPDFWordTests: ToolTestCase {
   }
 }
 
+/// The tables of a PDF are not the PDF made lighter.
+final class SomethingElseTests: ToolTestCase {
+  private func entry(_ words: [String], on source: URL, named: Bool = false) async throws -> ProcessingHistory {
+    var preset = RulePreset(name: "t", description: "", category: .custom, actions: words.map { .tool(Tool(word: $0)!) })
+    preset.readsTools = named
+    return try await coordinator().processFile(
+      try ProcessableFile(url: source), with: preset, destinationMode: .copyTo, destinationURL: try folder("o-\(UUID().uuidString)")
+    ) { _ in }
+  }
+
+  func test_whichOnesMakeSomethingElse() {
+    for word in ["tables", "images", "layers", "at10s", "frames5s", "sha256", "base64", "wave"] {
+      XCTAssertTrue(Tool(word: word)!.makesSomethingElse, word)
+    }
+    for word in ["askpassword", "lighter", "gray", "trim10-45", "2up", "dpi300", "min", "voice"] {
+      XCTAssertFalse(Tool(word: word)!.makesSomethingElse, word)
+    }
+  }
+
+  func test_nothingIsClaimedForIt() async throws {
+    let source = try Fixture.image(at: path("a.png"))
+    let digest = try await entry(["sha256"], on: source)
+    XCTAssertEqual(digest.isSomethingElse, true)
+    XCTAssertNil(Recent(digest).before)
+    XCTAssertNotNil(Recent(digest).after)
+    let gray = try await entry(["gray"], on: source)
+    XCTAssertNil(gray.isSomethingElse)
+    XCTAssertNotNil(Recent(gray).before)
+  }
+
+  /// Said in the name, it counts only where the name is listened to.
+  func test_aWordInTheName() async throws {
+    let source = try Fixture.image(at: path("a_sha256.png"))
+    let named = try await entry([], on: source, named: true)
+    XCTAssertEqual(named.isSomethingElse, true)
+    let only = try await entry(["gray"], on: source)
+    XCTAssertNil(only.isSomethingElse)
+  }
+
+  func test_aBatch() throws {
+    let source = path("a.pdf"), output = path("a.csv")
+    try Data(repeating: 1, count: 4000).write(to: source)
+    try Data(repeating: 1, count: 80).write(to: output)
+    let file = try ProcessableFile(url: source)
+    XCTAssertEqual(BatchViewModel.saving(from: [output], sources: [file], isSomethingElse: true)?.contains("%"), false)
+    XCTAssertEqual(BatchViewModel.saving(from: [output], sources: [file])?.contains("%"), true)
+  }
+
+  /// History from before there was such a thing.
+  func test_anOldEntryStillDecodes() throws {
+    let old = ProcessingHistory(fileURL: path("a.png"), status: .completed, duration: 1, outputURL: path("b.png"))
+    let back = try JSONDecoder().decode(ProcessingHistory.self, from: JSONEncoder().encode(old))
+    XCTAssertNil(back.isSomethingElse)
+  }
+
+  @MainActor
+  func test_theMenu() throws {
+    let file = try ProcessableFile(url: try Fixture.image(at: path("a.png")))
+    func session(_ word: String) -> AskSession {
+      let preset = RulePreset(name: "t", description: "", category: .custom, actions: [.tool(Tool(word: word)!)])
+      return AskSession(request: AskRequest(preset: preset, questions: []), file: file, convert: { _, _ in [] })
+    }
+    XCTAssertTrue(session("tables").makesSomethingElse)
+    XCTAssertFalse(session("gray").makesSomethingElse)
+  }
+}
+
 final class TidyTests: ToolTestCase {
   func test_json() throws {
     let text = "{\"b\": 1.10, \"a\":[1,{\"x\":null}],\"s\":\"a { b , c }\",\"e\":[], \"o\":{}}"

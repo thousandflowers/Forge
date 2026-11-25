@@ -83,7 +83,8 @@ actor ProcessingCoordinator {
           destinationFolder: destinationURL,
           actions: preset.actions,
           presetName: preset.name,
-          backupURL: result.backupURL
+          backupURL: result.backupURL,
+          isSomethingElse: preset.tools(for: file).contains(where: \.makesSomethingElse) ? true : nil
         )
         // The record is bookkeeping. A conversion whose output is written and
         // whose history could not be saved is a conversion that worked.
@@ -181,7 +182,7 @@ actor ProcessingCoordinator {
     counter: Int?,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
-    let asked = (preset.actions + NameTokens.applying(to: [], from: file.fileName, tools: preset.readsTools)).everyTool.filter(\.asksAPassword)
+    let asked = preset.tools(for: file).filter(\.asksAPassword)
     let work = {
       try await self.runSettled(
         file: file, preset: preset, destinationMode: destinationMode, destinationURL: destinationURL, counter: counter, progress: progress

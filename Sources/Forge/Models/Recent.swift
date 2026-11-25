@@ -5,6 +5,7 @@ import Foundation
 /// these is a look at the disk.
 struct Recent: Equatable, Sendable {
   let outputs: [URL]
+  /// Nil where there is nothing to weigh it against.
   let before: Int64?
   let after: Int64?
   let canUndo: Bool
@@ -21,7 +22,7 @@ struct Recent: Equatable, Sendable {
     after = outputs.isEmpty ? nil : outputs.reduce(Int64(0)) { $0 + (Self.size(of: $1) ?? 0) }
     // Replaced in place, what has its name now is the result.
     let isReplaced = entry.outputs.contains { $0.standardizedFileURL == entry.fileURL.standardizedFileURL }
-    before = entry.backupURL.flatMap(Self.size) ?? (isReplaced ? nil : Self.size(of: entry.fileURL))
+    before = entry.isSomethingElse == true ? nil : entry.backupURL.flatMap(Self.size) ?? (isReplaced ? nil : Self.size(of: entry.fileURL))
     canUndo = Undo.isPossible(for: entry)
   }
 

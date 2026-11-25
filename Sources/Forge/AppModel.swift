@@ -620,7 +620,7 @@ final class AppModel: ObservableObject {
       let entry = try await turns.take(of: settings.maxConcurrentNative) { [weak self] in try await self?.becomes(url, job) }
       await refreshHistory()
       guard let entry, let output = entry.outputURL else { return }
-      results.show(ResultCard(title: output.lastPathComponent, file: output, before: before, after: Self.size(of: output), undo: { [weak self] in
+      results.show(ResultCard(title: output.lastPathComponent, file: output, before: before, after: Self.size(of: output), isSomethingElse: entry.isSomethingElse == true, undo: { [weak self] in
         self?.undo(entry) ?? false
       }))
     } catch is CancellationError {
@@ -690,7 +690,7 @@ final class AppModel: ObservableObject {
       await refreshHistory()
       guard let output = entry.outputURL else { return }
       let after = ((try? FileManager.default.attributesOfItem(atPath: output.path))?[.size] as? Int64) ?? 0
-      results.show(ResultCard(title: output.lastPathComponent, file: output, before: file.fileSize, after: after, undo: { [weak self] in
+      results.show(ResultCard(title: output.lastPathComponent, file: output, before: file.fileSize, after: after, isSomethingElse: entry.isSomethingElse == true, undo: { [weak self] in
         self?.undo(entry) ?? false
       }))
     } catch ProcessingError.leftAlone {

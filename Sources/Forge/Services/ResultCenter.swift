@@ -10,6 +10,8 @@ struct ResultCard: Identifiable {
   let after: Int64
   /// Said where nothing was made, in place of what it weighs.
   var note: String?
+  /// What was made is not the file in another form, and is not weighed against it.
+  var isSomethingElse = false
   /// Whether it could be put back.
   let undo: @MainActor () -> Bool
   /// When the card has gone, whichever way it went.

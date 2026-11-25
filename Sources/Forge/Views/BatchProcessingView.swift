@@ -774,7 +774,8 @@ final class BatchViewModel: ObservableObject {
     // as 94% smaller.
     lastSaving = Self.saving(
       from: outputs.withLock { $0 },
-      sources: files.filter { statusMap[$0.id] == .completed }
+      sources: files.filter { statusMap[$0.id] == .completed },
+      isSomethingElse: files.contains { preset.tools(for: $0).contains(where: \.makesSomethingElse) }
     )
     await model.refreshHistory()
 
@@ -791,7 +792,8 @@ final class BatchViewModel: ObservableObject {
 
   /// What the batch cost, compared with what went in. A pure reading of file
   /// sizes, so it belongs to nobody's actor.
-  nonisolated static func saving(from outputs: [URL], sources: [ProcessableFile]) -> String? {
+  /// - Parameter isSomethingElse: what was made is not the files in another form.
+  nonisolated static func saving(from outputs: [URL], sources: [ProcessableFile], isSomethingElse: Bool = false) -> String? {
     guard !outputs.isEmpty else { return nil }
     let before = sources.reduce(Int64(0)) { $0 + $1.fileSize }
     let after = outputs.reduce(Int64(0)) { total, url in
@@ -801,6 +803,7 @@ final class BatchViewModel: ObservableObject {
     guard before > 0, after > 0 else { return nil }
 
     let written = after.formatted(.byteCount(style: .file))
+    if isSomethingElse { return "\(written) written" }
     let change = Int(((Double(before) - Double(after)) / Double(before) * 100).rounded())
     if change > 0 { return "\(written) written, \(change)% smaller" }
     if change < 0 { return "\(written) written, \(-change)% larger" }

@@ -418,6 +418,7 @@ struct AskView: View {
   }
 
   private func change(from before: Int64?, of whole: Int64, to after: Int64, isHeavier: Bool) -> Text {
+    if session.makesSomethingElse { return Text(after.formatted(.byteCount(style: .file))) }
     let percent = ResultCard.percent(from: whole, to: after).map { "  \($0)" } ?? ""
     return Text(before.map { "\($0.formatted(.byteCount(style: .file))) → " } ?? "").foregroundColor(.secondary)
       + Text(after.formatted(.byteCount(style: .file))).foregroundColor(isHeavier ? .heavier : .primary)

@@ -32,6 +32,10 @@ struct ProcessingHistory: Identifiable, Codable, Sendable {
   /// The copy of the original taken before it was replaced, which is what
   /// Undo puts back. Optional, so history written before this still decodes.
   var backupURL: URL?
+  /// What was made is about the file, and not the file in another form: the
+  /// tables in it, a picture of it. Optional, so history written before this
+  /// still decodes.
+  var isSomethingElse: Bool?
   /// When this was undone, if it was.
   var undoneAt: Date?
 

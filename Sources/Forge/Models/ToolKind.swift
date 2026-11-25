@@ -327,6 +327,10 @@ extension Tool {
   /// original would be it without its password, out of sight.
   var leavesTheOriginal: Bool { [.digest, .frames, .wave, .still, .layers, .pictures, .tables, .lock].contains(kind) }
 
+  /// Not the file made lighter or heavier: what it weighs beside the file says
+  /// nothing.
+  var makesSomethingElse: Bool { leavesTheOriginal && self != .lock }
+
   /// What it makes of a film is pictures.
   var takesAFrame: Bool { kind == .frames || kind == .still }
 

@@ -159,3 +159,11 @@ enum NameTokens {
     return read.tools.isEmpty ? result : result.settlingFormat(overriding: true, of: UTType(filenameExtension: (fileName as NSString).pathExtension))
   }
 }
+
+extension RulePreset {
+  /// Everything it would do to that file, with what the file's name says where
+  /// the name is listened to.
+  func tools(for file: ProcessableFile) -> [Tool] {
+    (actions + NameTokens.applying(to: [], from: file.fileName, tools: readsTools)).everyTool
+  }
+}

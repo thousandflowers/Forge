@@ -254,6 +254,12 @@ final class AskSession: ObservableObject {
     try? FileManager.default.removeItem(at: scratch)
   }
 
+  /// What was chosen makes something about the files, and not them in another form.
+  var makesSomethingElse: Bool {
+    let run = request.answered(with: answers)
+    return files.contains { run.tools(for: $0).contains(where: \.makesSomethingElse) }
+  }
+
   /// By enough to be told: a picture written again is always a little off.
   func isHeavier(_ bytes: Int64?) -> Bool {
     guard let bytes, let file = files.first else { return false }
