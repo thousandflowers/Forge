@@ -874,28 +874,3 @@ struct StartChoices: View {
     if let startsAt = batch.startsAt { Text("At \(startsAt.formatted(date: .omitted, time: .shortened))") }
   }
 }
-
-/// A picture, a film and a page, which make room for what is being brought.
-struct FileFan: View {
-  let isOpen: Bool
-  var size: CGFloat = 62
-  @Environment(\.accessibilityReduceMotion) private var isStill
-
-  private static let kinds: [PresetCategory] = [.image, .document, .video]
-
-  var body: some View {
-    ZStack {
-      ForEach(Array(Self.kinds.enumerated()), id: \.offset) { index, kind in
-        let side = CGFloat(index - 1)
-        BlockIcon(symbol: kind.icon, tint: kind.tint, size: size)
-          .shadow(color: .black.opacity(0.18), radius: 5, y: 3)
-          .rotationEffect(.degrees(Double(side) * (isOpen ? 16 : 9)))
-          .offset(x: side * size * (isOpen ? 0.86 : 0.6), y: abs(side) * size * 0.1)
-          .zIndex(index == 1 ? 1 : 0)
-      }
-    }
-    .frame(width: size * 3, height: size * 1.4)
-    .animation(isStill ? nil : Motion.arrive, value: isOpen)
-    .accessibilityHidden(true)
-  }
-}

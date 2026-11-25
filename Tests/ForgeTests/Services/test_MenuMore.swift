@@ -46,6 +46,7 @@ final class MenuMoreTests: ToolTestCase {
   /// It used to come open all at once, under a file being held.
   func test_itOpensByDegrees() async throws {
     try XCTSkipIf(NSScreen.main == nil, "no screen")
+    try XCTSkipIf(isVirtualMac, "no display that refreshes")
     let session = try session(.everything)
     let panel = AskPanel(session: session, tiles: DropTiles()) {}
     panel.appear(takingKeys: false)
@@ -68,6 +69,7 @@ final class MenuMoreTests: ToolTestCase {
   /// that size from the progress to the result.
   func test_itClosesOnWhereTheFileWasLetGo() async throws {
     try XCTSkipIf(NSScreen.main == nil, "no screen")
+    try XCTSkipIf(isVirtualMac, "no display that refreshes")
     let url = path("a.png")
     try Quarters.image(at: url, width: 2400, height: 1600)
     let session = AskSession(request: AskRequest(word: .everything, over: nil), file: try ProcessableFile(url: url), convert: { file, _ in

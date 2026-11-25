@@ -354,6 +354,7 @@ struct PresetEditorView: View {
       .animation(Motion.move, value: showsFormats)
       .animation(Motion.move, value: showsTemplate)
     }
+    .opensAtTheTop()
     }
     .frame(maxWidth: .infinity)
     // Anywhere else on the canvas: the block goes on the end.
@@ -898,4 +899,13 @@ struct PresetEditorView: View {
     onClose()
   }
 
+}
+
+private extension View {
+  /// A canvas that scrolls both ways opens in its middle, with the first block
+  /// out of sight.
+  @ViewBuilder
+  func opensAtTheTop() -> some View {
+    if #available(macOS 14, *) { defaultScrollAnchor(.top) } else { self }
+  }
 }

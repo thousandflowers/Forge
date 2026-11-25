@@ -857,6 +857,8 @@ final class AppModel: ObservableObject {
         // Where it goes is asked when it goes: the question may have been up
         // for minutes, and the folder switched off or pointed elsewhere since.
         guard let self, let now = self.folders.first(where: { $0.id == folder.id }), now.isActive else { return [] }
+        var preset = preset
+        preset.isAnswered = true
         return try await self.convertArrival(file, with: preset, in: now)
       }
       return

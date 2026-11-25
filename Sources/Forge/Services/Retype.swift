@@ -127,7 +127,9 @@ struct Retype {
 
   /// Why it is what it was.
   var whyNot: String {
-    FormatCatalog.type(named: to) == nil ? "“.\(to)” is not a format Forge knows." : "It cannot become \(to.uppercased())."
+    // A format a tool would add is known, whether or not the tool is here.
+    let isKnown = FormatCatalog.type(named: to) != nil || Capabilities.all.contains { $0.evidence.contains(to.lowercased()) }
+    return !isKnown ? "“.\(to)” is not a format Forge knows." : "It cannot become \(to.uppercased())."
   }
 
   /// Give it back the extension of what it is.

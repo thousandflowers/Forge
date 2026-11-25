@@ -6,6 +6,13 @@ import PDFKit
 import UniformTypeIdentifiers
 @testable import Forge
 
+/// A Mac that is another Mac's program: it has no display that refreshes, nor
+/// what Apple's own networks run on.
+let isVirtualMac: Bool = {
+  var value: Int32 = 0, size = MemoryLayout<Int32>.size
+  return sysctlbyname("kern.hv_vmm_present", &value, &size, nil, 0) == 0 && value == 1
+}()
+
 /// Shared base class for Forge unit tests.
 ///
 /// Every fixture is built at runtime rather than checked in, so the suite runs

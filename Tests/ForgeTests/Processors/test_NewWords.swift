@@ -371,6 +371,7 @@ final class NewFilmWordTests: ToolTestCase {
   /// Twice as long, and nearly twice as many frames.
   func test_slowMotion() async throws {
     guard #available(macOS 15.4, *) else { throw XCTSkip("needs macOS 15.4") }
+    try XCTSkipIf(isVirtualMac, "frames are made up by what a virtual Mac has not got")
     let source = try await Fixture.video(at: path("a.mov"), seconds: 1)
     let before = try await picture(source), whole = try await seconds(source)
     let made = try await run(["slowmo2x"], on: source)[0]

@@ -140,7 +140,7 @@ final class FilmSettingsTests: BaseTestCase {
   /// Every encoder into every container it is said to fit: the list is a
   /// promise, and this is what keeps it.
   func test_everythingOfferedReallyFits() async throws {
-    let ffmpeg = try XCTUnwrap(ExternalTools.locate("ffmpeg").map { $0 } ?? { throw XCTSkip("needs ffmpeg") }())
+    guard let ffmpeg = ExternalTools.locate("ffmpeg") else { throw XCTSkip("needs ffmpeg") }
     let source = try await Fixture.video(at: path("film.mov"), seconds: 1, size: CGSize(width: 320, height: 240))
     let here = ExternalBridge.ffmpegEncoders
     for encoder in FilmSettings.Encoder.allCases where here.contains(encoder.name) {
@@ -177,7 +177,7 @@ final class FilmSettingsTests: BaseTestCase {
   }
 
   func test_blackBarsAreFoundAndCutOff() async throws {
-    let ffmpeg = try XCTUnwrap(ExternalTools.locate("ffmpeg").map { $0 } ?? { throw XCTSkip("needs ffmpeg") }())
+    guard let ffmpeg = ExternalTools.locate("ffmpeg") else { throw XCTSkip("needs ffmpeg") }
     let barred = path("barred.mp4")
     try ExternalTools.run(ffmpeg, ["-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=d=2:s=640x360", "-vf", "pad=640:480:0:60:black", "-c:v", "h264_videotoolbox", barred.path])
     var settings = FilmSettings()

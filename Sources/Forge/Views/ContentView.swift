@@ -14,10 +14,15 @@ struct ContentView: View {
       .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
       .navigationTitle("Forge")
     } detail: {
-      detail
-        // Its own ground came out as a box of another shade, over the edge of the
-        // sidebar.
-        .toolbarBackground(.hidden, for: .windowToolbar)
+      VStack(spacing: 0) {
+        // What scrolls stops under the title bar, which has no ground of its own:
+        // touching the top of the window, it would go on up behind it.
+        Color.clear.frame(height: 1)
+        detail
+      }
+      // Its own ground came out as a box of another shade, over the edge of the
+      // sidebar.
+      .toolbarBackground(.hidden, for: .windowToolbar)
     }
     // Covered by the editor, and so out of reach: the grid of presets behind it
     // could still be walked and pressed by VoiceOver, and by anything else

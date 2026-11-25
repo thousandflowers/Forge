@@ -69,6 +69,10 @@ struct RulePreset: Identifiable, Codable, Hashable, Sendable {
   /// just put them there: anywhere else a name is a name. For this run only.
   var readsTools = false
 
+  /// Whether the word that asks, in the file's name, has been answered: it is
+  /// not part of what comes out. For this run only.
+  var isAnswered = false
+
   init(
     id: UUID = UUID(),
     name: String,

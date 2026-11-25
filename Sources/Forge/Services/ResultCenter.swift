@@ -33,6 +33,8 @@ final class ResultCenter: ObservableObject {
   private static let linger: UInt64 = 7_000_000_000
 
   @Published private(set) var cards: [ResultCard] = []
+  /// Whether the last thing to happen was that one went.
+  private(set) var isLeaving = false
   private var panel: ResultPanel?
   private let shows: Bool
 
@@ -41,6 +43,7 @@ final class ResultCenter: ObservableObject {
   func show(_ card: ResultCard) {
     cards.append(card)
     cards.dropLast(Self.most).forEach { close($0.id) }
+    isLeaving = false
     if shows {
       if panel == nil { panel = ResultPanel(center: self) }
       panel?.appear()
@@ -51,9 +54,9 @@ final class ResultCenter: ObservableObject {
   func close(_ id: UUID) {
     held.remove(id)
     guard let card = cards.first(where: { $0.id == id }) else { return }
+    isLeaving = true
     cards.removeAll { $0.id == id }
     card.gone()
-    if cards.isEmpty { panel?.close() }
   }
 
   /// The one under the pointer waits until the pointer has gone.

@@ -39,8 +39,9 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
     } else if fileType.goes(by: MidiProcessor.readable) {
       self = .audio
     // What is opened through something else is filed by what comes of it. A
-    // sheet is data before it is pages.
-    } else if let way = ThroughProcessor.way(for: fileType), way.kind != .data {
+    // sheet is data before it is pages. Not a film, whatever it may be called:
+    // a player gives MPEG the .ps of PostScript.
+    } else if !fileType.conforms(to: .audiovisualContent), let way = ThroughProcessor.way(for: fileType), way.kind != .data {
       self = way.kind
     } else if FormatCatalog.isReadableImage(fileType) {
       self = .image
@@ -49,6 +50,10 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
       // reading those means opening the asset. The extension is what is known
       // while the sheet is being drawn, and it is right for anything with a
       // normal name; a mislabelled file simply gets one control too many.
+      self = fileType.conforms(to: .audio) ? .audio : .video
+    // Another app may have given it a type of its own, which macOS does not list
+    // among those it opens: it is a film all the same.
+    } else if fileType.conforms(to: .audiovisualContent) || fileType.conforms(to: .audio), ExternalBridge.canHandle(fileType) {
       self = fileType.conforms(to: .audio) ? .audio : .video
     } else if DataProcessor.handles(fileType) {
       self = .data
