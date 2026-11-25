@@ -178,7 +178,7 @@ struct LessonView: View {
   private var title: String {
     switch lesson.step {
     case .hello: return "Try Forge"
-    case .word: return "Say it in the name"
+    case .word: return "Sound, too"
     case .kind: return "Change what it is"
     case .drag: return "Or just drag"
     case .scan: return "A little magic"
@@ -189,11 +189,11 @@ struct LessonView: View {
 
   private var more: String {
     switch lesson.step {
-    case .hello: return "Three files to play with, in a folder of their own."
-    case .kind: return "Give it another extension. If the Finder asks, choose Use .pdf."
+    case .hello: return "Three files to play with."
+    case .kind: return "Now make it .pdf. If the Finder asks, choose Use .pdf."
     case .word: return "Add _reverse to the recording, and listen."
     case .drag: return "Hold \(keys) while you drag the picture, and let go on a format."
-    case .scan: return "Add _scan to the photo of the recipe."
+    case .scan: return "Select the photo, press Return, and add _scan."
     case .keep: return "It works the same in any folder you watch."
     case .end: return lesson.made == nil ? "A few more names to try." : "The PDF is yours: drag it anywhere."
     }
@@ -241,7 +241,7 @@ struct LessonView: View {
       switch lesson.step {
       case .hello:
         Button("Not Now") { lesson.openForge() }.keyboardShortcut(.cancelAction)
-        Button("Open the Folder") { lesson.begin() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+        Button("Open the Folder") { lesson.begin() }.buttonStyle(Prominent()).keyboardShortcut(.defaultAction)
       case .end:
         Button("Open Forge") { lesson.openForge(.process) }
         Button("Done") { lesson.close() }.buttonStyle(Prominent())
