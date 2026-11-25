@@ -17,16 +17,28 @@ enum WelcomeSamples {
     let kind: PresetCategory
     let name: String
     let from: String
-    let to: String
   }
 
-  /// What the three of them are, in the order they are fanned, and one thing
-  /// each can be made into.
+  /// What the three of them are, in the order they are fanned.
   static let each = [
-    Sample(kind: .image, name: "First light", from: "png", to: "jpg"),
-    Sample(kind: .document, name: letter, from: "md", to: "pdf"),
-    Sample(kind: .audio, name: "Ember", from: "wav", to: "m4a"),
+    Sample(kind: .image, name: "First light", from: "png"),
+    Sample(kind: .document, name: letter, from: "md"),
+    Sample(kind: .audio, name: "Ember", from: "wav"),
   ]
+
+  /// What each can be made into on this Mac, the usual things first: what
+  /// Forge would offer for it, asked of Forge.
+  static func formats() -> [[String]] {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ForgeTiles-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil else { return each.map { _ in [] } }
+    return each.map { sample in
+      let url = folder.appendingPathComponent("\(sample.name).\(sample.from)")
+      guard FileManager.default.createFile(atPath: url.path, contents: nil), let file = try? ProcessableFile(url: url) else { return [] }
+      return AskOptions.choices(for: .format, files: [file]).map { $0.label.lowercased() }
+    }
+  }
+
   static let width = 1920, height = 1200
   static let letter = "Letter"
 
@@ -60,7 +72,7 @@ enum WelcomeSamples {
 
   // MARK: - The picture
 
-  private struct Chance {
+  struct Chance {
     var state: UInt64
     mutating func next() -> Double {
       state ^= state << 13; state ^= state >> 7; state ^= state << 17
@@ -173,26 +185,10 @@ enum WelcomeSamples {
 
   // MARK: - The tune
 
-  /// A plucked string, eight notes up and down.
   static func writeSound(to url: URL) throws {
-    let rate = WelcomeScore.rate, notes: [Double] = [45, 52, 57, 60, 64, 71, 69, 64, 60, 57]
-    let buffer = WelcomeScore.buffer(seconds: 6) { count, left, right in
-      var chance = Chance(state: 88_172_645_463_325_252)
-      for (index, note) in notes.enumerated() {
-        let hertz = 440 * pow(2, (note - 69) / 12), length = Int(rate / hertz)
-        var string = (0..<length).map { _ in chance.next() * 2 - 1 }
-        let start = Int(Double(index) * 0.42 * rate), pan = 0.35 + 0.3 * Double(index % 3) / 2
-        var place = 0
-        for frame in start..<count {
-          let next = (place + 1) % length
-          let value = string[place]
-          string[place] = (value + string[next]) * 0.4985
-          place = next
-          let fade = min(1, Double(count - frame) / (rate * 0.8))
-          left[frame] += Float(value * 0.2 * (1 - pan) * 2 * fade)
-          right[frame] += Float(value * 0.2 * pan * 2 * fade)
-        }
-      }
+    let rate = WelcomeScore.rate
+    let buffer = WelcomeScore.buffer(seconds: WelcomeTune.seconds) { count, left, right in
+      WelcomeTune.play(into: left, right, count: count, rate: rate)
     }
     guard let buffer else { throw ProcessingError.conversionFailed(reason: "The sample sound could not be made.") }
     let file = try AVAudioFile(forWriting: url, settings: [

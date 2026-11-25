@@ -60,7 +60,7 @@ final class PremiumTests: BaseTestCase {
   func test_theSamplesOfTheWelcomeAreRealFiles() throws {
     let files = try WelcomeSamples.make(in: try folder("welcome"))
     XCTAssertEqual(try ProcessableFile(url: files.picture).dimensions?.width, WelcomeSamples.width)
-    XCTAssertEqual(WelcomeSamples.seconds(of: files.sound), 6, accuracy: 0.01)
+    XCTAssertEqual(WelcomeSamples.seconds(of: files.sound), WelcomeTune.seconds, accuracy: 0.01)
     let shape = WelcomeSamples.shape(of: files.sound, bars: 20)
     XCTAssertEqual(shape.count, 20)
     XCTAssertEqual(shape.max() ?? 0, 1, accuracy: 0.001)
@@ -76,12 +76,17 @@ final class PremiumTests: BaseTestCase {
   /// What a tile says it can be, the file it stands for really can.
   func test_whatTheTilesBecomeCanBeMade() throws {
     let files = try WelcomeSamples.make(in: try folder("welcome"))
-    for sample in WelcomeSamples.each {
+    for (sample, formats) in zip(WelcomeSamples.each, WelcomeSamples.formats()) {
       let before = "\(sample.name).\(sample.from)", was = files.folder.appendingPathComponent(before)
       XCTAssertTrue(FileManager.default.fileExists(atPath: was.path), before)
-      let now = files.folder.appendingPathComponent("\(sample.name).\(sample.to)")
-      try FileManager.default.moveItem(at: was, to: now)
-      XCTAssertNotNil(Retype.wanted(of: now, before: before), "\(before) to \(sample.to)")
+      XCTAssertGreaterThan(formats.count, 2, before)
+      XCTAssertFalse(formats.contains(sample.from), before)
+      for format in formats {
+        let now = files.folder.appendingPathComponent("\(sample.name).\(format)")
+        try FileManager.default.moveItem(at: was, to: now)
+        XCTAssertNotNil(Retype.wanted(of: now, before: before), "\(before) to \(format)")
+        try FileManager.default.moveItem(at: now, to: was)
+      }
     }
   }
 

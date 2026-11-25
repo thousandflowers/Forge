@@ -18,6 +18,8 @@ final class Lesson: ObservableObject {
   @Published private(set) var isDone = false
   @Published private(set) var problem: String?
   @Published private(set) var files: WelcomeSamples.Files?
+  /// What the tiles turn into.
+  @Published private(set) var formats: [[String]] = []
   /// Which side of the panel the folder is on.
   @Published var isFolderOnTheLeft = true
   @Published var isLoud = true { didSet { score.isOn = isLoud } }
@@ -40,6 +42,7 @@ final class Lesson: ObservableObject {
     self.panel = panel
     panel.show()
     Task { await score.begin() }
+    Task { formats = await Task.detached(priority: .userInitiated) { WelcomeSamples.formats() }.value }
     // With no window, nobody else has.
     Task { await model.bootstrap() }
   }
@@ -125,7 +128,7 @@ final class Lesson: ObservableObject {
     score.play(.shimmer)
     withAnimation(Motion.arrive) { isDone = true }
     if step == .word, let output = entry.outputURL { score.play(output) }
-    let pause: UInt64 = step == .word ? 6_200_000_000 : 1_700_000_000
+    let pause: UInt64 = step == .word ? UInt64((WelcomeTune.seconds + 0.2) * 1_000_000_000) : 1_700_000_000
     going = Task { [weak self] in
       try? await Task.sleep(nanoseconds: pause)
       guard !Task.isCancelled else { return }

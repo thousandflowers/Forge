@@ -207,7 +207,7 @@ struct LessonView: View {
   @ViewBuilder
   private var thing: some View {
     switch lesson.step {
-    case .hello: LessonFan(size: 42) { lesson.pop() }
+    case .hello: LessonFan(size: 42, formats: lesson.formats) { lesson.pop() }
     case .drag: if let model = lesson.model { DragSwitch(model: model, keys: keys) }
     case .end: if let model = lesson.model { EndSwitch(model: model) }
     default: if let (from, to) = lesson.renaming() { TypedName(from: from, to: to, isStill: isStill) }
