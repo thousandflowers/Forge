@@ -375,7 +375,7 @@ enum Palette {
       guard digits.count == 6, let number = Int(digits, radix: 16) else { return nil }
       return (row["name"] ?? "#" + digits, [16, 8, 0].map { Double(number >> $0 & 255) / 255 })
     }
-    guard !found.isEmpty else { throw ProcessingError.conversionFailed(reason: "A palette needs a column called “hex”, with colours such as #FF8800.") }
+    guard !found.isEmpty else { throw ProcessingError.conversionFailed(reason: "A palette needs a column called “hex”, with colors such as #FF8800.") }
     return found
   }
 
@@ -439,7 +439,7 @@ enum Palette {
       default: rgb = (w[0] / 65_535, w[1] / 65_535, w[2] / 65_535)
       }
       at += 10
-      var name = "Colour \(index + 1)"
+      var name = "Color \(index + 1)"
       if hasNames {
         let length = data.big(4, at: at)
         guard length < 4096, at + 4 + length * 2 <= data.count else { break }

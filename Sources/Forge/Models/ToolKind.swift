@@ -60,7 +60,7 @@ extension Tool {
       case .unlock: return "Remove the password"
       case .numbers: return "Number the pages"
       case .sheet: return "Pages per sheet"
-      case .dpi: return "Resolution of the pages"
+      case .dpi: return "Page resolution"
       case .pictures: return "Take out the pictures"
       case .tables: return "Take out the tables"
       case .tidy: return "Tidy the code"
@@ -143,8 +143,8 @@ extension Tool {
       case .upscale: return "Two, three or four times as large"
       case .scan: return "The sheet in the photo, straightened and lit"
       case .gray: return "Without its colors"
-      case .blurBackground: return "What the picture is of stays sharp"
-      case .round: return "See-through at the corners"
+      case .blurBackground: return "The subject stays sharp"
+      case .round: return "Transparent corners"
       case .tile: return "So many across and so many down"
       case .layers: return "A picture for each layer of a Photoshop file"
       case .slowMotion: return "Slower, with the frames in between made up"
@@ -155,7 +155,7 @@ extension Tool {
       case .mono: return "One channel"
       case .fade: return "The sound comes up at the start and goes down at the end"
       case .pitch: return "Higher or lower, and as long as before"
-      case .noSilence: return "The long ones are cut out"
+      case .noSilence: return "Long pauses are cut out"
       case .lock: return "Asked for every time, and never written down"
       case .unlock: return "Asked for every time, and never written down"
       case .numbers: return "At the foot of every page"
@@ -399,7 +399,7 @@ extension Tool {
     case .pitch(let steps): return "Pitch \(steps > 0 ? "+" : "")\(steps)"
     case .sheet(let count): return "\(count) pages a sheet"
     case .dpi(let dots): return "\(dots) dpi"
-    case .tidy(let tidying): return tidying == .min ? "Written short" : "Written out"
+    case .tidy(let tidying): return tidying == .min ? "Minified" : "Pretty-printed"
     case .mute, .normalize, .reverse, .removeBackground, .lighter, .wave, .enhance, .scan, .gray, .blurBackground, .layers,
          .voice, .mono, .noSilence, .lock, .unlock, .numbers, .pictures, .tables:
       return kind.title

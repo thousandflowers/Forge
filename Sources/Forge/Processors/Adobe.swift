@@ -147,7 +147,7 @@ enum Adobe {
     let colours = [1: 1, 3: 3, 4: 4][mode] ?? 0
     guard data.prefix(4) == Data("8BPS".utf8), data.big(2, at: 4) == 2, colours > 0, channels >= colours, depth == 8 || depth == 16,
           width > 0, height > 0, width * height <= 400_000_000 else {
-      throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) is in a kind of PSB Forge does not read: 8 or 16 bits, in RGB, CMYK or grey.")
+      throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) is in a kind of PSB Forge does not read: 8 or 16 bits, in RGB, CMYK or gray.")
     }
     var at = 26
     at += 4 + data.big(4, at: at)

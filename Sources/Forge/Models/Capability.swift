@@ -294,7 +294,7 @@ enum Capabilities {
       Capability(
         id: "blender",
         title: "Blender and FBX",
-        summary: "BLEND files, and FBX to write, with their colours and materials.",
+        summary: "BLEND files, and FBX to write, with their colors and materials.",
         symbol: "cube.transparent",
         status: .needsPack(.init(
           name: "Blender",
