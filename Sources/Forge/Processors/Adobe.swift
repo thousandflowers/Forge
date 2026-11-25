@@ -150,9 +150,12 @@ enum Adobe {
       throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) is in a kind of PSB Forge does not read: 8 or 16 bits, in RGB, CMYK or gray.")
     }
     var at = 26
-    at += 4 + data.big(4, at: at)
-    at += 4 + data.big(4, at: at)
-    at += 8 + data.big(8, at: at)
+    for size in [4, 4, 8] {
+      let length = data.big(size, at: at)
+      at += size
+      guard length >= 0, at <= data.count, length <= data.count - at else { throw Ole.broken }
+      at += length
+    }
     let kind = data.big(2, at: at), wide = depth / 8, used = min(channels, colours + (mode == 3 && channels > 3 ? 1 : 0))
     at += 2
     guard kind == 0 || kind == 1, at < data.count else { throw Ole.broken }
@@ -216,7 +219,8 @@ enum OldPictures {
     let depth = data.number(1, at: 3), planes = data.number(1, at: 65), line = data.number(2, at: 66)
     let width = data.number(2, at: 8) - data.number(2, at: 4) + 1, height = data.number(2, at: 10) - data.number(2, at: 6) + 1
     guard data.count > 128, data.number(1, at: 0) == 10, (1...16_384).contains(width), (1...16_384).contains(height), line > 0,
-          (depth == 8 && (planes == 1 || planes == 3)) || (depth == 1 && (1...4).contains(planes)) else { throw Ole.broken }
+          (depth == 8 && (planes == 1 || planes == 3)) || (depth == 1 && (1...4).contains(planes)),
+          line >= (depth == 8 ? width : (width + 7) / 8) else { throw Ole.broken }
     var raw: [UInt8] = [], at = 128
     let wanted = line * planes * height
     while raw.count < wanted, at < data.count {
@@ -229,6 +233,7 @@ enum OldPictures {
     }
     guard raw.count >= wanted else { throw Ole.broken }
     let table = data.count > 769 && data[data.count - 769] == 12 ? data.count - 768 : 16
+    guard planes == 3 || table + (depth == 8 ? 768 : 48) <= data.count else { throw Ole.broken }
     var pixels = [UInt8](repeating: 255, count: width * height * 4)
     for y in 0..<height {
       for x in 0..<width {

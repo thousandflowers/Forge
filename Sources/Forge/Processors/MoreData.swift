@@ -135,12 +135,12 @@ private struct Cursor {
   var at = 0
   init(_ data: Data) { self.data = Data(data) }
   mutating func number(_ size: Int) throws -> Int {
-    guard at + size <= data.count else { throw Zip.Reader.broken }
+    guard size <= data.count - at else { throw Zip.Reader.broken }
     defer { at += size }
     return data.big(size, at: at)
   }
   mutating func bytes(_ count: Int) throws -> Data {
-    guard count >= 0, at + count <= data.count else { throw Zip.Reader.broken }
+    guard count >= 0, count <= data.count - at else { throw Zip.Reader.broken }
     defer { at += count }
     return data.subdata(in: at..<(at + count))
   }
@@ -320,7 +320,7 @@ enum Cbor {
 enum Dbf {
   @Sendable static func read(_ data: Data) throws -> Any {
     let count = data.number(4, at: 4), start = data.number(2, at: 8), size = data.number(2, at: 10)
-    guard data.count > 64, [0x02, 0x03, 0x30, 0x31, 0x32, 0x43, 0x63, 0x83, 0x8B, 0xF5, 0xFB].contains(data.number(1, at: 0)), start > 32, size > 1 else { throw DataFormats.broken("a dBase table") }
+    guard data.count > 64, [0x02, 0x03, 0x30, 0x31, 0x32, 0x43, 0x63, 0x83, 0x8B, 0xF5, 0xFB].contains(data.number(1, at: 0)), start > 32, start <= data.count, size > 1 else { throw DataFormats.broken("a dBase table") }
     var fields: [(name: String, kind: Character, length: Int)] = [], at = 32
     while at + 32 <= start, data.number(1, at: at) != 0x0D {
       let name = String(decoding: data[(data.startIndex + at)..<(data.startIndex + at + 11)].prefix { $0 != 0 }, as: UTF8.self)

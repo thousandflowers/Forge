@@ -15,6 +15,8 @@ enum PSDLayers {
 
   private static let broken = ProcessingError.conversionFailed(reason: "The layers of this file cannot be read.")
   private static let most = 2000
+  /// As many as the largest picture Forge opens has.
+  private static let largest = 400_000_000
 
   /// From the top of it down, each as large as the whole document.
   static func read(_ url: URL) throws -> [Layer] {
@@ -113,6 +115,7 @@ enum PSDLayers {
   /// One channel, at eight bits: what is shown of a layer by itself.
   private static func plane(_ bytes: inout Bytes, _ record: Record, depth: Int, isLarge: Bool, end: Int) throws -> [UInt8] {
     let size = depth / 8, row = record.width * size, count = record.width * record.height
+    guard count <= largest else { throw broken }
     let way = try bytes.int(2)
     var made: [UInt8]
     switch way {
@@ -151,6 +154,8 @@ enum PSDLayers {
   static func unpacked(_ data: Data, to size: Int) throws -> [UInt8] {
     let packed = [UInt8](data)
     var made: [UInt8] = []
+    // A run is never more than 128 of one.
+    guard size <= packed.count * 128 else { throw broken }
     made.reserveCapacity(size)
     var at = 0
     while at < packed.count, made.count < size {

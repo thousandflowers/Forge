@@ -32,7 +32,7 @@ final class ThroughProcessor: FileProcessor, @unchecked Sendable {
       // The length of the message on a line of its own, and what Mail notes after it.
       let data = try Data(contentsOf: input)
       guard let line = data.firstIndex(of: 0x0A), let length = Int(String(decoding: data[..<line], as: UTF8.self).trimmingCharacters(in: .whitespaces)),
-            length >= 0, line + 1 + length <= data.count else { throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) is not a message") }
+            length >= 0, length <= data.count - line - 1 else { throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) is not a message") }
       try data.subdata(in: (line + 1)..<(line + 1 + length)).write(to: output)
     },
     Way(extensions: ["dxf"], kind: .image, middle: "pdf") { try Dxf.read($0).pdf(to: $1) },

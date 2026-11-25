@@ -124,8 +124,11 @@ enum Meshes {
             let buffer = views[view]["buffer"] as? Int, buffers.indices.contains(buffer), let count = accessors[index]["count"] as? Int,
             (0...most).contains(count), let kind = accessors[index]["componentType"] as? Int, let size = [5121: 1, 5123: 2, 5125: 4, 5126: 4, 5120: 1, 5122: 2][kind] else { throw broken }
       let data = buffers[buffer], stride = views[view]["byteStride"] as? Int ?? size * per
-      let start = (views[view]["byteOffset"] as? Int ?? 0) + (accessors[index]["byteOffset"] as? Int ?? 0)
-      guard start >= 0, stride > 0, count == 0 || start + (count - 1) * stride + size * per <= data.count else { throw broken }
+      let offsets = [views[view]["byteOffset"] as? Int ?? 0, accessors[index]["byteOffset"] as? Int ?? 0]
+      // Nothing in it can be further apart, or further on, than all of it.
+      guard offsets.allSatisfy({ (0...data.count).contains($0) }), (1...max(1, data.count)).contains(stride) else { throw broken }
+      let start = offsets[0] + offsets[1]
+      guard count == 0 || start + (count - 1) * stride + size * per <= data.count else { throw broken }
       var out: [Double] = []
       out.reserveCapacity(count * per)
       for one in 0..<count {
@@ -149,7 +152,7 @@ enum Meshes {
           let moved = place * SIMD4(Float(flat[at]), Float(flat[at + 1]), Float(flat[at + 2]), 1)
           return SIMD3(moved.x, moved.y, moved.z)
         }
-        mesh.triangles = try (part["indices"] as? Int).map { try numbers($0, per: 1).map { UInt32($0) } } ?? (0..<UInt32(mesh.points.count)).map { $0 }
+        mesh.triangles = try (part["indices"] as? Int).map { try numbers($0, per: 1).map { UInt32(exactly: $0) ?? .max } } ?? (0..<UInt32(mesh.points.count)).map { $0 }
         found.append(mesh)
       }
     }

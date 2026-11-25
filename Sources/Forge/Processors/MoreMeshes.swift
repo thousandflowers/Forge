@@ -198,11 +198,11 @@ extension Meshes {
         mesh.points = moved(stride(from: 0, through: flat.count - 3, by: 3).map { SIMD3(flat[$0], flat[$0 + 1], flat[$0 + 2]) }, place)
         if kind == "IndexedFaceSet" {
           for face in floats(element, "coordIndex").split(separator: -1) where face.count > 2 {
-            let face = face.map { UInt32(max(0, $0)) }
+            let face = face.map { UInt32(exactly: $0.rounded()) ?? .max }
             for index in 1..<(face.count - 1) { mesh.triangles += [face[0], face[index], face[index + 1]] }
           }
         } else if kind == "IndexedTriangleSet" {
-          mesh.triangles = floats(element, "index").map { UInt32(max(0, $0)) }
+          mesh.triangles = floats(element, "index").map { UInt32(exactly: $0.rounded()) ?? .max }
         } else {
           mesh.triangles = (0..<UInt32(mesh.points.count)).map { $0 }
         }

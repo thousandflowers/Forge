@@ -109,7 +109,7 @@ enum Zip {
 extension Data {
   /// Least first, as zip has them.
   func number(_ size: Int, at offset: Int) -> Int {
-    guard offset >= 0, offset + size <= count else { return 0 }
+    guard offset >= 0, size <= count, offset <= count - size else { return 0 }
     return (0..<size).reduce(0) { $0 | Int(self[startIndex + offset + $1]) << (8 * $1) }
   }
 
@@ -119,7 +119,7 @@ extension Data {
 
   /// Most first, as fonts have them.
   func big(_ size: Int, at offset: Int) -> Int {
-    guard offset >= 0, offset + size <= count else { return 0 }
+    guard offset >= 0, size <= count, offset <= count - size else { return 0 }
     return (0..<size).reduce(0) { $0 << 8 | Int(self[startIndex + offset + $1]) }
   }
 

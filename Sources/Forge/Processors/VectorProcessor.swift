@@ -22,6 +22,7 @@ final class VectorProcessor: FileProcessor, @unchecked Sendable {
   /// fits the artwork into the box it is given and keeps the proportions, so
   /// this is a ceiling rather than a shape.
   static let defaultSide = 1024
+  private static let mostSide = 16_384
 
   /// A gzipped SVG says how large it unpacks to, in a trailer anybody can
   /// write. The claim is honoured up to here and no further.
@@ -137,7 +138,8 @@ final class VectorProcessor: FileProcessor, @unchecked Sendable {
     }
     // Otherwise the size the drawing says it is. Every SVG came out 1024
     // pixels across, a 300-pixel badge included.
-    let own = drawing.flatMap(Self.statedSize).map { Int(max($0.width, $0.height).rounded()) }
+    // Larger than any screen, what it says of itself is not a size.
+    let own = drawing.flatMap(Self.statedSize).map { Int(min(max($0.width, $0.height), Double(mostSide)).rounded()) }
     return max(asked.max() ?? own ?? defaultSide, 1)
   }
 
@@ -157,13 +159,13 @@ final class VectorProcessor: FileProcessor, @unchecked Sendable {
     func pixels(_ text: String?) -> Double? {
       guard let text = text?.trimmingCharacters(in: .whitespaces) else { return nil }
       let number = text.hasSuffix("px") ? String(text.dropLast(2)) : text
-      return Double(number).flatMap { $0 > 0 ? $0 : nil }
+      return Double(number).flatMap { $0 > 0 && $0.isFinite ? $0 : nil }
     }
     if let width = pixels(attribute("width")), let height = pixels(attribute("height")) {
       return CGSize(width: width, height: height)
     }
     let box = (attribute("viewBox") ?? "").split(whereSeparator: { $0 == " " || $0 == "," }).compactMap { Double($0) }
-    guard box.count == 4, box[2] > 0, box[3] > 0 else { return nil }
+    guard box.count == 4, box[2] > 0, box[3] > 0, box[2].isFinite, box[3].isFinite else { return nil }
     return CGSize(width: box[2], height: box[3])
   }
 
