@@ -172,18 +172,22 @@ struct OutOfTheNotch: ViewModifier {
     let isOut = reveal.isOut || isStill
     content
       .padding(.horizontal, Hanging.shoulder)
-      .background(Color.black)
-      .mask(alignment: .top) {
-        GeometryReader { place in
-          Hanging(radius: isOut ? Self.radius : Hanging.resting)
-            .frame(width: isOut ? place.size.width : reveal.notch.width + Hanging.shoulder * 2, height: isOut ? place.size.height : reveal.notch.height)
-            .frame(maxWidth: .infinity, alignment: .top)
-        }
-      }
+      .mask(alignment: .top) { shape(isOut) }
+      // Drawn as it is: see the sign.
+      .background(alignment: .top) { shape(isOut) }
       .opacity(reveal.isOut || !isStill ? 1 : 0)
       .animation(isStill ? nil : .spring(response: NotchReveal.seconds, dampingFraction: 1), value: reveal.isOut)
       .environment(\.colorScheme, .dark)
       .ignoresSafeArea()
+  }
+
+  private func shape(_ isOut: Bool) -> some View {
+    GeometryReader { place in
+      Hanging(radius: isOut ? Self.radius : Hanging.resting)
+        .fill(Color.black)
+        .frame(width: isOut ? place.size.width : reveal.notch.width + Hanging.shoulder * 2, height: isOut ? place.size.height : reveal.notch.height)
+        .frame(maxWidth: .infinity, alignment: .top)
+    }
   }
 }
 
