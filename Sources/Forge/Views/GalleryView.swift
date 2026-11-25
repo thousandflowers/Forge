@@ -3,6 +3,7 @@ import SwiftUI
 
 /// Where presets and tools come from, in one place.
 struct StoreView: View {
+  @EnvironmentObject private var model: AppModel
   enum Shelf: String, CaseIterable {
     case presets = "Presets", tools = "Tools"
   }
@@ -19,12 +20,15 @@ struct StoreView: View {
     .navigationTitle("Store")
     .toolbar {
       ToolbarItem(placement: .principal) {
+        // Behind the editor it would change what is under it.
+        if model.presetEditor == nil {
         Picker("Show", selection: $shelf) {
           ForEach(Shelf.allCases, id: \.self) { Text($0.rawValue).tag($0) }
         }
         .pickerStyle(.segmented)
         .labelsHidden()
         .fixedSize()
+        }
       }
     }
   }
@@ -75,7 +79,6 @@ struct GalleryView: View {
       }
     }
     .confirmsToolInstalls(with: installer)
-    .searchable(text: $search, placement: .toolbar, prompt: "Search presets")
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
         Button {
@@ -99,11 +102,7 @@ struct GalleryView: View {
 
   private var browser: some View {
     VStack(spacing: 0) {
-      // A few are looked at; only many are narrowed.
-      if entries.count >= Self.fewEnough {
-        filterBar
-        Divider()
-      }
+      filterBar
       if visible.isEmpty {
         EmptyStateView(
           icon: "magnifyingglass",
@@ -133,6 +132,22 @@ struct GalleryView: View {
   /// with one option is not a choice, so it is not shown.
   private var filterBar: some View {
     HStack(spacing: 10) {
+      SearchField(prompt: "Search presets", text: $search).frame(maxWidth: 260)
+      // A few are looked at; only many are narrowed.
+      if entries.count >= Self.fewEnough { filters }
+      Spacer()
+      Text(countLabel)
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+    }
+    .padding(.horizontal, 20)
+    .padding(.top, 14)
+    .padding(.bottom, 2)
+  }
+
+  private var filters: some View {
+    HStack(spacing: 10) {
       if categories.count > 1 {
         Picker("Type", selection: $category) {
           Text("Any type").tag(PresetCategory?.none)
@@ -140,7 +155,7 @@ struct GalleryView: View {
             Text(category.rawValue.capitalized).tag(Optional(category))
           }
         }
-        .pickerStyle(.menu).fixedSize()
+        .labelsHidden().pickerStyle(.menu).fixedSize()
       }
 
       if bands.count > 1 {
@@ -150,7 +165,7 @@ struct GalleryView: View {
             Text(band.title).tag(Optional(band))
           }
         }
-        .pickerStyle(.menu).fixedSize()
+        .labelsHidden().pickerStyle(.menu).fixedSize()
       }
 
       if topics.count > 1 {
@@ -160,22 +175,13 @@ struct GalleryView: View {
             Text(topic.capitalized).tag(Optional(topic))
           }
         }
-        .pickerStyle(.menu).fixedSize()
+        .labelsHidden().pickerStyle(.menu).fixedSize()
       }
 
       if isFiltered {
         Button("Clear", action: clearFilters)
       }
-
-      Spacer()
-
-      Text(countLabel)
-        .font(.callout)
-        .foregroundStyle(.secondary)
-        .monospacedDigit()
     }
-    .padding(.horizontal, 20)
-    .padding(.vertical, 10)
   }
 
   private var countLabel: String {
@@ -278,7 +284,7 @@ struct GalleryView: View {
     }
     .padding(14)
     // One height for every card: the user asked for them all the same.
-    .frame(height: 152, alignment: .top)
+    .frame(height: 138, alignment: .top)
     .forgeCard(lifts: true)
     .onTapGesture { open(entry, offer) }
     .contextMenu {

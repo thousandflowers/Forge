@@ -25,9 +25,13 @@ struct PresetsView: View {
                        message: "Create a preset to define how files are converted.",
                        actionTitle: "New Preset") { model.presetEditor = PresetEditorRequest(preset: nil) }
       } else if found.isEmpty {
-        EmptyStateView(icon: "magnifyingglass", title: "Nothing matches", message: "No preset of yours fits what you are looking for.")
+        VStack(spacing: 0) {
+          searchBar
+          EmptyStateView(icon: "magnifyingglass", title: "Nothing matches", message: "No preset of yours fits what you are looking for.")
+        }
       } else {
         ScrollView {
+          searchBar
           LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 16)], spacing: 16) {
             ForEach(found) { preset in
               PresetCard(
@@ -67,7 +71,6 @@ struct PresetsView: View {
         }
       }
     }
-    .searchable(text: $search, placement: .toolbar, prompt: "Search presets")
     // A preset can be an afternoon's work, and there is no Undo: one click on
     // a small × used to delete it for good.
     .confirmationDialog(
@@ -90,11 +93,21 @@ struct PresetsView: View {
         // Sharing hangs off each card: a single button up here could only
         // ever mean "all of them", which is never what somebody handing a
         // preset to a friend wants.
-        Button { importPresets() } label: { Label("Import Presets…", systemImage: "square.and.arrow.down") }
-        Button { model.presetEditor = PresetEditorRequest(preset: nil) } label: { Label("New Preset", systemImage: "plus") }
+        Button { importPresets() } label: { Label("Import Presets…", systemImage: "square.and.arrow.down") }.help("Import presets from a file")
+        Button { model.presetEditor = PresetEditorRequest(preset: nil) } label: { Label("New Preset", systemImage: "plus") }.help("New preset")
         }
       }
     }
+  }
+
+  private var searchBar: some View {
+    HStack {
+      SearchField(prompt: "Search presets", text: $search).frame(maxWidth: 260)
+      Spacer()
+    }
+    .padding(.horizontal, 20)
+    .padding(.top, 14)
+    .padding(.bottom, -6)
   }
 
   @ViewBuilder
@@ -172,7 +185,7 @@ struct PresetCard<Actions: View>: View {
       }
     }
     .padding(14)
-    .frame(height: 142, alignment: .top)
+    .frame(height: 128, alignment: .top)
     .forgeCard(lifts: true)
     .opacity(isEnabled ? 1 : 0.6)
   }

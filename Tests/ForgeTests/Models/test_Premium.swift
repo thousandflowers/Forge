@@ -3,9 +3,47 @@ import UniformTypeIdentifiers
 @testable import Forge
 
 final class PremiumTests: BaseTestCase {
-  /// The welcome must not teach a word that does nothing.
-  func test_theWordsOfTheWelcomeAreWords() {
-    for word in WelcomeName.words { XCTAssertNotNil(Tool(word: word), word) }
+  /// What is asked for is what is listened for, and nothing else is.
+  @MainActor
+  func test_theLessonKnowsWhatWasDone() {
+    func entry(_ from: String, _ to: String) -> ProcessingHistory {
+      ProcessingHistory(fileURL: path(from), status: .completed, duration: 0, outputURL: path(to))
+    }
+    XCTAssertTrue(Lesson.answers(entry("First light_gray.png", "First light.png"), .word))
+    XCTAssertFalse(Lesson.answers(entry("Ember_reverse.wav", "Ember.wav"), .word))
+    XCTAssertTrue(Lesson.answers(entry("Letter.md", "Letter.pdf"), .kind))
+    XCTAssertFalse(Lesson.answers(entry("First light.png", "First light.pdf"), .kind))
+    XCTAssertTrue(Lesson.answers(entry("First light_ask.png", "First light.jpg"), .ask))
+    XCTAssertTrue(Lesson.answers(entry("Ember_reverse.wav", "Ember.wav"), .sound))
+    XCTAssertTrue(Lesson.isIn(path("a"), path("a/b.png")))
+    XCTAssertFalse(Lesson.isIn(path("a"), path("b.png")))
+  }
+
+  /// Watched while it lasts; never written down.
+  @MainActor
+  func test_theLessonsFolderIsForgotten() async throws {
+    let model = AppModel(persistence: store)
+    model.startLesson(in: try folder("Try Forge"))
+    XCTAssertEqual(model.folders.map(\.onlyWhenRenamed), [true])
+    model.endLesson()
+    XCTAssertTrue(model.folders.isEmpty)
+  }
+
+  /// What it is tried on is made there and then, and is what it says it is.
+  func test_theSamplesOfTheWelcomeAreRealFiles() throws {
+    let files = try WelcomeSamples.make(in: try folder("welcome"))
+    XCTAssertEqual(try ProcessableFile(url: files.picture).dimensions?.width, WelcomeSamples.width)
+    XCTAssertEqual(WelcomeSamples.seconds(of: files.sound), 6, accuracy: 0.01)
+    let shape = WelcomeSamples.shape(of: files.sound, bars: 20)
+    XCTAssertEqual(shape.count, 20)
+    XCTAssertEqual(shape.max() ?? 0, 1, accuracy: 0.001)
+    for sound in WelcomeScore.Sound.allCases {
+      let buffer = try XCTUnwrap(WelcomeScore.make(sound))
+      let left = try XCTUnwrap(buffer.floatChannelData)[0]
+      let peak = (0..<Int(buffer.frameLength)).map { abs(left[$0]) }.max() ?? 0
+      XCTAssertGreaterThan(peak, 0.02, "\(sound) is silent")
+      XCTAssertLessThan(peak, 0.6, "\(sound) is loud")
+    }
   }
 
   func test_historyIsByDay_theLatestFirst() throws {

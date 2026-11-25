@@ -129,7 +129,7 @@ struct PresetEditorView: View {
           canvas
           // The sample file after each step, small; click for the big view.
           PreviewStrip(preset: draft(), coordinator: model.coordinator, own: conversion?.sources.first) { original, step in
-            withAnimation(.easeOut(duration: 0.15)) { compared = Compared(original: original, step: step) }
+            withAnimation(Motion.quick) { compared = Compared(original: original, step: step) }
           }
         }
         Divider()
@@ -139,7 +139,7 @@ struct PresetEditorView: View {
     .overlay {
       if let compared {
         PreviewCompare(original: compared.original, step: compared.step) {
-          withAnimation(.easeOut(duration: 0.15)) { self.compared = nil }
+          withAnimation(Motion.quick) { self.compared = nil }
         }
         .transition(.opacity)
       }
@@ -349,10 +349,10 @@ struct PresetEditorView: View {
       // top - a two-way scroll view would otherwise float short content in
       // the middle.
       .frame(minWidth: proxy.size.width, minHeight: proxy.size.height, alignment: .top)
-      .animation(.easeOut(duration: 0.2), value: steps)
-      .animation(.easeOut(duration: 0.2), value: parameters)
-      .animation(.easeOut(duration: 0.2), value: showsFormats)
-      .animation(.easeOut(duration: 0.2), value: showsTemplate)
+      .animation(Motion.move, value: steps)
+      .animation(Motion.move, value: parameters)
+      .animation(Motion.move, value: showsFormats)
+      .animation(Motion.move, value: showsTemplate)
     }
     }
     .frame(maxWidth: .infinity)

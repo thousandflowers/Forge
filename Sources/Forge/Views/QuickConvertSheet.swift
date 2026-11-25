@@ -127,7 +127,7 @@ struct QuickConvertSheet: View {
           formatChips(leading + chosen)
         }
         if leading.count < all.count || !tools.isEmpty {
-          Button(showsAllFormats ? "Fewer formats" : "All formats…") { showsAllFormats.toggle() }
+          Button(showsAllFormats ? "Fewer formats" : "All formats…") { withAnimation(Motion.move) { showsAllFormats.toggle() } }
             .buttonStyle(.link)
         }
       }
@@ -152,7 +152,7 @@ struct QuickConvertSheet: View {
             }
           }
           if all.count > few.count {
-            Button(showsAllTools ? "Fewer" : "All \(all.count)…") { showsAllTools.toggle() }.buttonStyle(.link)
+            Button(showsAllTools ? "Fewer" : "All \(all.count)…") { withAnimation(Motion.move) { showsAllTools.toggle() } }.buttonStyle(.link)
           }
         }
       }

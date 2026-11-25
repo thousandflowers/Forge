@@ -24,13 +24,6 @@ struct ForgeApp: App {
       ForgeCommands(model: model, batch: batch)
     }
 
-    Window("Welcome to Forge", id: WelcomeView.windowID) {
-      WelcomeView().environmentObject(model)
-    }
-    .windowStyle(.hiddenTitleBar)
-    .windowResizability(.contentSize)
-    .handlesExternalEvents(matching: [])
-
     Settings {
       SettingsView().environmentObject(model)
     }
@@ -119,12 +112,6 @@ final class OpenedFiles {
   }
 }
 
-private struct WelcomeCommand: View {
-  @Environment(\.openWindow) private var openWindow
-
-  var body: some View { Button("Welcome to Forge") { openWindow(id: WelcomeView.windowID) } }
-}
-
 /// The menu bar's own commands: each one does what the window's button does.
 struct ForgeCommands: Commands {
   @ObservedObject var model: AppModel
@@ -143,7 +130,7 @@ struct ForgeCommands: Commands {
     }
     // The default item put up "Help isn't available for Forge."
     CommandGroup(replacing: .help) {
-      WelcomeCommand()
+      Button("Try Forge") { Lesson.shared.open(model) }
       Button("Forge Help") { NSWorkspace.shared.open(Self.helpURL) }
     }
     CommandGroup(after: .sidebar) {

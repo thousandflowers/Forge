@@ -75,19 +75,21 @@ struct NotchSignView: View {
   private static let widest: CGFloat = 340
 
   static func size(around notch: NSSize) -> NSSize {
-    NSSize(width: max(notch.width + ear * 2, widest), height: notch.height + shelf)
+    NSSize(width: max(notch.width + ear * 2, widest) + Hanging.shoulder * 2, height: notch.height + shelf)
   }
 
   private var word: WorkSigns.Word? { if case .said(let word) = shown { return word } else { return nil } }
   private var fraction: Double { if case .working(let share) = shown { return share } else { return 1 } }
 
   private var width: CGFloat {
-    guard isOut || isStill else { return notch.width }
-    return word == nil ? notch.width + Self.ear * 2 : Self.size(around: notch).width
+    let shoulders = Hanging.shoulder * 2
+    guard isOut || isStill else { return notch.width + shoulders }
+    return word == nil ? notch.width + Self.ear * 2 + shoulders : Self.size(around: notch).width
   }
 
   var body: some View {
-    let spring = Animation.spring(response: 0.36, dampingFraction: 0.8)
+    // Not past its own edge, which is where the panel ends: it lost its corners there.
+    let spring = Animation.spring(response: 0.36, dampingFraction: 1)
     VStack(spacing: 0) {
       ZStack(alignment: .top) {
         Hanging(radius: word == nil ? 11 : 20).fill(.black)
@@ -180,7 +182,7 @@ private struct StrikingHammer: View {
   @State private var start = Date()
 
   var body: some View {
-    TimelineView(.animation(minimumInterval: 1 / 30, paused: !isWorking)) { timeline in
+    TimelineView(.animation(paused: !isWorking)) { timeline in
       let time = isWorking ? timeline.date.timeIntervalSince(start) : 0
       ZStack {
         Image(systemName: "hammer.fill")

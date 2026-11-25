@@ -311,7 +311,7 @@ private struct Timeline: View {
         }
         .frame(width: width, height: Self.height)
         .background(Color.secondary.opacity(0.2))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .offset(x: Self.handle)
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0).onChanged { value in
@@ -323,13 +323,17 @@ private struct Timeline: View {
         Color.black.opacity(0.55).frame(width: max(0, left - Self.handle), height: Self.height).offset(x: Self.handle).allowsHitTesting(false)
         Color.black.opacity(0.55).frame(width: max(0, Self.handle + width - right), height: Self.height).offset(x: right).allowsHitTesting(false)
 
-        Rectangle().strokeBorder(Color.accentColor, lineWidth: 3)
-          .frame(width: max(0, right - left), height: Self.height).offset(x: left).allowsHitTesting(false)
-        grip("Start", "chevron.compact.left", at: left - Self.handle, perSecond: perSecond, value: model.from) { model.setFrom($0) }
-        grip("End", "chevron.compact.right", at: right, perSecond: perSecond, value: model.to) { model.setTo($0) }
+        VStack {
+          Rectangle().fill(Color.accentColor).frame(height: 3)
+          Spacer()
+          Rectangle().fill(Color.accentColor).frame(height: 3)
+        }
+        .frame(width: max(0, right - left), height: Self.height).offset(x: left).allowsHitTesting(false)
+        grip("Start", "chevron.compact.left", isLeft: true, at: left - Self.handle, perSecond: perSecond, value: model.from) { model.setFrom($0) }
+        grip("End", "chevron.compact.right", isLeft: false, at: right, perSecond: perSecond, value: model.to) { model.setTo($0) }
 
-        Rectangle().fill(Color.white).frame(width: 2, height: Self.height + 6).shadow(radius: 1)
-          .offset(x: Self.handle + min(player.time, model.length) * perSecond - 1, y: -3)
+        Capsule().fill(Color.white).frame(width: 3, height: Self.height + 8).shadow(radius: 1)
+          .offset(x: Self.handle + min(player.time, model.length) * perSecond - 1.5, y: -4)
           .allowsHitTesting(false)
       }
     }
@@ -337,8 +341,11 @@ private struct Timeline: View {
     .task(id: model.length) { frames = await CutPlayer.strip(of: model.file.url, length: model.length, count: Self.count, height: Self.height * 2) }
   }
 
-  private func grip(_ label: String, _ symbol: String, at x: CGFloat, perSecond: CGFloat, value: Double, set: @escaping (Double) -> Void) -> some View {
-    RoundedRectangle(cornerRadius: 4).fill(Color.accentColor)
+  private func grip(_ label: String, _ symbol: String, isLeft: Bool, at x: CGFloat, perSecond: CGFloat, value: Double, set: @escaping (Double) -> Void) -> some View {
+    UnevenRoundedRectangle(
+      topLeadingRadius: isLeft ? 8 : 0, bottomLeadingRadius: isLeft ? 8 : 0, bottomTrailingRadius: isLeft ? 0 : 8, topTrailingRadius: isLeft ? 0 : 8, style: .continuous
+    )
+      .fill(Color.accentColor)
       .frame(width: Self.handle, height: Self.height)
       .overlay { Image(systemName: symbol).font(.system(size: 12, weight: .bold)).foregroundStyle(.white) }
       .offset(x: x)

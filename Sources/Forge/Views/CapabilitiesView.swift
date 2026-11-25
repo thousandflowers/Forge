@@ -20,7 +20,6 @@ struct CapabilitiesView: View {
   var body: some View {
     VStack(spacing: 0) {
       filterBar
-      Divider()
       if visible.isEmpty {
         EmptyStateView(
           icon: "magnifyingglass",
@@ -33,7 +32,6 @@ struct CapabilitiesView: View {
         list
       }
     }
-    .searchable(text: $search, placement: .toolbar, prompt: "Search tools")
     // What comes from somewhere else is said once, with where from and how much,
     // before it is fetched. Everything after that happens in here.
     .confirmsToolInstalls(with: installer)
@@ -83,13 +81,14 @@ struct CapabilitiesView: View {
 
   private var filterBar: some View {
     HStack(spacing: 10) {
+      SearchField(prompt: "Search tools", text: $search).frame(maxWidth: 260)
       Picker("Status", selection: $kind) {
-        Text("Anything").tag(Capability.Status.Kind?.none)
+        Text("Any status").tag(Capability.Status.Kind?.none)
         ForEach(Capability.Status.Kind.allCases, id: \.self) { kind in
           Text(kind.title).tag(Optional(kind))
         }
       }
-      .pickerStyle(.menu).fixedSize()
+      .labelsHidden().pickerStyle(.menu).fixedSize()
 
       if isFiltered {
         Button("Clear", action: clearFilters)
@@ -103,7 +102,8 @@ struct CapabilitiesView: View {
         .monospacedDigit()
     }
     .padding(.horizontal, 20)
-    .padding(.vertical, 10)
+    .padding(.top, 14)
+    .padding(.bottom, 2)
   }
 
   private var isFiltered: Bool { kind != nil || !search.isEmpty }
@@ -228,7 +228,7 @@ private struct CapabilityCard: View {
     .padding(14)
     // A minimum, not a fixed height: a fixed one left a hole under every short
     // summary and clipped the long ones.
-    .frame(minHeight: 150, alignment: .top)
+    .frame(minHeight: 132, maxHeight: .infinity, alignment: .top)
     .forgeCard()
   }
 
@@ -304,10 +304,12 @@ private struct CapabilityCard: View {
           .help("Delete the copy Forge downloaded")
       }
     } else {
-      VStack(alignment: .leading, spacing: 6) {
-        caption("\(tool.name) adds \(tool.adds).")
+      HStack(spacing: 8) {
+        Tag(text: tool.name)
+        Spacer(minLength: 4)
         Button("Download, \(tool.weight)…") { installer.ask(tool) }
           .controlSize(.small)
+          .help("\(tool.name) adds \(tool.adds).")
       }
     }
   }

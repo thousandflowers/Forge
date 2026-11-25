@@ -36,7 +36,7 @@ struct EditableSurface: ViewModifier {
       .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(focused ? 0.1 : (hovering ? 0.08 : 0))))
       .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor.opacity(focused ? 0.8 : 0), lineWidth: 1.5))
       .onHover { hovering = $0 }
-      .animation(.easeOut(duration: 0.12), value: hovering)
+      .animation(Motion.quick, value: hovering)
   }
 }
 

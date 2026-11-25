@@ -208,7 +208,7 @@ final class NotchZoneTests: BaseTestCase {
     tiles.drop = { landed.append($0); return true }
     panel.appear(takingKeys: false)
     try await settle(1)
-    XCTAssertEqual(panel.frame.width, AskView.notchWidth)
+    XCTAssertEqual(panel.frame.width, AskView.notchWidth + Hanging.shoulder * 2)
     XCTAssertEqual(panel.frame.midX, Self.notch.midX, accuracy: 0.5, "a whole point, where there are no halves")
     XCTAssertEqual(panel.frame.maxY, Self.notch.maxY)
     let (tile, place) = try XCTUnwrap(tiles.frames.first { $0.key.question == .format })

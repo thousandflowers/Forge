@@ -22,6 +22,13 @@ struct SettingsView: View {
     Form(content: content).formStyle(.grouped)
   }
 
+  /// Under a group rather than in it: in it, it looked like a row of its own.
+  private func note(_ text: String) -> some View {
+    Text(text).font(.caption).foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+      .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
   private func stepper(_ title: String, _ value: Binding<Int>, in range: ClosedRange<Int>) -> some View {
     LabeledContent(title) {
       HStack(spacing: 6) {
@@ -38,7 +45,7 @@ struct SettingsView: View {
           ForEach(Appearance.allCases, id: \.self) { Text($0.title).tag($0) }
         }
       }
-      Section("While converting") {
+      Section {
         HStack {
           let hasNotch = NotchZone.cutout() != nil
           Picker("Show it in", selection: Binding(
@@ -50,9 +57,10 @@ struct SettingsView: View {
             .controlSize(.small)
             .disabled(model.settings.workSign == .nowhere)
         }
-        Text("The hammer strikes while Forge works. A check says what was done; a cross says that it was not.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+      } header: {
+        Text("While converting")
+      } footer: {
+        note("The hammer strikes while Forge works. A check says what was done; a cross says that it was not.")
       }
       Section("When the Mac starts") {
         Toggle("Open Forge at login", isOn: Binding(get: { opensAtLogin }, set: { on in
@@ -71,25 +79,26 @@ struct SettingsView: View {
 
   private var conversions: some View {
     Group {
-      Section("Defaults for new conversions") {
+      Section {
         Picker("Resizing means", selection: $model.settings.defaultFitMode) {
           ForEach(ResizeFitMode.allCases, id: \.self) { Text($0.title).tag($0) }
         }
         stepper("Quality when a preset says none", $model.settings.defaultQuality, in: 1...100)
-        Picker("Metadata", selection: $model.settings.privacy) {
+        Picker(selection: $model.settings.privacy) {
           ForEach(PrivacyPolicy.allCases, id: \.self) { Text($0.title).tag($0) }
+        } label: {
+          Text("Metadata")
+          Text(model.settings.privacy.summary + " A preset, a batch, or a file named _privacy can ask for more.")
         }
-        Text(model.settings.privacy.summary + " A preset, a batch, or a file named _privacy can ask for more.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
         Picker("Spoken in recordings", selection: $model.settings.spokenLanguage) {
           Text("The Mac’s language").tag("")
           ForEach(Transcription.languages, id: \.tag) { Text($0.name).tag($0.tag) }
         }
         TemplateField(title: "Name new files", template: $model.settings.nameTemplate)
-        Text("Any preset can override this. A preset that asks a question adds its own token too, so {name}_{maxsize} writes holiday_10MB.jpg.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+      } header: {
+        Text("Defaults for new conversions")
+      } footer: {
+        note("Any preset can override this. A preset that asks a question adds its own token too, so {name}_{maxsize} writes holiday_10MB.jpg.")
       }
       Section("Speed") {
         stepper("Conversions at once", $model.settings.maxConcurrentNative, in: 1...8)
@@ -116,7 +125,7 @@ struct SettingsView: View {
 
   private var dragging: some View {
     Group {
-      Section("While dragging") {
+      Section {
         // A Mac without one has nothing to turn on.
         if NotchZone.cutout() != nil || model.settings.notchZone {
           Toggle("Use the notch as a drop zone", isOn: $model.settings.notchZone)
@@ -141,30 +150,32 @@ struct SettingsView: View {
         .disabled(!model.settings.dragMenu)
         IgnoredApps(identifiers: $model.settings.dragMenuIgnored).disabled(!model.settings.dragMenu)
         MenuPresets(chosen: $model.settings.menuPresets, presets: model.usablePresets).disabled(!model.settings.dragMenu)
-        Text("Drag a file from anywhere, hold \(model.settings.dragMenuKeys.symbols), and drop it on what it should become. The result goes beside the original, which stays.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+      } header: {
+        Text("While dragging")
+      } footer: {
+        note("Drag a file from anywhere, hold \(model.settings.dragMenuKeys.symbols), and drop it on what it should become. The result goes beside the original, which stays.")
       }
     }
   }
 
   private var automatic: some View {
     Group {
-      Section("Without being asked") {
+      Section {
         Toggle("Make copied pictures lighter", isOn: $model.settings.lighterClipboard)
         Toggle("Make screen recordings lighter", isOn: $model.settings.lighterRecordings)
         Toggle("Turn HEIC, WebP and AVIF downloads into JPEGs", isOn: $model.settings.friendlyDownloads)
-        Toggle("Convert files I rename to another extension", isOn: $model.settings.convertsRenames)
-        Text("On the Desktop, and in Downloads, Documents and Pictures, when you rename in the Finder: photo.pdf becomes a real photo.jpg. "
-          + (model.settings.createBackupBeforeOverwrite ? "The original is kept in Backups." : "The original stays beside it."))
-          .fixedSize(horizontal: false, vertical: true)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        Text(model.settings.createBackupBeforeOverwrite
+      } header: {
+        Text("Without being asked")
+      } footer: {
+        note(model.settings.createBackupBeforeOverwrite
           ? "A card in the corner says what was done and undoes it. Originals are kept in Backups; a result that would not be lighter is not used."
           : "A card in the corner says what was done and undoes it. Backups are off, so nothing is replaced: the lighter copy is put beside it.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+      }
+      Section {
+        Toggle("Convert files I rename to another extension", isOn: $model.settings.convertsRenames)
+      } footer: {
+        note("On the Desktop, and in Downloads, Documents and Pictures, when you rename in the Finder: photo.pdf becomes a real photo.jpg. "
+          + (model.settings.createBackupBeforeOverwrite ? "The original is kept in Backups." : "The original stays beside it."))
       }
     }
   }
@@ -176,7 +187,7 @@ private struct MenuPresets: View {
   let presets: [RulePreset]
 
   var body: some View {
-    LabeledContent("Presets in the menu") {
+    LabeledContent {
       Menu(chosen.isEmpty ? "What I use most" : "\(chosen.count) I chose") {
         Button("What I use most") { chosen = [] }
         Divider()
@@ -188,12 +199,12 @@ private struct MenuPresets: View {
         }
       }
       .fixedSize()
+    } label: {
+      Text("Presets in the menu")
+      Text(chosen.isEmpty
+        ? "The ones you use on files like the one in your hand come first. Forge learns it from History, on this Mac."
+        : "In the order you chose them, and only where they suit the file. Up to \(Suggestions.most) are shown.")
     }
-    Text(chosen.isEmpty
-      ? "The ones you use on files like the one in your hand come first. Forge learns it from History, on this Mac."
-      : "In the order you chose them, and only where they suit the file. Up to \(Suggestions.most) are shown.")
-      .font(.caption)
-      .foregroundStyle(.secondary)
   }
 }
 

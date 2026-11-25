@@ -102,6 +102,14 @@ extension PresetCategory {
   }
 }
 
+/// How things move, the same wherever they do: what answers a hand is quick, and
+/// what goes somewhere slows down into it and stops there.
+enum Motion {
+  static let quick = Animation.easeOut(duration: 0.14)
+  static let move = Animation.spring(response: 0.34, dampingFraction: 0.92)
+  static let arrive = Animation.spring(response: 0.36, dampingFraction: 0.7)
+}
+
 /// A few words on a card: a format, a size, what it is about.
 struct Tag: View {
   let text: String
@@ -183,6 +191,6 @@ private struct ForgeCard: ViewModifier {
       .overlay(shape.strokeBorder(Color.primary.opacity(isUnder ? 0.12 : 0.06)))
       .contentShape(shape)
       .onHover { isUnder = lifts && $0 }
-      .animation(isStill ? nil : .easeOut(duration: 0.15), value: isUnder)
+      .animation(isStill ? nil : Motion.quick, value: isUnder)
   }
 }

@@ -160,7 +160,10 @@ private final class KeyPanel: NSPanel, NSDraggingDestination {
   override func setFrame(_ frame: NSRect, display: Bool) {
     var frame = frame
     if frame.height != self.frame.height { frame.origin.y = top(at: frame.height) - frame.height }
+    let grew = frame.size != self.frame.size
     super.setFrame(frame, display: display)
+    // The system draws it round what was there before, until it is told.
+    if grew, hasShadow { DispatchQueue.main.async { [weak self] in self?.invalidateShadow() } }
   }
 
   private var gathering: (height: CGFloat, top: CGFloat, end: CGFloat)?
@@ -351,10 +354,14 @@ struct AskView: View {
   private var progress: some View {
     if case .working(let fraction) = session.state {
       GeometryReader { place in
-        Capsule().fill(Color.accentColor).frame(width: (place.size.width + overhang * 2) * max(fraction, 0.02), height: 3)
+        ZStack(alignment: .leading) {
+          Capsule().fill(Color.primary.opacity(0.1))
+          Capsule().fill(Color.accentColor).frame(width: max(place.size.width * fraction, 4))
+        }
       }
-      .frame(height: 3)
-      .offset(x: -overhang, y: notch == nil ? Self.padding : 3)
+      // Inside the corners, where nothing cuts its ends off.
+      .frame(height: 4)
+      .offset(y: notch == nil ? Self.padding - 4 : 3)
       .opacity(isSlow ? 1 : 0)
       .animation(.easeOut(duration: 0.15), value: fraction)
       .accessibilityElement()
@@ -366,9 +373,6 @@ struct AskView: View {
       }
     }
   }
-
-  /// To the edges beside the pointer. Out of the notch the corners would hide it.
-  private var overhang: CGFloat { notch == nil ? Self.padding : 0 }
 
   private var aimed: DropTiles.Tile? { tiles.over ?? (tiles.isLive ? nil : hovered) }
 
@@ -642,7 +646,7 @@ private struct Dress: ViewModifier {
       content.modifier(OutOfTheNotch(reveal: notch))
     } else {
       content
-        .background(BehindGlass().overlay(Color(nsColor: .windowBackgroundColor).opacity(0.6)))
+        .background(BehindGlass(radius: radius).overlay(Color(nsColor: .windowBackgroundColor).opacity(0.6)))
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
     }
@@ -767,13 +771,24 @@ private struct Unfolding<Content: View>: View {
       let progress = isWhole || isOut ? 1 : Unfold.progress(after: since.map { time.date.timeIntervalSince($0) } ?? 0, step: step)
       Unfold(progress: progress) { content }
         .opacity(progress)
-        .clipped()
+        .modifier(CutBelow(isCut: progress < 1))
     }
     .onAppear { if since == nil { since = Date() } }
     .task {
       try? await Task.sleep(nanoseconds: UInt64((Unfold.length(of: step + 1) + 0.1) * 1_000_000_000))
       isOut = true
     }
+  }
+}
+
+/// Cut off at the bottom, where there is more to come, and nowhere else: what is
+/// aimed at grows, and throws a shadow, past the edges of where it is.
+private struct CutBelow: ViewModifier {
+  let isCut: Bool
+  private static let around: CGFloat = 24
+
+  func body(content: Content) -> some View {
+    content.mask(Rectangle().padding([.horizontal, .top], -Self.around).padding(.bottom, isCut ? 0 : -Self.around))
   }
 }
 
@@ -795,7 +810,7 @@ private struct Folding<Content: View>: View {
       let left = 1 - (isStill ? 1 : Unfold.progress(after: since.map { time.date.timeIntervalSince($0) } ?? 0, step: 0))
       Unfold(progress: left) { content }
         .opacity(left)
-        .clipped()
+        .modifier(CutBelow(isCut: true))
     }
     .allowsHitTesting(false)
     .accessibilityHidden(true)

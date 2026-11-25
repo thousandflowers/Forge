@@ -4,6 +4,7 @@ struct ContentView: View {
   @EnvironmentObject private var model: AppModel
   let batch: BatchViewModel
   @Environment(\.openWindow) private var openWindow
+  @Environment(\.accessibilityReduceMotion) private var isStill
 
   var body: some View {
     NavigationSplitView {
@@ -22,7 +23,7 @@ struct ContentView: View {
     .task { await model.bootstrap() }
     .onAppear {
       model.showWindow = { openWindow(id: MenuBarView.windowID) }
-      if !UserDefaults.standard.bool(forKey: WelcomeView.seenKey) { openWindow(id: WelcomeView.windowID) }
+      if Lesson.isNew { Lesson.shared.open(model) }
     }
     .preferredColorScheme(model.settings.appearance.colorScheme)
     // A preset is a program, and a program is not written in a sheet: the
@@ -37,12 +38,12 @@ struct ContentView: View {
           onClose: { model.presetEditor = nil }
         )
         .id(request.id)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        // A short way: the whole height of the window was more than is drawn
+        // in time.
+        .transition(isStill ? .opacity : .offset(y: 16).combined(with: .opacity))
       }
     }
-    // What is in it is for what the editor covers.
-    .toolbar(model.presetEditor == nil ? .automatic : .hidden, for: .windowToolbar)
-    .animation(.easeInOut(duration: 0.2), value: model.presetEditor?.id)
+    .animation(Motion.move, value: model.presetEditor?.id)
     // Running something again from History is a conversion, so the Convert
     // screen is where it happens.
     .onChange(of: model.pending) { pending in if pending != nil { model.section = .process } }

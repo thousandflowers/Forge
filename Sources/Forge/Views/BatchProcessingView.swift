@@ -90,13 +90,13 @@ struct BatchProcessingView: View {
     } isTargeted: { isTargeted = $0 }
     .overlay {
       if isTargeted, !vm.files.isEmpty {
-        RoundedRectangle(cornerRadius: 8)
-          .strokeBorder(Color.accentColor, lineWidth: 2)
-          .padding(2)
+        RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous)
+          .strokeBorder(Color.accentColor, lineWidth: 2.5)
+          .padding(6)
           .allowsHitTesting(false)
       }
     }
-    .animation(.easeOut(duration: 0.15), value: isTargeted)
+    .animation(Motion.quick, value: isTargeted)
     // A run started from History arrives here. Both hooks are needed: the
     // screen may already be showing, or may be about to appear because
     // something set this.
@@ -200,6 +200,7 @@ struct BatchProcessingView: View {
             if CutModel(file: f) != nil { Button("Cut…") { model.cut(f) } }
           }
       }
+      .width(min: 180, ideal: 300)
       TableColumn("Type", value: \.kindName) { f in
         Text(f.kindName)
           .foregroundStyle(.secondary)
@@ -887,7 +888,7 @@ struct FileFan: View {
       }
     }
     .frame(width: size * 3, height: size * 1.4)
-    .animation(isStill ? nil : .spring(response: 0.3, dampingFraction: 0.7), value: isOpen)
+    .animation(isStill ? nil : Motion.arrive, value: isOpen)
     .accessibilityHidden(true)
   }
 }

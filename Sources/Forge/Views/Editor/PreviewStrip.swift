@@ -193,7 +193,7 @@ private struct PreviewThumb: View {
       }
     }
     .zIndex(peeking ? 1 : 0)
-    .animation(.easeOut(duration: 0.12), value: peeking)
+    .animation(Motion.quick, value: peeking)
     .accessibilityLabel(Text("\(step.title), \(PreviewThumb.size(step.bytes))"))
   }
 
@@ -226,7 +226,10 @@ struct PreviewImage: View {
     }
     .task(id: url) {
       let url = url, maxPixels = maxPixels
-      image = await Task.detached(priority: .utility) { PreviewImage.thumbnail(of: url, maxPixels: maxPixels) }.value
+      let made = await Task.detached(priority: .userInitiated) { PreviewImage.thumbnail(of: url, maxPixels: maxPixels) }.value
+      guard !Task.isCancelled else { return }
+      // It comes in rather than blinking on; one in place of another just changes.
+      if image == nil { withAnimation(Motion.quick) { image = made } } else { image = made }
     }
   }
 

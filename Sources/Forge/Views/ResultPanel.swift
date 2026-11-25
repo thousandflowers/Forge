@@ -18,6 +18,7 @@ final class ResultPanel {
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     panel.backgroundColor = .clear
     panel.isOpaque = false
+    panel.hasShadow = false
     let host = NSHostingController(rootView: ResultCards(center: center) { [weak self] in self?.place() })
     host.sizingOptions = [.preferredContentSize]
     panel.contentViewController = host
@@ -34,7 +35,7 @@ final class ResultPanel {
     let mouse = NSEvent.mouseLocation
     guard let screen = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.visibleFrame else { return }
     if let size = panel.contentViewController?.view.fittingSize, size.width > 0 { panel.setContentSize(size) }
-    panel.setFrameOrigin(NSPoint(x: screen.maxX - panel.frame.width - Self.gap, y: screen.minY + Self.gap))
+    panel.setFrameOrigin(NSPoint(x: screen.maxX - panel.frame.width - Self.gap + Floating.room, y: screen.minY + Self.gap - Floating.room))
   }
 }
 
@@ -50,6 +51,7 @@ private struct ResultCards: View {
         }
       }
     }
+    .padding(Floating.room)
     .onChange(of: center.cards.map(\.id)) { _ in DispatchQueue.main.async { changed() } }
   }
 }
@@ -60,6 +62,8 @@ private struct ResultCardView: View {
   let hover: (Bool) -> Void
   @State private var inside = false
   @State private var isTooLate = false
+  @State private var isIn = false
+  @Environment(\.accessibilityReduceMotion) private var isStill
 
   var body: some View {
     HStack(spacing: 12) {
@@ -96,8 +100,10 @@ private struct ResultCardView: View {
     }
     .padding(12)
     .frame(width: 360, alignment: .leading)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
+    .floatingGlass(radius: 18)
+    .offset(x: isIn || isStill ? 0 : 28)
+    .opacity(isIn ? 1 : 0)
+    .onAppear { withAnimation(isStill ? nil : Motion.move) { isIn = true } }
     .onHover { inside = $0; hover($0) }
   }
 

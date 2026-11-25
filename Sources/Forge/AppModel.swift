@@ -277,6 +277,13 @@ final class AppModel: ObservableObject {
     }
   }
 
+  var watchesForNames: Bool {
+    [FileManager.SearchPathDirectory.desktopDirectory, .downloadsDirectory].allSatisfy { place in
+      guard let url = FileManager.default.urls(for: place, in: .userDomainMask).first else { return true }
+      return folders.contains { $0.url.standardizedFileURL.path == url.standardizedFileURL.path }
+    }
+  }
+
   /// A folder that does what names say and nothing of its own.
   nonisolated static let noPreset = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
 
@@ -312,8 +319,31 @@ final class AppModel: ObservableObject {
     return presets.first { $0.id == id }?.name ?? "Unknown preset"
   }
 
+  // MARK: - Trying it out
+
+  private static let lessonID = UUID(uuidString: "00000000-0000-0000-0000-00000000F0F0")!
+
+  /// Where the folder to try things in is made. Nothing has to be allowed there.
+  var lessonRoot: URL { persistence.root }
+
+  /// Watched for as long as it lasts, and forgotten with it.
+  func startLesson(in url: URL) {
+    endLesson()
+    var folder = MonitoredFolder(url: url, ruleId: Self.noPreset, destinationMode: Automatic.mode(for: settings), destinationURL: settings.createBackupBeforeOverwrite ? nil : url)
+    folder.id = Self.lessonID
+    folder.onlyWhenRenamed = true
+    folders.append(folder)
+    startWatcher(folder)
+  }
+
+  func endLesson() {
+    guard let folder = folders.first(where: { $0.id == Self.lessonID }) else { return }
+    stopWatcher(folder)
+    folders.removeAll { $0.id == Self.lessonID }
+  }
+
   private func persistFolders() {
-    let snapshot = folders
+    let snapshot = folders.filter { $0.id != Self.lessonID }
     persist({ try await $0.saveMonitoredFolders(snapshot) }, doing: "saving your monitored folders")
   }
 

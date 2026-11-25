@@ -39,7 +39,9 @@ final class NotchZone {
     self.panel = panel
     panel.isLive = true
     panel.setFrame(NotchShape.lip(around: cutout), display: true)
+    if !panel.isVisible { panel.alphaValue = 0 }
     panel.orderFrontRegardless()
+    NSAnimationContext.runAnimationGroup { $0.duration = 0.16; panel.animator().alphaValue = 1 }
   }
 
   func hide() {
@@ -94,7 +96,8 @@ enum NotchShape {
   }
 
   static func lip(around cutout: NSRect) -> NSRect {
-    NSRect(x: cutout.minX - edge, y: cutout.minY - edge, width: cutout.width + edge * 2, height: cutout.height + edge)
+    let side = edge + Hanging.shoulder
+    return NSRect(x: cutout.minX - side, y: cutout.minY - edge, width: cutout.width + side * 2, height: cutout.height + edge)
   }
 
   /// Hung from the top of the screen, under the notch's middle.
@@ -168,38 +171,48 @@ struct OutOfTheNotch: ViewModifier {
   func body(content: Content) -> some View {
     let isOut = reveal.isOut || isStill
     content
+      .padding(.horizontal, Hanging.shoulder)
       .background(Color.black)
       .mask(alignment: .top) {
         GeometryReader { place in
           Hanging(radius: isOut ? Self.radius : 11)
-            .frame(width: isOut ? place.size.width : reveal.notch.width, height: isOut ? place.size.height : reveal.notch.height)
+            .frame(width: isOut ? place.size.width : reveal.notch.width + Hanging.shoulder * 2, height: isOut ? place.size.height : reveal.notch.height)
             .frame(maxWidth: .infinity, alignment: .top)
         }
       }
       .opacity(reveal.isOut || !isStill ? 1 : 0)
-      .animation(isStill ? nil : .spring(response: NotchReveal.seconds, dampingFraction: 0.86), value: reveal.isOut)
+      .animation(isStill ? nil : .spring(response: NotchReveal.seconds, dampingFraction: 1), value: reveal.isOut)
       .environment(\.colorScheme, .dark)
       .ignoresSafeArea()
   }
 }
 
-/// Square against the top of the screen, round below.
+/// Out of the top of the screen as the notch itself comes: shoulders that curve
+/// into it, and round below.
 struct Hanging: Shape {
+  static let shoulder: CGFloat = 9
+
   var radius: CGFloat
   var animatableData: CGFloat {
     get { radius }
     set { radius = newValue }
   }
 
+  /// The shoulders are part of what it is given.
   func path(in rect: CGRect) -> Path {
-    let r = min(radius, rect.height / 2, rect.width / 2)
+    let s = min(Self.shoulder, rect.height / 2, rect.width / 4)
+    let left = rect.minX + s, right = rect.maxX - s
+    let r = min(radius, rect.height - s, (right - left) / 2)
     return Path { path in
       path.move(to: CGPoint(x: rect.minX, y: rect.minY))
       path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-      path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
-      path.addArc(center: CGPoint(x: rect.maxX - r, y: rect.maxY - r), radius: r, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
-      path.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
-      path.addArc(center: CGPoint(x: rect.minX + r, y: rect.maxY - r), radius: r, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
+      path.addQuadCurve(to: CGPoint(x: right, y: rect.minY + s), control: CGPoint(x: right, y: rect.minY))
+      path.addLine(to: CGPoint(x: right, y: rect.maxY - r))
+      path.addQuadCurve(to: CGPoint(x: right - r, y: rect.maxY), control: CGPoint(x: right, y: rect.maxY))
+      path.addLine(to: CGPoint(x: left + r, y: rect.maxY))
+      path.addQuadCurve(to: CGPoint(x: left, y: rect.maxY - r), control: CGPoint(x: left, y: rect.maxY))
+      path.addLine(to: CGPoint(x: left, y: rect.minY + s))
+      path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.minY), control: CGPoint(x: left, y: rect.minY))
       path.closeSubpath()
     }
   }
