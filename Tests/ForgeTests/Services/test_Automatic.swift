@@ -223,7 +223,9 @@ final class ClipboardTests: BaseTestCase {
     let big = try picture()
     copy(big)
     async let running = clipboard.check()
-    await Task.yield()
+    // It has begun when it has put the picture aside: turned off before that,
+    // it would be one that was never on.
+    while (try? FileManager.default.contentsOfDirectory(atPath: workspace.appendingPathComponent("clip").path))?.isEmpty ?? true { await Task.yield() }
     clipboard.stop()
     let made = try? await running
     XCTAssertNil(made ?? nil)

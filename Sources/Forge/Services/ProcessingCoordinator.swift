@@ -85,7 +85,7 @@ actor ProcessingCoordinator {
           actions: preset.actions,
           presetName: preset.name,
           backupURL: result.backupURL,
-          isSomethingElse: preset.tools(for: file).contains(where: \.makesSomethingElse) ? true : nil
+          isSomethingElse: preset.tools(for: file).contains(where: \.makesSomethingElse) || ProcessingHistory.isSomethingElse(result.outputURL, than: file.fileType) ? true : nil
         )
         // The record is bookkeeping. A conversion whose output is written and
         // whose history could not be saved is a conversion that worked.
@@ -905,8 +905,11 @@ actor ProcessingCoordinator {
       if case .encode(let codec) = operation { return codec.rawValue } else { return nil }
     }.first
 
+    let called = file.fileName as NSString
+    var stem = preset.readsTools ? NameTokens.spent(file.fileName) : called.deletingPathExtension
+    if preset.isAnswered { stem = NameTokens.answered(stem, ext: called.pathExtension) }
     return NameTemplate.Static(
-      name: NameTokens.withoutWidths(preset.untriggered(stem: preset.readsTools ? NameTokens.spent(file.fileName) : (file.fileName as NSString).deletingPathExtension)),
+      name: NameTokens.withoutWidths(preset.untriggered(stem: stem)),
       parent: file.url.deletingLastPathComponent().lastPathComponent,
       // The file's own date where the filesystem knows one, since a template
       // asking for a date is asking about the photograph, not about now.

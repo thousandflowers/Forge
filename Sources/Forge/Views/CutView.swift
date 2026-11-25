@@ -291,11 +291,13 @@ private struct Timeline: View {
   @ObservedObject var model: CutModel
   @ObservedObject var player: CutPlayer
   @State private var frames: [CGImage] = []
+  @State private var wave: [Double] = []
   @State private var grabbed: Double?
 
   private static let height: CGFloat = 52
   private static let handle: CGFloat = 12
   private static let count = 14
+  private static let bars = 160
 
   var body: some View {
     GeometryReader { space in
@@ -310,6 +312,7 @@ private struct Timeline: View {
           }
         }
         .frame(width: width, height: Self.height)
+        .background { if model.kind == .audio { Waves(levels: wave) } }
         .background(Color.secondary.opacity(0.2))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .offset(x: Self.handle)
@@ -340,7 +343,10 @@ private struct Timeline: View {
       }
     }
     .frame(height: Self.height)
-    .task(id: model.length) { frames = await CutPlayer.strip(of: model.file.url, length: model.length, count: Self.count, height: Self.height * 2) }
+    .task(id: model.length) {
+      if model.kind == .audio { return wave = await CutPlayer.wave(of: model.file.url, length: model.length, bars: Self.bars) }
+      frames = await CutPlayer.strip(of: model.file.url, length: model.length, count: Self.count, height: Self.height * 2)
+    }
   }
 
   private func grip(_ label: String, _ symbol: String, isLeft: Bool, at x: CGFloat, perSecond: CGFloat, value: Double, set: @escaping (Double) -> Void) -> some View {
@@ -363,6 +369,24 @@ private struct Timeline: View {
       .accessibilityLabel(Text(label))
       .accessibilityValue(Text(Tool.clock(value)))
       .accessibilityAdjustableAction { direction in set(value + (direction == .increment ? 0.1 : -0.1)) }
+  }
+}
+
+/// What is heard, from one end to the other.
+private struct Waves: View {
+  let levels: [Double]
+
+  var body: some View {
+    Canvas { context, size in
+      guard !levels.isEmpty else { return }
+      let each = size.width / CGFloat(levels.count), room = size.height - 14
+      for (index, level) in levels.enumerated() {
+        let height = max(2, room * level)
+        let bar = CGRect(x: CGFloat(index) * each + each * 0.2, y: (size.height - height) / 2, width: max(1, each * 0.6), height: height)
+        context.fill(Path(roundedRect: bar, cornerRadius: bar.width / 2), with: .color(.primary.opacity(0.55)))
+      }
+    }
+    .accessibilityHidden(true)
   }
 }
 
@@ -465,6 +489,39 @@ final class CutPlayer: ObservableObject {
   private func seek(_ seconds: Double) {
     time = seconds
     player.seek(to: CMTime(seconds: seconds, preferredTimescale: 60_000), toleranceBefore: .zero, toleranceAfter: .zero)
+  }
+
+  /// How loud it is from end to end, from nothing to one. Read at eight
+  /// thousand a second, which is more than is seen of it.
+  nonisolated static func wave(of url: URL, length: Double, bars: Int) async -> [Double] {
+    let asset = AVURLAsset(url: url)
+    guard length > 0, bars > 0, let track = try? await asset.loadTracks(withMediaType: .audio).first else { return [] }
+    return await Task.detached {
+      let rate = 8_000
+      guard let reader = try? AVAssetReader(asset: asset) else { return [] }
+      let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+        AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: rate, AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
+        AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false, AVLinearPCMIsNonInterleaved: false,
+      ])
+      reader.add(output)
+      guard reader.startReading() else { return [] }
+      var levels = [Double](repeating: 0, count: bars), at = 0
+      let each = max(1, Int(length * Double(rate)) / bars)
+      while !Task.isCancelled, let sample = output.copyNextSampleBuffer() {
+        guard let block = CMSampleBufferGetDataBuffer(sample) else { continue }
+        var values = [Int16](repeating: 0, count: CMBlockBufferGetDataLength(block) / 2)
+        let copied = values.withUnsafeMutableBytes { CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: $0.count, destination: $0.baseAddress!) }
+        guard copied == noErr else { continue }
+        for value in values {
+          let bar = min(at / each, bars - 1)
+          levels[bar] = max(levels[bar], abs(Double(value)))
+          at += 1
+        }
+      }
+      reader.cancelReading()
+      let top = levels.max() ?? 0
+      return top > 0 ? levels.map { $0 / top } : levels
+    }.value
   }
 
   nonisolated static func strip(of url: URL, length: Double, count: Int, height: CGFloat) async -> [CGImage] {

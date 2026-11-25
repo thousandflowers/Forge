@@ -139,6 +139,9 @@ enum FormatCatalog {
       .contains(where: readableImageTypes.contains)
   }
 
+  /// Written by macOS, and only as a square whose side is a power of two.
+  static func isTexture(_ type: UTType) -> Bool { type.goes(by: ["pvr"]) }
+
   static func isWritableImage(_ type: UTType) -> Bool {
     if writableImageTypes.contains(type) { return true }
     return writableImageTypes.contains { type.conforms(to: $0) }

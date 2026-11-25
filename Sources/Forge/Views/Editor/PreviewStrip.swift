@@ -1,3 +1,4 @@
+import QuickLookThumbnailing
 import SwiftUI
 import AppKit
 import ImageIO
@@ -226,14 +227,23 @@ struct PreviewImage: View {
     }
     .task(id: url) {
       let url = url, maxPixels = maxPixels
-      let made = await Task.detached(priority: .userInitiated) { PreviewImage.thumbnail(of: url, maxPixels: maxPixels) }.value
+      let made = await PreviewImage.seen(url, maxPixels: maxPixels)
       guard !Task.isCancelled else { return }
       // It comes in rather than blinking on; one in place of another just changes.
       if image == nil { withAnimation(Motion.quick) { image = made } } else { image = made }
     }
   }
 
-  nonisolated static func thumbnail(of url: URL, maxPixels: Int) -> NSImage {
+  /// What the Finder would show: a frame of a film, the first page of a letter.
+  /// Where there is nothing to be seen of it, what stands for it.
+  nonisolated static func seen(_ url: URL, maxPixels: Int) async -> NSImage {
+    if let picture = await Task.detached(priority: .userInitiated, operation: { picture(of: url, maxPixels: maxPixels) }).value { return picture }
+    let request = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: maxPixels, height: maxPixels), scale: 1, representationTypes: .thumbnail)
+    if let drawn = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { return drawn.nsImage }
+    return NSWorkspace.shared.icon(forFile: url.path)
+  }
+
+  private nonisolated static func picture(of url: URL, maxPixels: Int) -> NSImage? {
     let options: [CFString: Any] = [
       kCGImageSourceCreateThumbnailFromImageAlways: true,
       kCGImageSourceCreateThumbnailWithTransform: true,
@@ -243,7 +253,7 @@ struct PreviewImage: View {
        let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
       return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     }
-    return NSWorkspace.shared.icon(forFile: url.path)
+    return nil
   }
 }
 

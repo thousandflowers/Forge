@@ -102,6 +102,8 @@ struct GalleryView: View {
   private var browser: some View {
     VStack(spacing: 0) {
       filterBar
+      // Where the cards go under.
+      Divider()
       if visible.isEmpty {
         EmptyStateView(
           icon: "magnifyingglass",
@@ -142,7 +144,7 @@ struct GalleryView: View {
     }
     .padding(.horizontal, 20)
     .padding(.top, 14)
-    .padding(.bottom, 2)
+    .padding(.bottom, 12)
   }
 
   private var filters: some View {

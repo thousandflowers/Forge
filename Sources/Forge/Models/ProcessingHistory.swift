@@ -44,6 +44,14 @@ struct ProcessingHistory: Identifiable, Codable, Sendable {
   /// Every file this conversion produced.
   var outputs: [URL] { [outputURL].compactMap { $0 } + (additionalOutputs ?? []) }
 
+  /// Words from something seen or heard: there is no more or less of it.
+  static func isSomethingElse(_ output: URL?, than source: UTType) -> Bool {
+    guard let output, let made = UTType(filenameExtension: output.pathExtension), let from = ConvertKind(fileType: source), let to = ConvertKind(fileType: made) else {
+      return false
+    }
+    return [.audio, .video, .image].contains(from) && (to == .subtitle || made.conforms(to: .text) && !made.conforms(to: .svg))
+  }
+
   /// How long it took, in words. A conversion that takes 40 milliseconds is
   /// not "0.0s" - that reads like nothing happened.
   var durationText: String? {

@@ -48,16 +48,16 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
   func takes(_ file: ProcessableFile, to target: UTType) -> Bool {
     // Any document can be read aloud, and written as any document format.
     if FormatCatalog.audioFormatID(for: target) != nil { return true }
-    if target.conforms(to: .plainText) || DocumentText.canWrite(target) { return true }
     // Plain text is Markdown already; a PDF's words can go to whatever a tool writes.
-    if let markdown = DocumentText.markdown, target.conforms(to: markdown) {
+    if let markdown = DocumentText.markdown, target.conforms(to: markdown), !DocumentText.canWrite(target) {
       return file.fileType.conforms(to: .plainText) && !file.fileType.conforms(to: markdown)
     }
+    if target.conforms(to: .plainText) || DocumentText.canWrite(target) { return true }
     if file.fileType.conforms(to: .pdf), ExternalBridge.couldPlan(from: "txt", to: Conversions.fileExtension(of: target)) {
       return true
     }
     // Pictures of the pages: only a PDF has pages to draw.
-    return file.fileType.conforms(to: .pdf) && Self.isAPictureFormat(target)
+    return file.fileType.conforms(to: .pdf) && Self.isAPictureFormat(target) && !FormatCatalog.isTexture(target)
   }
 
   func process(

@@ -20,6 +20,8 @@ struct CapabilitiesView: View {
   var body: some View {
     VStack(spacing: 0) {
       filterBar
+      // Where the cards go under.
+      Divider()
       if visible.isEmpty {
         EmptyStateView(
           icon: "magnifyingglass",
@@ -103,7 +105,7 @@ struct CapabilitiesView: View {
     }
     .padding(.horizontal, 20)
     .padding(.top, 14)
-    .padding(.bottom, 2)
+    .padding(.bottom, 12)
   }
 
   private var isFiltered: Bool { kind != nil || !search.isEmpty }

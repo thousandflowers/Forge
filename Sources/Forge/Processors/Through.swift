@@ -114,7 +114,10 @@ final class SlidesProcessor: FileProcessor, @unchecked Sendable {
   let name = "Slides Processor"
 
   func canProcess(_ file: ProcessableFile) -> Bool { file.fileType.conforms(to: .pdf) || FormatCatalog.isReadableImage(file.fileType) }
-  func takes(_ file: ProcessableFile, to target: UTType) -> Bool { Conversions.fileExtension(of: target) == "pptx" }
+  func takes(_ file: ProcessableFile, to target: UTType) -> Bool {
+    // A drawing is not decoded, it is drawn: that is not done here.
+    Conversions.fileExtension(of: target) == "pptx" && file.fileType != .svg
+  }
 
   private static let longest: CGFloat = 2400
 
