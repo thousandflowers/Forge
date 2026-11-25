@@ -38,6 +38,61 @@ enum Tool: Hashable, Sendable {
   /// A film of what the sound looks like.
   case wave
 
+  // Pictures
+  /// Better light and colour, as macOS sees fit.
+  case enhance
+  /// This many times as large.
+  case upscale(Int)
+  /// The sheet of paper in it, straightened and lit.
+  case scan
+  case gray
+  case blurBackground
+  /// Corners this round, in pixels.
+  case round(Int)
+  /// Cut up, so many across and so many down.
+  case tile(Int, Int)
+  /// What a Photoshop document is made of, one by one.
+  case layers
+
+  // Films
+  /// This many times slower, with the frames in between made up.
+  case slowMotion(Int)
+  /// The picture at that second.
+  case still(at: Double)
+  /// Frames a second.
+  case rate(Int)
+  /// No more lines than this: 1080p.
+  case lines(Int)
+
+  // Sound
+  /// What is said, without what is behind it.
+  case voice
+  case mono
+  /// In and out, over this many seconds.
+  case fade(Double)
+  /// Higher or lower by this many semitones, and as long as before.
+  case pitch(Int)
+  case noSilence
+
+  // PDFs
+  /// With a password, which is asked for and never written down.
+  case lock
+  case unlock
+  case numbers
+  /// This many pages to a sheet.
+  case sheet(Int)
+  /// How finely a page is drawn when it becomes a picture.
+  case dpi(Int)
+  /// The pictures in it, as they were put there.
+  case pictures
+  /// The tables in it.
+  case tables
+
+  /// The same thing, written short or written out.
+  case tidy(Tidying)
+
+  enum Tidying: String, CaseIterable, Sendable { case min, pretty }
+
   enum Adjustment: String, CaseIterable, Sendable {
     case brightness, contrast, saturation, blur
 
@@ -63,6 +118,8 @@ enum Tool: Hashable, Sendable {
     case shape(Int, Int)
     /// This much of it, from the top left, as it is seen.
     case box(x: Int, y: Int, width: Int, height: Int)
+    /// One of so many across and so many down, counted from one.
+    case cell(column: Int, row: Int, across: Int, down: Int)
   }
 }
 
@@ -127,11 +184,42 @@ extension Tool {
   private static let speeds = 0.1...16.0
   private static let loops = 2...100
   private static let parts = 2...500
+  static let pitches = -24...24
+  /// What divides a page into pages of its own shape, or of the same on its side.
+  static let sheets = [2, 4, 6, 8, 9, 16]
+
+  private static func count(_ word: String, _ shape: Regex<(Substring, Substring)>, in range: ClosedRange<Int>) -> Int? {
+    word.wholeMatch(of: shape).flatMap { Int($0.1) }.flatMap { range.contains($0) ? $0 : nil }
+  }
 
   /// Each takes the words it knows. In no particular order: no two take the
   /// same one.
   private static let readers: [@Sendable (String) -> Tool?] = [
     { ["mute": .mute, "normalize": .normalize, "reverse": .reverse, "lighter": .lighter, "wave": .wave, "nobg": .removeBackground, "splitchapters": .divide(.chapters), "splitpages": .divide(.pages(1))][$0] },
+    { ["enhance": .enhance, "scan": .scan, "gray": .gray, "grey": .gray, "blurbg": .blurBackground, "layers": .layers][$0] },
+    { ["voice": .voice, "mono": .mono, "nosilence": .noSilence, "4k": .lines(2160)][$0] },
+    { ["askpassword": .lock, "unlock": .unlock, "numbers": .numbers, "images": .pictures, "tables": .tables][$0] },
+    { Tidying(rawValue: $0).map(Tool.tidy) },
+    { count($0, #/upscale(\d)x/#, in: 2...4).map(Tool.upscale) },
+    { count($0, #/slowmo(\d)x/#, in: 2...8).map(Tool.slowMotion) },
+    // Two digits: `image_round2` is a second go.
+    { count($0, #/round(\d{2,4})/#, in: 10...9999).map(Tool.round) },
+    { count($0, #/fps(\d{1,3})/#, in: 1...240).map(Tool.rate) },
+    { count($0, #/(\d{3,4})p/#, in: 144...4320).map(Tool.lines) },
+    { count($0, #/dpi(\d{2,4})/#, in: 36...1200).map(Tool.dpi) },
+    { count($0, #/(\d{1,2})up/#, in: 2...16).flatMap { sheets.contains($0) ? .sheet($0) : nil } },
+    { $0.wholeMatch(of: #/grid(\d{1,2})x(\d{1,2})/#).flatMap { match in
+      guard let across = Int(match.1), let down = Int(match.2), across > 0, down > 0, across * down > 1 else { return nil }
+      return .tile(across, down)
+    } },
+    { $0.wholeMatch(of: #/at(\d.*[hms]\d*)/#).flatMap { seconds($0.1) }.map { .still(at: $0) } },
+    { $0.wholeMatch(of: #/fade(.+)s/#).flatMap { number($0.1) }.flatMap { $0 > 0 ? .fade($0) : nil } },
+    { $0.wholeMatch(of: #/pitch([+-]\d{1,2})/#).flatMap { Int($0.1) }.flatMap { $0 != 0 && pitches.contains($0) ? .pitch($0) : nil } },
+    { $0.wholeMatch(of: #/crop(\d{1,2}),(\d{1,2})of(\d{1,2})x(\d{1,2})/#).flatMap { match in
+      guard let column = Int(match.1), let row = Int(match.2), let across = Int(match.3), let down = Int(match.4),
+            (1...max(1, across)).contains(column), (1...max(1, down)).contains(row), across > 0, down > 0 else { return nil }
+      return .crop(.cell(column: column, row: row, across: across, down: down))
+    } },
     { (Turn(rawValue: $0) ?? ["rotateright": .right, "rotateleft": .left][$0]).map(Tool.turn) },
     { $0.wholeMatch(of: #/speed(.+)x/#).flatMap { number($0.1) }.flatMap { speeds.contains($0) ? .speed($0) : nil } },
     { $0.wholeMatch(of: #/loop(\d{1,3})/#).flatMap { Int($0.1) }.flatMap { loops.contains($0) ? .loop($0) : nil } },
@@ -203,6 +291,7 @@ extension Tool {
     case .turn(let turn): return turn.rawValue
     case .crop(.shape(let across, let down)): return "crop\(across)x\(down)"
     case .crop(.box(let x, let y, let width, let height)): return "crop\(x),\(y),\(width)x\(height)"
+    case .crop(.cell(let column, let row, let across, let down)): return "crop\(column),\(row)of\(across)x\(down)"
     case .pages(let list): return "pages\(list.text)"
     case .dropPages(let list): return "nopages\(list.text)"
     case .frames(let seconds): return "frames\(Self.text(seconds))s"
@@ -212,6 +301,31 @@ extension Tool {
     case .mark(let text): return "mark(\(text))"
     case .digest(let digest): return digest.rawValue
     case .wave: return "wave"
+    case .enhance: return "enhance"
+    case .upscale(let times): return "upscale\(times)x"
+    case .scan: return "scan"
+    case .gray: return "gray"
+    case .blurBackground: return "blurbg"
+    case .round(let radius): return "round\(radius)"
+    case .tile(let across, let down): return "grid\(across)x\(down)"
+    case .layers: return "layers"
+    case .slowMotion(let times): return "slowmo\(times)x"
+    case .still(let second): return "at\(Self.text(second))s"
+    case .rate(let frames): return "fps\(frames)"
+    case .lines(let lines): return lines == 2160 ? "4k" : "\(lines)p"
+    case .voice: return "voice"
+    case .mono: return "mono"
+    case .fade(let seconds): return "fade\(Self.text(seconds))s"
+    case .pitch(let steps): return "pitch\(steps > 0 ? "+" : "")\(steps)"
+    case .noSilence: return "nosilence"
+    case .lock: return "askpassword"
+    case .unlock: return "unlock"
+    case .numbers: return "numbers"
+    case .sheet(let count): return "\(count)up"
+    case .dpi(let dots): return "dpi\(dots)"
+    case .pictures: return "images"
+    case .tables: return "tables"
+    case .tidy(let tidying): return tidying.rawValue
     }
   }
 
@@ -244,250 +358,22 @@ extension Tool {
   }
 }
 
-// MARK: - What they are for
-
-extension Tool {
-  /// The kinds of tool, for a library and for saying which step replaces which.
-  enum Kind: String, CaseIterable, Sendable {
-    case trim, divide, speed, loop, reverse, mute, normalize, frames
-    case crop, turn, removeBackground
-    case pages, dropPages
-    case lighter
-    case sync, adjust, border, mark, digest, wave
-
-    var title: String {
-      switch self {
-      case .trim: return "Keep a part"
-      case .divide: return "Divide"
-      case .speed: return "Speed"
-      case .loop: return "Repeat"
-      case .reverse: return "Reverse"
-      case .mute: return "Mute"
-      case .normalize: return "Even volume"
-      case .frames: return "A frame every"
-      case .crop: return "Crop to a shape"
-      case .turn: return "Turn or mirror"
-      case .removeBackground: return "Remove background"
-      case .pages: return "Keep pages"
-      case .dropPages: return "Remove pages"
-      case .lighter: return "Make lighter"
-      case .sync: return "Move the sound"
-      case .adjust: return "Adjust"
-      case .border: return "Border"
-      case .mark: return "Watermark"
-      case .digest: return "Fingerprint"
-      case .wave: return "Draw the sound"
-      }
-    }
-
-    var symbol: String {
-      switch self {
-      case .trim: return "scissors"
-      case .divide: return "square.split.2x1"
-      case .speed: return "gauge.with.needle"
-      case .loop: return "repeat"
-      case .reverse: return "backward"
-      case .mute: return "speaker.slash"
-      case .normalize: return "speaker.wave.2"
-      case .frames: return "film.stack"
-      case .crop: return "crop"
-      case .turn: return "rotate.right"
-      case .removeBackground: return "person.crop.rectangle"
-      case .pages: return "doc.text.magnifyingglass"
-      case .dropPages: return "minus.rectangle.portrait"
-      case .lighter: return "leaf"
-      case .sync: return "waveform.path"
-      case .adjust: return "slider.horizontal.3"
-      case .border: return "square.dashed"
-      case .mark: return "signature"
-      case .digest: return "number"
-      case .wave: return "waveform"
-      }
-    }
-
-    var summary: String {
-      switch self {
-      case .trim: return "From one second to another"
-      case .divide: return "By time, in parts, by chapter or by page"
-      case .speed: return "Faster or slower, at the same pitch"
-      case .loop: return "The same thing again"
-      case .reverse: return "From the end to the beginning"
-      case .mute: return "The film without its sound"
-      case .normalize: return "Every file as loud as the next"
-      case .frames: return "Pictures of the film, so many seconds apart"
-      case .crop: return "Square, 16 to 9, or a box of your own"
-      case .turn: return "Rotate, mirror or flip"
-      case .removeBackground: return "Keep what the picture is of"
-      case .pages: return "These pages, in this order"
-      case .dropPages: return "All the pages but these"
-      case .lighter: return "Less weight, looking the same"
-      case .sync: return "Later or earlier, to match the picture"
-      case .adjust: return "Brightness, contrast, saturation or blur"
-      case .border: return "A frame round it, in white or black"
-      case .mark: return "Words in the corner"
-      case .digest: return "SHA-256 or Base64, as text"
-      case .wave: return "A film of its waveform, to post where only films go"
-      }
-    }
-
-    /// What it starts as.
-    var blank: Tool {
-      switch self {
-      case .trim: return .trim(Span(from: 0, to: 30))
-      case .divide: return .divide(.parts(2))
-      case .speed: return .speed(2)
-      case .loop: return .loop(2)
-      case .reverse: return .reverse
-      case .mute: return .mute
-      case .normalize: return .normalize
-      case .frames: return .frames(every: 5)
-      case .crop: return .crop(.shape(1, 1))
-      case .turn: return .turn(.right)
-      case .removeBackground: return .removeBackground
-      case .pages: return .pages(PageList("1-2")!)
-      case .dropPages: return .dropPages(PageList("1")!)
-      case .lighter: return .lighter
-      case .sync: return .sync(250)
-      case .adjust: return .adjust(.brightness, 10)
-      case .border: return .border(40)
-      case .mark: return .mark("©")
-      case .digest: return .digest(.sha256)
-      case .wave: return .wave
-      }
-    }
-
-    /// What it can be done to. A PDF and no other document: the rest have no
-    /// pages until something is made of them.
-    var kinds: Set<ConvertKind> {
-      switch self {
-      case .trim, .divide, .speed, .loop, .reverse, .normalize: return [.audio, .video]
-      case .mute, .frames: return [.video]
-      case .crop, .turn: return [.image, .video, .document]
-      case .removeBackground: return [.image]
-      case .pages, .dropPages: return [.document]
-      case .lighter: return [.image, .video, .audio, .document]
-      case .sync: return [.video]
-      case .adjust, .border, .mark: return [.image]
-      case .digest: return Set(ConvertKind.allCases)
-      case .wave: return [.audio]
-      }
-    }
-  }
-
-  var kind: Kind {
-    switch self {
-    case .mute: return .mute
-    case .normalize: return .normalize
-    case .reverse: return .reverse
-    case .speed: return .speed
-    case .loop: return .loop
-    case .trim: return .trim
-    case .divide: return .divide
-    case .turn: return .turn
-    case .crop: return .crop
-    case .removeBackground: return .removeBackground
-    case .pages: return .pages
-    case .dropPages: return .dropPages
-    case .frames: return .frames
-    case .lighter: return .lighter
-    case .sync: return .sync
-    case .adjust: return .adjust
-    case .border: return .border
-    case .mark: return .mark
-    case .digest: return .digest
-    case .wave: return .wave
-    }
-  }
-
-  /// What people reach for, by what is in their hand.
-  static func handy(for kind: ConvertKind) -> [Tool] {
-    let words: [ConvertKind: [String]] = [
-      .image: ["nobg", "crop1x1", "rotate90"],
-      .video: ["mute", "speed2x", "normalize", "rotate90", "crop1x1", "crop9x16"],
-      .audio: ["normalize", "speed1.5x", "split2"],
-      .document: ["splitpages", "rotate90", "crop1x1"],
-    ]
-    return (words[kind] ?? []).compactMap(Tool.init(word:))
-  }
-
-  /// What it makes is about the file, and not the file.
-  var leavesTheOriginal: Bool { [.digest, .frames, .wave].contains(kind) }
-
-  /// As it would be read back: a preset keeps the word, and a word nothing reads
-  /// takes the preset with it.
-  var readable: Tool? { Tool(word: word) }
-
-  /// What another step of takes its place: a turn one way is instead of a turn
-  /// another way, and not instead of a mirror.
-  var slot: String {
-    if case .turn(let turn) = self, turn == .mirror || turn == .flip { return turn.rawValue }
-    // And brighter is not instead of more contrast.
-    if case .adjust(let what, _) = self { return what.rawValue }
-    return kind.rawValue
-  }
-
-  func suits(_ type: UTType) -> Bool {
-    if case .divide(let division) = self {
-      if case .pages = division { return type.conforms(to: .pdf) }
-      return ConvertKind(fileType: type).map([.audio, .video].contains) ?? false
-    }
-    if case .digest = self { return true }
-    guard let kind = ConvertKind(fileType: type), self.kind.kinds.contains(kind) else { return false }
-    // A PDF has a way to say it is turned, and none to say it is mirrored.
-    return kind != .document || (type.conforms(to: .pdf) && self != .turn(.mirror) && self != .turn(.flip))
-  }
-
-  /// "Keep a part: 0:10 to 0:45", as a step is listed.
-  var title: String {
-    switch self {
-    case .speed(let times): return "Speed \(Self.text(times))×"
-    case .loop(let times): return "Repeat \(times) times"
-    case .trim(let span, _): return "Keep \(span.from.map(Self.clock) ?? "the start") to \(span.to.map(Self.clock) ?? "the end")"
-    case .divide(.every(let seconds)): return "Divide every \(Self.clock(seconds))"
-    case .divide(.parts(let count)): return "Divide in \(count)"
-    case .divide(.chapters): return "Divide by chapter"
-    case .divide(.pages(let count)): return count == 1 ? "Divide page by page" : "Divide every \(count) pages"
-    case .turn(let turn): return turn.title
-    case .crop(.shape(let across, let down)): return "Crop \(across):\(down)"
-    case .crop(.box(_, _, let width, let height)): return "Crop \(width) × \(height)"
-    case .pages(let list): return "Pages \(list.text)"
-    case .dropPages(let list): return "Without pages \(list.text)"
-    case .frames(let seconds): return "A frame every \(Self.text(seconds)) s"
-    case .sync(let thousandths): return "Sound \(abs(thousandths)) ms \(thousandths < 0 ? "earlier" : "later")"
-    case .adjust(let what, let much): return "\(what.rawValue.capitalized) \(what == .blur || much < 0 ? "" : "+")\(much)"
-    case .border(let width, let isBlack): return "\(isBlack ? "Black" : "White") border, \(width) px"
-    case .mark(let text): return "Watermark “\(text)”"
-    case .digest(let digest): return digest == .sha256 ? "SHA-256" : "Base64"
-    case .mute, .normalize, .reverse, .removeBackground, .lighter, .wave: return kind.title
-    }
-  }
-
-  /// 80 as 1:20.
-  static func clock(_ seconds: Double) -> String {
-    let whole = Int(seconds), rest = seconds - Double(whole)
-    let tail = rest > 0.0005 ? text(rest).dropFirst() : ""
-    let minutes = whole / 60 % 60, left = whole % 60
-    let clock = whole >= 3600 ? String(format: "%d:%02d:%02d", whole / 3600, minutes, left) : String(format: "%d:%02d", minutes, left)
-    return clock + tail
-  }
-}
-
-extension Tool.Turn {
-  var title: String {
-    switch self {
-    case .right: return "Rotate right"
-    case .half: return "Rotate upside down"
-    case .left: return "Rotate left"
-    case .mirror: return "Mirror"
-    case .flip: return "Flip"
-    }
-  }
-}
-
 // MARK: - In a chain
 
 extension [Operation] {
   var tools: [Tool] { compactMap { if case .tool(let tool) = $0 { return tool } else { return nil } } }
+
+  /// Those in its branches as well.
+  var everyTool: [Tool] {
+    flatMap { operation -> [Tool] in
+      switch operation {
+      case .tool(let tool): return [tool]
+      case .when(_, let then, let otherwise): return then.everyTool + otherwise.everyTool
+      case .split(let branches): return branches.flatMap { $0.actions.everyTool }
+      default: return []
+      }
+    }
+  }
 
   /// The chain with a tool in it, instead of the one of its kind.
   func adding(_ tool: Tool) -> [Operation] {
@@ -497,12 +383,20 @@ extension [Operation] {
   /// Some tools make something else of a file than what it was: a cut-out needs
   /// somewhere to be see-through, and a frame of a film is a picture.
   /// - Parameter overriding: whether a format already chosen gives way.
-  func settlingFormat(overriding: Bool = false) -> [Operation] {
+  /// - Parameter source: what is being made something of, where that is known.
+  func settlingFormat(overriding: Bool = false, of source: UTType? = nil) -> [Operation] {
     let wanted: (type: UTType, takes: (UTType) -> Bool)
-    if tools.contains(.removeBackground) {
+    if tools.contains(.removeBackground), source.map({ ConvertKind(fileType: $0) == .video }) ?? false, !tools.contains(where: \.takesAFrame) {
+      // The one container that has somewhere to put what shows through.
+      wanted = (.quickTimeMovie, { $0 == .quickTimeMovie || FormatCatalog.isWritableImage($0) })
+    } else if tools.contains(.removeBackground) || tools.contains(where: { $0.kind == .round }) {
       wanted = (.png, { !FormatCatalog.isSolid($0) })
-    } else if tools.contains(where: { $0.kind == .frames }) {
+    } else if tools.contains(where: \.takesAFrame) || tools.contains(where: { $0.kind == .dpi }) {
       wanted = (.jpeg, FormatCatalog.isWritableImage)
+    } else if tools.contains(.layers) {
+      wanted = (.png, FormatCatalog.isWritableImage)
+    } else if tools.contains(.tables), let book = UTType(filenameExtension: "xlsx") {
+      wanted = (book, { DataFormats.writes(Conversions.fileExtension(of: $0)) || ConvertKind(fileType: $0) == .data })
     } else if tools.contains(where: { $0.kind == .digest }) {
       wanted = (.plainText, { $0 == .plainText })
     } else if tools.contains(.wave) {

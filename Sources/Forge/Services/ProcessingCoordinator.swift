@@ -170,6 +170,26 @@ actor ProcessingCoordinator {
     counter: Int?,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
+    let asked = (preset.actions + NameTokens.applying(to: [], from: file.fileName, tools: preset.readsTools)).everyTool.filter(\.asksAPassword)
+    let work = {
+      try await self.runSettled(
+        file: file, preset: preset, destinationMode: destinationMode, destinationURL: destinationURL, counter: counter, progress: progress
+      )
+    }
+    guard !asked.isEmpty else { return try await work() }
+    // Before anything is begun, and once, however many files come of it.
+    let passwords = try await PDFLock.passwords(for: asked, of: file)
+    return try await PDFLock.$passwords.withValue(passwords) { try await work() }
+  }
+
+  private func runSettled(
+    file: ProcessableFile,
+    preset: RulePreset,
+    destinationMode: DestinationMode,
+    destinationURL: URL?,
+    counter: Int?,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> ProcessingResult {
     // A preset with a gate leaves alone whatever does not pass it, and says so.
     if let gate = preset.gate, !gate.holds(for: file) {
       throw ProcessingError.leftAlone(reason: "\(gate.measured(in: file)). Only if: \(gate.summary).")
@@ -191,7 +211,8 @@ actor ProcessingCoordinator {
       }
     }
     for chain in wanted {
-      var actions = NameTokens.applying(to: chain.actions, from: file.fileName, tools: preset.readsTools, width: widths.count < 2).settlingFormat()
+      var actions = NameTokens.applying(to: chain.actions, from: file.fileName, tools: preset.readsTools, width: widths.count < 2).settlingFormat(of: file.fileType)
+      if actions.tools.contains(.pictures) { actions = try PDFPictures.settled(actions, for: file) }
       if actions.tools.contains(.lighter) {
         preset.onlyIfLighter = true
         actions = try Lighter.settled(actions, for: file)
@@ -439,7 +460,7 @@ actor ProcessingCoordinator {
     counter: Int?,
     progress: @escaping @Sendable (Double) -> Void
   ) async throws -> ProcessingResult {
-    guard processors.contains(where: { $0.canProcess(file) }) else {
+    guard processors.contains(where: { $0.canProcess(file) }) || preset.actions.tools.contains(where: { $0.kind == .tidy }) else {
       throw ProcessingError.unreadableFormat(file.fileType)
     }
     try Completeness.refuseIfIncomplete(file.url)
@@ -499,15 +520,23 @@ actor ProcessingCoordinator {
     // URL, which truncated the source mid-read and destroyed the original.
     var attempt: ProcessingResult?
     var declined: Error?
-    if let digest = operations.tools.compactMap({ tool -> Tool.Digest? in
-      if case .digest(let digest) = tool { return digest } else { return nil }
-    }).first {
-      attempt = try DigestProcessor.write(digest, of: file.url, to: plan.workURL, progress: progress)
+    // Opened first, so that whatever comes after finds a document like any other.
+    var source = file.url
+    let opened = FileManager.default.temporaryDirectory.appendingPathComponent("forge-open-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: opened) }
+    if operations.tools.contains(.unlock) {
+      try FileManager.default.createDirectory(at: opened, withIntermediateDirectories: true)
+      source = opened.appendingPathComponent(file.fileName)
+      try PDFLock.unlock(file.url, with: PDFLock.passwords.old ?? "", to: source)
     }
+    if operations.tools.contains(.lock), UTType(filenameExtension: plan.workURL.pathExtension) != .pdf {
+      throw ProcessingError.conversionFailed(reason: "Only a PDF can have a password put on it.")
+    }
+    attempt = try await WholeFileTools.attempt(operations, on: source, of: file.fileType, to: plan.workURL, progress: progress)
     for candidate in processors where attempt == nil && candidate.canProcess(file) {
       do {
         attempt = try await candidate.process(
-          file.url,
+          source,
           to: plan.workURL,
           with: operations,
           progress: progress
@@ -555,6 +584,10 @@ actor ProcessingCoordinator {
       to: [plan.workURL] + result.additionalOutputs
     )
 
+    if operations.tools.contains(.lock), let password = PDFLock.passwords.new {
+      for url in [plan.workURL] + result.additionalOutputs { try PDFLock.lock(url, with: password) }
+    }
+
     let backup = plan.replacesSource && settings.createBackupBeforeOverwrite ? try backUp(file.url) : nil
 
     // Now the file exists, the parts of its name that describe it can be
@@ -568,6 +601,7 @@ actor ProcessingCoordinator {
       plan,
       extras: result.additionalOutputs,
       gatherIntoAFolder: Self.isFrameExport(from: file, to: plan.finalURL, extras: result.additionalOutputs)
+        || (!result.additionalOutputs.isEmpty && operations.tools.contains(where: \.makesASet))
     )
 
     if plan.removesSource, plan.finalURL != file.url,

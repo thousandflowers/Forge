@@ -68,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // What pandoc writes is asked once, by running it. Asked here, in the
     // background, it is known before any window wants it.
     ExternalBridge.warmUp()
+    PDFLock.ask = { await PasswordPrompt.ask($0) }
     service.convert = { [inbox] in inbox.receive($0) }
     NSApplication.shared.servicesProvider = service
   }

@@ -81,7 +81,13 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       if outputType.conforms(to: .pdf) { try PDFTools.refuseIfSigned(input) }
       try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
       let changed = scratch.appendingPathComponent(input.lastPathComponent)
-      try PDFTools.apply(operations, to: input, writing: changed)
+      if operations.tools.contains(.numbers) {
+        // What is put on a page is AppKit's, and is let go of where it lives.
+        let from = input
+        try await MainActor.run { try PDFTools.apply(operations, to: from, writing: changed) }
+      } else {
+        try PDFTools.apply(operations, to: input, writing: changed)
+      }
       input = changed
     }
 
@@ -316,8 +322,10 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     let renderScale = longestSide > 0 ? min(2, maximumSide / longestSide) : 1
     let size = CGSize(width: shown.width * renderScale, height: shown.height * renderScale)
 
-    let thumbnail = page.thumbnail(of: size, for: .cropBox)
-    guard let cgImage = thumbnail.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+    let dots = operations.tools.compactMap { tool -> Int? in if case .dpi(let dots) = tool { return dots } else { return nil } }.last
+    let picture = dots.map { PageDrawing.image(of: page, dots: CGFloat($0)) }
+      ?? page.thumbnail(of: size, for: .cropBox).cgImage(forProposedRect: nil, context: nil, hints: nil)
+    guard let cgImage = picture else {
       throw ProcessingError.conversionFailed(reason: "Cannot rasterise page")
     }
 
@@ -327,7 +335,8 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
     guard let png = CGImageDestinationCreateWithURL(drawn as CFURL, UTType.png.identifier as CFString, 1, nil) else {
       throw ProcessingError.conversionFailed(reason: "Cannot render page")
     }
-    CGImageDestinationAddImage(png, cgImage, nil)
+    let finely = dots.map { [kCGImagePropertyDPIWidth: $0, kCGImagePropertyDPIHeight: $0] as CFDictionary }
+    CGImageDestinationAddImage(png, cgImage, finely)
     guard CGImageDestinationFinalize(png) else {
       throw ProcessingError.conversionFailed(reason: "Cannot render page")
     }

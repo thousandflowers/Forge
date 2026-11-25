@@ -271,6 +271,8 @@ enum CLI {
     // buffer fills or the process exits - and a watcher killed with a signal
     // never gets that far. A terminal line-buffers; a log should too.
     setvbuf(stdout, nil, _IOLBF, 0)
+    // Typed where it is not shown, and only where somebody is there to type.
+    if isatty(STDIN_FILENO) == 1 { PDFLock.ask = { typedPassword($0) } }
 
     let work = Task {
       do {
@@ -301,6 +303,17 @@ enum CLI {
     }
     await work.value
     stops.forEach { $0.cancel() }
+  }
+
+  private static func typedPassword(_ question: PDFLock.Question) -> String? {
+    func type(_ prompt: String) -> String? { getpass(prompt).map { String(cString: $0) } }
+    if question.isAgain { FileHandle.standardError.write(Data("That was not it.\n".utf8)) }
+    guard question.isNew else { return type("Password of \(question.fileName): ") }
+    while true {
+      guard let first = type("New password for \(question.fileName): "), !first.isEmpty else { return nil }
+      if type("Again: ") == first { return first }
+      FileHandle.standardError.write(Data("They are not the same.\n".utf8))
+    }
   }
 
   /// What a shell reports for a command stopped with Ctrl-C: 128 + SIGINT.

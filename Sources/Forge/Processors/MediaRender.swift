@@ -12,33 +12,39 @@ struct PreparedMedia {
 enum MediaRender {
   static func prepare(_ source: AVURLAsset, _ edit: MediaEdit, in folder: URL) async throws -> PreparedMedia {
     let played = try await edit.applied(to: source)
-    guard edit.isReversed || edit.isEvened else { return PreparedMedia(asset: played, folder: folder) }
+    guard edit.rewritesSound || edit.repaints || edit.slow > 1 else { return PreparedMedia(asset: played, folder: folder) }
 
     // What cannot be played that way is written that way, and played.
     let written = AVMutableComposition()
     for track in try await played.loadTracks(withMediaType: .video) {
-      let from: (asset: AVAsset, track: AVAssetTrack)
-      if edit.isReversed {
+      var from: (asset: AVAsset, track: AVAssetTrack) = (played, track)
+      var turned = try await track.load(.preferredTransform)
+      for pass in passes(for: edit) {
         let url = folder.appendingPathComponent("\(UUID().uuidString).mov")
-        try await reversePicture(of: track, in: played, to: url)
+        try await pass.write(from.track, from.asset, url)
         let asset = AVURLAsset(url: url)
-        guard let turned = try await asset.loadTracks(withMediaType: .video).first else { continue }
-        from = (asset, turned)
-      } else {
-        from = (played, track)
+        guard let made = try await asset.loadTracks(withMediaType: .video).first else {
+          throw ProcessingError.conversionFailed(reason: "The film could not be drawn again.")
+        }
+        from = (asset, made)
+        if pass.standsUp { turned = .identity }
       }
       guard let copy = written.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
-      copy.preferredTransform = try await track.load(.preferredTransform)
+      copy.preferredTransform = turned
       try copy.insertTimeRange(try await from.track.load(.timeRange), of: from.track, at: .zero)
     }
     for track in try await played.loadTracks(withMediaType: .audio) {
       let url = folder.appendingPathComponent("\(UUID().uuidString).caf")
-      try await sound(of: track, in: played, like: source.url, to: url, reversed: edit.isReversed, evened: edit.isEvened)
+      try await sound(of: track, in: played, like: source.url, to: url, as: edit)
       let asset = AVURLAsset(url: url)
       guard let turned = try await asset.loadTracks(withMediaType: .audio).first,
             let copy = written.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
       copy.languageCode = try await track.load(.languageCode)
-      try copy.insertTimeRange(try await turned.load(.timeRange), of: turned, at: .zero)
+      // No longer than what it was made of: slowed down, sound rings on a little.
+      let whole = try await track.load(.timeRange)
+      var made = try await turned.load(.timeRange)
+      made.duration = min(made.duration, whole.end)
+      try copy.insertTimeRange(made, of: turned, at: .zero)
     }
     // Its subtitles have nothing to be in time with once it runs backwards.
     for kind in [AVMediaType.subtitle, .closedCaption] where !edit.isReversed {
@@ -50,11 +56,21 @@ enum MediaRender {
     return PreparedMedia(asset: written, folder: folder)
   }
 
+  /// What its pictures go through, in order.
+  private static func passes(for edit: MediaEdit) -> [(standsUp: Bool, write: (AVAssetTrack, AVAsset, URL) async throws -> Void)] {
+    var all: [(standsUp: Bool, write: (AVAssetTrack, AVAsset, URL) async throws -> Void)] = []
+    if edit.isReversed { all.append((false, { try await reversePicture(of: $0, in: $1, to: $2) })) }
+    if edit.slow > 1 { all.append((false, { try await FilmFrames.slow($0, in: $1, by: edit.slow, to: $2) })) }
+    if edit.isGray { all.append((true, { try await FilmFrames.repaint($0, in: $1, to: $2) { PictureTools.gray($0) } })) }
+    if edit.isCutOut { all.append((true, { try await FilmFrames.cutOut($0, in: $1, to: $2) })) }
+    return all
+  }
+
   /// The first soundtrack, written out as samples.
   static func firstSound(of asset: AVAsset, like source: URL, in folder: URL) async throws -> URL? {
     guard let track = try await asset.loadTracks(withMediaType: .audio).first else { return nil }
     let url = folder.appendingPathComponent("\(UUID().uuidString).caf")
-    try await sound(of: track, in: asset, like: source, to: url, reversed: false, evened: false)
+    try await sound(of: track, in: asset, like: source, to: url, as: nil)
     return url
   }
 
@@ -62,7 +78,7 @@ enum MediaRender {
 
   /// - Parameter source: whose depth the samples are written at.
   private static func sound(
-    of track: AVAssetTrack, in asset: AVAsset, like source: URL, to output: URL, reversed: Bool, evened: Bool
+    of track: AVAssetTrack, in asset: AVAsset, like source: URL, to output: URL, as edit: MediaEdit?
   ) async throws {
     let described = try await track.load(.formatDescriptions).first
     guard let described, let layoutAndRate = AVAudioFormat(cmAudioFormatDescription: described) as AVAudioFormat? else {
@@ -90,16 +106,19 @@ enum MediaRender {
     if channels > 2, let layoutData { write[AVChannelLayoutKey] = layoutData }
 
     // Float until the last: a gain worked out on rounded samples is rounded twice.
-    let needsAnother = reversed || evened
+    let needsAnother = edit?.rewritesSound ?? false
     let first = needsAnother ? output.deletingPathExtension().appendingPathExtension("first.caf") : output
     defer { if needsAnother { try? FileManager.default.removeItem(at: first) } }
     var firstSettings = write
     if needsAnother { firstSettings[AVLinearPCMBitDepthKey] = 32; firstSettings[AVLinearPCMIsFloatKey] = true }
     try copySamples(of: track, in: asset, reading: read, to: first, writing: firstSettings)
-    guard needsAnother else { return }
-    let input = try AVAudioFile(forReading: first)
-    let gain = evened ? try Loudness.gain(for: input) : 1
-    try rewrite(input, to: output, writing: write, reversed: reversed, gain: gain)
+    guard needsAnother, let edit else { return }
+    let made = try SoundTools.apply(edit, to: first)
+    defer { if made != first { try? FileManager.default.removeItem(at: made) } }
+    let input = try AVAudioFile(forReading: made)
+    if edit.isMono { write[AVNumberOfChannelsKey] = 1; write[AVChannelLayoutKey] = nil }
+    let gain = edit.isEvened ? try Loudness.gain(for: input) : 1
+    try rewrite(input, to: output, writing: write, reversed: edit.isReversed, gain: gain, fade: edit.fade)
   }
 
   private static func copySamples(
@@ -139,7 +158,7 @@ enum MediaRender {
     }
   }
 
-  private static func rewrite(_ input: AVAudioFile, to url: URL, writing: [String: Any], reversed: Bool, gain: Float) throws {
+  private static func rewrite(_ input: AVAudioFile, to url: URL, writing: [String: Any], reversed: Bool, gain: Float, fade: Double) throws {
     let chunk: AVAudioFramePosition = 64 * 1024
     let format = input.processingFormat
     let output = try AVAudioFile(forWriting: url, settings: writing)
@@ -148,6 +167,9 @@ enum MediaRender {
     }
     // A read gives what it has, which may be less than was asked: forwards
     // that is made up by the next one, and backwards it would be a gap.
+    let length = Double(input.length)
+    let ramp = min(fade * format.sampleRate, length / 2)
+    var done = 0.0
     let starts = Array(stride(from: AVAudioFramePosition(0), to: input.length, by: Int(chunk)))
     for start in reversed ? starts.reversed() : starts {
       let end = min(start + chunk, input.length)
@@ -163,8 +185,13 @@ enum MediaRender {
       for piece in reversed ? pieces.reversed() : pieces {
         guard let data = buffer.floatChannelData, let frames = piece.first?.count else { continue }
         for (channel, samples) in piece.enumerated() {
-          for (index, sample) in (reversed ? Array(samples.reversed()) : samples).enumerated() { data[channel][index] = sample * gain }
+          for (index, sample) in (reversed ? Array(samples.reversed()) : samples).enumerated() {
+            let at = done + Double(index)
+            let share = ramp > 0 ? Float(min(1, at / ramp, (length - 1 - at) / ramp)) : 1
+            data[channel][index] = sample * gain * max(0, share)
+          }
         }
+        done += Double(frames)
         buffer.frameLength = AVAudioFrameCount(frames)
         try output.write(from: buffer)
       }

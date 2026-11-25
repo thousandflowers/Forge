@@ -30,10 +30,10 @@ struct Retype {
     let from = trueExtension(of: url, claimed: claimed)
     // Nothing but another spelling, or a wrong name put right.
     guard !from.isEmpty, let own = FormatCatalog.type(named: from), own != target else { return nil }
-    guard let file = standIn(for: url, called: from), file.fileType != target, isMade(of: file, called: to, target, from: url) else { return nil }
+    guard let file = standIn(for: url, called: from), file.fileType != target, isMade(of: file, called: to, target, from: url) || Self.tool(in: "\(stem).\(from)", makes: target) else { return nil }
     var preset = RulePreset(name: "From its name", description: "", category: .custom, actions: [.convertFormat(to: target)])
     // Where there are none, the name is only a name, underscores and all.
-    preset.readsTools = !NameTokens.read("\(stem).\(to)").tools.isEmpty
+    preset.readsTools = [to, from].contains { !NameTokens.read("\(stem).\($0)").tools.isEmpty }
     preset.outputExtension = to.lowercased()
     preset.nameTemplate = "{name}"
     return Retype(from: from, to: to, stem: stem, preset: preset)
@@ -64,6 +64,14 @@ struct Retype {
   private static func isMade(of file: ProcessableFile, called to: String, _ target: UTType, from url: URL) -> Bool {
     if offered(for: file).contains(where: { names(of: $0).contains(to.lowercased()) }) { return true }
     return Signature.knows(to) && Signature.fits(url, to) == false && Conversions.can(file, become: target)
+  }
+
+  /// A word that makes another kind of thing, and this is that kind: the tables
+  /// of a PDF in a CSV, which is nothing a PDF becomes otherwise.
+  private static func tool(in name: String, makes target: UTType) -> Bool {
+    let chain = NameTokens.applying(to: [], from: name)
+    guard chain.contains(where: \.isFormat) else { return false }
+    return NameTokens.applying(to: [.convertFormat(to: target)], from: name).contains(.convertFormat(to: target))
   }
 
   private static func offered(for file: ProcessableFile) -> [UTType] {

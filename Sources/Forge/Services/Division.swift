@@ -12,6 +12,7 @@ enum Division {
   private static let shortest = 0.05
 
   static func chains(for actions: [Operation], of file: ProcessableFile) async throws -> [(label: String, actions: [Operation])]? {
+    if let tiles = tiles(for: actions) { return tiles }
     guard let division = actions.tools.compactMap({ tool -> Tool.Division? in
       if case .divide(let division) = tool { return division } else { return nil }
     }).first else { return nil }
@@ -33,6 +34,19 @@ enum Division {
     return parts.enumerated().map { index, actions in
       let number = String(index + 1)
       return (String(repeating: "0", count: digits - number.count) + number, actions)
+    }
+  }
+
+  /// Each is a crop, where the cutting up was.
+  private static func tiles(for actions: [Operation]) -> [(label: String, actions: [Operation])]? {
+    guard let place = actions.firstIndex(where: { if case .tool(.tile) = $0 { return true } else { return false } }),
+          case .tool(.tile(let across, let down)) = actions[place] else { return nil }
+    let digits = max(2, String(across * down).count)
+    return (0..<(across * down)).map { index in
+      var copy = actions
+      copy[place] = .tool(.crop(.cell(column: index % across + 1, row: index / across + 1, across: across, down: down)))
+      let number = String(index + 1)
+      return (String(repeating: "0", count: digits - number.count) + number, copy)
     }
   }
 

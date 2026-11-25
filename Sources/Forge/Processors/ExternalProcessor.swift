@@ -796,7 +796,7 @@ final class ExternalProcessor: FileProcessor, @unchecked Sendable {
       throw ProcessingError.conversionFailed(reason: MediaProcessor.nothingLeft(of: input))
     }
     // ffmpeg turns a film round with all of it in memory.
-    if edit.isReversed, let length = try? await Division.length(of: input), edit.length(of: length) * edit.speed > longestReversed {
+    if edit.isReversed, let length = try? await Division.length(of: input), edit.length(of: length) * edit.pace > longestReversed {
       throw ProcessingError.conversionFailed(
         reason: "\(input.lastPathComponent) is too long to be reversed as \(target.uppercased()): more than \(Int(longestReversed)) seconds. Convert it to MP4 and reverse that."
       )

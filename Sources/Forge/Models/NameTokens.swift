@@ -156,6 +156,6 @@ enum NameTokens {
       result.append(.quality(level: quality))
     }
     for tool in read.tools { result = result.adding(tool) }
-    return read.tools.isEmpty ? result : result.settlingFormat(overriding: true)
+    return read.tools.isEmpty ? result : result.settlingFormat(overriding: true, of: UTType(filenameExtension: (fileName as NSString).pathExtension))
   }
 }

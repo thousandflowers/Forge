@@ -18,11 +18,27 @@ struct MediaEdit {
   var delay = 0.0
   /// Everything that changes the picture's shape, in the order it was asked.
   private(set) var shapes: [Shape] = []
+  var isGray = false
+  /// Whoever is in it, without what is behind them.
+  var isCutOut = false
+  /// How many frames there are to be for every one.
+  var slow = 1
+  /// Frames a second.
+  var rate: Double?
+  var keepsVoice = false
+  var isMono = false
+  /// Seconds the sound takes to come up and to go.
+  var fade = 0.0
+  /// Semitones.
+  var pitch = 0
+  var dropsSilence = false
 
   enum Shape {
     case turn(Tool.Turn)
     case crop(Tool.Crop)
     case size(width: Int?, height: Int?, mode: ResizeFitMode)
+    /// The short side, and never larger than it is.
+    case lines(Int)
   }
 
   init(_ operations: [Operation]) {
@@ -39,24 +55,39 @@ struct MediaEdit {
       case .tool(.sync(let thousandths)): delay = Double(thousandths) / 1000
       case .tool(.turn(let turn)): shapes.append(.turn(turn))
       case .tool(.crop(let crop)): shapes.append(.crop(crop))
+      case .tool(.lines(let lines)): shapes.append(.lines(lines))
+      case .tool(.gray): isGray = true
+      case .tool(.removeBackground): isCutOut = true
+      case .tool(.slowMotion(let times)): slow = times
+      case .tool(.rate(let frames)): rate = Double(frames)
+      case .tool(.voice): keepsVoice = true
+      case .tool(.mono): isMono = true
+      case .tool(.fade(let seconds)): fade = seconds
+      case .tool(.pitch(let steps)): pitch = steps
+      case .tool(.noSilence): dropsSilence = true
       default: break
       }
     }
   }
 
   /// Whether the recording itself is another: not only its shape.
-  var changesTime: Bool { part != nil || speed != 1 || loops > 1 || isReversed }
-  var changesSound: Bool { changesTime || isEvened }
+  var changesTime: Bool { part != nil || pace != 1 || loops > 1 || isReversed || dropsSilence }
+  var rewritesSound: Bool { isReversed || isEvened || keepsVoice || isMono || fade > 0 || pitch != 0 }
+  var changesSound: Bool { changesTime || rewritesSound }
+  /// Whether its pictures are drawn again, one by one.
+  var repaints: Bool { isGray || isCutOut }
   /// Their times are the film's, and nothing puts them right.
-  var keepsSubtitles: Bool { speed == 1 && !isReversed }
-  var isNothing: Bool { !changesTime && !isMuted && !isEvened && delay == 0 }
+  var keepsSubtitles: Bool { pace == 1 && !isReversed }
+  var isNothing: Bool { !changesTime && !isMuted && !rewritesSound && !repaints && delay == 0 }
+  /// How fast it goes by, all told.
+  var pace: Double { speed / Double(slow) }
 
   // MARK: - The system's way
 
   /// How long what is left comes out, in seconds.
   func length(of whole: Double) -> Double {
     guard let kept = (part ?? Span()).clamped(to: whole) else { return 0 }
-    return (kept.upperBound - kept.lowerBound) / speed * Double(loops)
+    return (kept.upperBound - kept.lowerBound) / pace * Double(loops)
   }
 
   /// The recording with the part taken, the rest left out, and the time
@@ -69,14 +100,18 @@ struct MediaEdit {
         reason: "\(asset.url.lastPathComponent) is \(Tool.clock(whole)) long: there is nothing in the part asked for."
       )
     }
-    let range = CMTimeRange(
-      start: CMTime(seconds: kept.lowerBound, preferredTimescale: timescale),
-      end: CMTime(seconds: kept.upperBound, preferredTimescale: timescale)
-    )
+    let heard = dropsSilence ? try await Silence.loudParts(of: asset, within: kept) : [kept]
+    let ranges = heard.map { part in
+      CMTimeRange(
+        start: CMTime(seconds: part.lowerBound, preferredTimescale: timescale),
+        end: CMTime(seconds: part.upperBound, preferredTimescale: timescale)
+      )
+    }
+    let once = ranges.reduce(CMTime.zero) { $0 + $1.duration }
     let composition = AVMutableComposition()
     // One at a time: inserted as a whole, an asset leaves its pictures lying
     // on their side and takes along tracks that play nothing.
-    let kinds: [AVMediaType] = [.video] + (isMuted ? [] : [.audio]) + (speed == 1 ? [.subtitle, .closedCaption] : [])
+    let kinds: [AVMediaType] = [.video] + (isMuted ? [] : [.audio]) + (pace == 1 ? [.subtitle, .closedCaption] : [])
     for kind in kinds {
       for track in try await asset.loadTracks(withMediaType: kind) {
         guard let copy = composition.addMutableTrack(withMediaType: kind, preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
@@ -85,18 +120,21 @@ struct MediaEdit {
         // A track may begin after the film does, or end before it.
         // Sound that comes later is, at any moment, what was heard before it.
         let late = kind == .audio ? CMTime(seconds: delay, preferredTimescale: timescale) : .zero
-        let wanted = CMTimeRange(start: range.start - late, duration: range.duration)
-        let there = try await track.load(.timeRange).intersection(wanted)
-        guard there.duration > .zero else { continue }
+        let whole = try await track.load(.timeRange)
         for turn in 0..<loops {
-          let at = CMTimeMultiply(range.duration, multiplier: Int32(turn)) + (there.start - wanted.start)
-          try copy.insertTimeRange(there, of: track, at: at)
+          var start = CMTimeMultiply(once, multiplier: Int32(turn))
+          for range in ranges {
+            let wanted = CMTimeRange(start: range.start - late, duration: range.duration)
+            let there = whole.intersection(wanted)
+            if there.duration > .zero { try copy.insertTimeRange(there, of: track, at: start + (there.start - wanted.start)) }
+            start = start + range.duration
+          }
         }
       }
     }
-    if speed != 1 {
-      let all = CMTimeRange(start: .zero, duration: CMTimeMultiply(range.duration, multiplier: Int32(loops)))
-      composition.scaleTimeRange(all, toDuration: CMTimeMultiplyByFloat64(all.duration, multiplier: 1 / speed))
+    if pace != 1 {
+      let all = CMTimeRange(start: .zero, duration: CMTimeMultiply(once, multiplier: Int32(loops)))
+      composition.scaleTimeRange(all, toDuration: CMTimeMultiplyByFloat64(all.duration, multiplier: 1 / pace))
     }
     return composition
   }
@@ -122,6 +160,13 @@ struct MediaEdit {
         guard let render = MediaProcessor.renderSize(natural: size, width: width, height: height, mode: mode) else { continue }
         transform = transform.concatenating(MediaProcessor.placement(of: size, in: render, mode: mode))
         size = render
+      case .lines(let lines):
+        let short = min(size.width, size.height)
+        guard short > CGFloat(lines), let render = MediaProcessor.renderSize(
+          natural: size, width: size.width <= size.height ? lines : nil, height: size.width <= size.height ? nil : lines, mode: .proportional
+        ) else { continue }
+        transform = transform.concatenating(MediaProcessor.placement(of: size, in: render, mode: .proportional))
+        size = render
       }
     }
     // Encoders want even sides. Cut, never stretched.
@@ -142,7 +187,17 @@ struct MediaEdit {
 
   /// What ffmpeg is not asked to do: repeating a part repeats the whole.
   var ffmpegRefusal: String? {
-    loops > 1 && part != nil ? "A part of it can be repeated in MP4, MOV and M4A. Keep the part first, then repeat it." : nil
+    if loops > 1 && part != nil { return "A part of it can be repeated in MP4, MOV and M4A. Keep the part first, then repeat it." }
+    guard let step = mac else { return nil }
+    return "“\(step.title)” is done by macOS, in MP4, MOV and M4A. Convert it to one of those first."
+  }
+
+  /// What only macOS does, of what is asked.
+  var mac: Tool.Kind? {
+    if keepsVoice { return .voice }
+    if dropsSilence { return .noSilence }
+    if slow > 1 { return .slowMotion }
+    return isCutOut ? .removeBackground : nil
   }
 
   var ffmpegPicture: [String] {
@@ -152,10 +207,13 @@ struct MediaEdit {
       case .turn(let turn): filters.append(turn.ffmpeg)
       case .crop(let crop): filters.append(crop.ffmpeg)
       case .size(let width, let height, let mode): filters.append(ExternalBridge.scaling(width: width, height: height, mode: mode))
+      case .lines(let lines): filters.append("scale='if(gt(iw,ih),-2,min(iw,\(lines)))':'if(gt(iw,ih),min(ih,\(lines)),-2)'")
       }
     }
+    if isGray { filters.append("hue=s=0") }
     if isReversed { filters.append("reverse") }
     if speed != 1 { filters.append("setpts=PTS/\(Tool.text(speed))") }
+    if let rate { filters.append("fps=\(Tool.text(rate))") }
     return filters
   }
 
@@ -168,6 +226,19 @@ struct MediaEdit {
     var left = speed
     while left < 0.5 { filters.append("atempo=0.5"); left /= 0.5 }
     if left != 1 { filters.append("atempo=\(Tool.text(left))") }
+    if pitch != 0 {
+      let times = pow(2, Double(pitch) / 12)
+      filters.append("aresample=48000,asetrate=\(Int((48_000 * times).rounded())),aresample=48000")
+      // Within half and double, which two octaves are not.
+      let each = times > 2 || times < 0.5 ? 2 : 1
+      filters += Array(repeating: "atempo=\(Tool.text(pow(1 / times, 1 / Double(each))))", count: each)
+    }
+    if isMono { filters.append("aformat=channel_layouts=mono") }
+    // The end is not known until it comes: it is the beginning, backwards.
+    if fade > 0 {
+      let up = "afade=t=in:d=\(Tool.text(fade))"
+      filters.append("\(up),areverse,\(up),areverse")
+    }
     if isEvened { filters.append("loudnorm=I=\(Int(Loudness.target)):TP=-1.5:LRA=11") }
     return filters
   }
@@ -218,6 +289,16 @@ extension Tool.Crop {
         )
       }
       return box
+    case .cell(let column, let row, let across, let down):
+      // Edges worked out from the whole, so that no row of pixels is lost
+      // between one tile and the next.
+      func edge(_ index: Int, of count: Int, _ side: CGFloat) -> CGFloat { (side * CGFloat(index) / CGFloat(count)).rounded() }
+      let left = edge(column - 1, of: across, size.width), right = edge(column, of: across, size.width)
+      let top = edge(row - 1, of: down, size.height), bottom = edge(row, of: down, size.height)
+      guard right > left, bottom > top else {
+        throw ProcessingError.conversionFailed(reason: "The picture is too small for \(across) × \(down) tiles.")
+      }
+      return CGRect(x: left, y: top, width: right - left, height: bottom - top)
     }
   }
 
@@ -227,6 +308,8 @@ extension Tool.Crop {
       return "crop='min(iw,ih*\(across)/\(down))':'min(ih,iw*\(down)/\(across))'"
     case .box(let x, let y, let width, let height):
       return "crop='min(\(width),iw-\(x))':'min(\(height),ih-\(y))':\(x):\(y)"
+    case .cell(let column, let row, let across, let down):
+      return "crop=iw/\(across):ih/\(down):iw*\(column - 1)/\(across):ih*\(row - 1)/\(down)"
     }
   }
 }

@@ -164,6 +164,13 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       return ProcessingResult(outputURL: output, outputSize: try Self.fileSize(output), outputDimensions: (1280, 720), duration: Date().timeIntervalSince(start))
     }
 
+    if audioTracks.isEmpty, videoTracks.isEmpty == false, edit.keepsVoice || edit.isMono || edit.fade > 0 || edit.pitch != 0 {
+      throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no sound to work on")
+    }
+    if !videoTracks.isEmpty, try await Self.isSmallEnough(videoTracks[0], for: operations) {
+      throw ProcessingError.leftAlone(reason: "It is no larger than that already.")
+    }
+
     if edit.isEvened, audioTracks.isEmpty {
       throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no sound to even out")
     }
@@ -179,7 +186,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       if FormatCatalog.isWritableVideo(requestedType) {
         return try await handingOn(input, to: output) { try await exportVideoWithinItsCeiling(try await edited(), of: asset, to: output, operations: operations, start: start, progress: progress) }
       }
-      return try await handingOn(input, to: output) { try await convertAudio(try await heard(input), of: input, to: output, operations: operations, start: start, progress: progress) }
+      return try await handingOn(input, to: output) { try await writeSound(try await heard(input), of: input, to: output, operations: operations, start: start, progress: progress) }
     }
 
     // A video asked to become an image is a frame export, not a re-encode:
@@ -199,10 +206,18 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       guard !audioTracks.isEmpty else {
         throw ProcessingError.conversionFailed(reason: "\(input.lastPathComponent) has no sound to keep")
       }
-      return try await handingOn(input, to: output) { try await convertAudio(try await heard(input), of: input, to: output, operations: operations, start: start, progress: progress) }
+      return try await handingOn(input, to: output) { try await writeSound(try await heard(input), of: input, to: output, operations: operations, start: start, progress: progress) }
     }
 
     return try await handingOn(input, to: output) { try await exportVideoWithinItsCeiling(try await edited(), of: asset, to: output, operations: operations, start: start, progress: progress) }
+  }
+
+  /// Nothing but a smaller picture was asked, and it is that small.
+  private static func isSmallEnough(_ track: AVAssetTrack, for operations: [Operation]) async throws -> Bool {
+    let asked = operations.filter { !$0.isFormat && $0.id != "stripMetadata" }
+    guard asked.count == 1, case .tool(.lines(let lines)) = asked[0], operations.count == asked.count else { return false }
+    let size = try await track.load(.naturalSize)
+    return min(abs(size.width), abs(size.height)) <= CGFloat(lines)
   }
 
   /// A ceiling is a promise about the file, and an export session treats it as
@@ -481,7 +496,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     generator.requestedTimeToleranceBefore = .zero
     generator.requestedTimeToleranceAfter = .zero
     // Turned or cropped, the frames are drawn the way the film would be.
-    if operations.tools.contains(where: { $0.kind == .crop || $0.kind == .turn }) {
+    if operations.tools.contains(where: { $0.kind == .crop || $0.kind == .turn || $0.kind == .lines }) {
       generator.videoComposition = try await Self.composition(for: asset, operations: operations)
     }
     generator.maximumSize = try await Self.frameSize(for: operations, asset: asset)
@@ -490,11 +505,17 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // delay a GIF can state: a twelfth of a second was written as 0.08 and the
     // animation ran four per cent fast. Sampling at what will be written keeps
     // it in time.
-    let step = Self.interval(in: operations) ?? (100 / Self.framesPerSecond).rounded() / 100
+    let edit = MediaEdit(operations)
+    let step = Self.interval(in: operations) ?? (100 / min(edit.rate ?? Self.framesPerSecond, 50)).rounded() / 100
+    let moment = operations.tools.compactMap { if case .still(let second) = $0 { return second } else { return nil } }.last
+    if let moment, moment > duration {
+      throw ProcessingError.conversionFailed(reason: "The film is \(Tool.clock(duration)) long: there is nothing at \(Tool.clock(moment)).")
+    }
     guard Self.interval(in: operations) == nil || duration / step <= Self.mostPictures else {
       throw ProcessingError.conversionFailed(reason: "That would make more than \(Int(Self.mostPictures)) pictures.")
     }
-    let times = stride(from: 0, to: duration, by: step).map {
+    // The very end is after the last picture.
+    let times = (moment.map { [min($0, max(0, duration - 0.05))] } ?? Array(stride(from: 0, to: duration, by: step))).map {
       CMTime(seconds: $0, preferredTimescale: 600)
     }
     guard !times.isEmpty else {
@@ -554,10 +575,10 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // turn it, and measured as stored its frames came out a third the size.
     let stored = try await track.load(.naturalSize)
     let turned = try await track.load(.preferredTransform)
-    let natural = operations.tools.contains { $0.kind == .crop || $0.kind == .turn }
+    let natural = operations.tools.contains { $0.kind == .crop || $0.kind == .turn || $0.kind == .lines }
       ? try MediaEdit(operations).placement(of: stored, turned: turned)?.size ?? stored : stored.applying(turned)
     // Pictures of the film rather than a small moving one.
-    if interval(in: operations) != nil, !operations.contains(where: { resizeRequest($0) != nil }) {
+    if operations.tools.contains(where: \.takesAFrame), !operations.contains(where: { resizeRequest($0) != nil }) {
       return CGSize(width: abs(natural.width), height: abs(natural.height))
     }
     if let asked = operations.compactMap(resizeRequest).first,
@@ -625,8 +646,8 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // because the preset list is sorted by pixels would be the wrong answer.
     let edit = MediaEdit(operations)
     // As it was encoded, where a quick cut is all that is asked.
-    let asIs = edit.isFast && edit.speed == 1 && !edit.isReversed && !edit.isEvened && edit.shapes.isEmpty && ImageProcessor.sizeCeiling(from: operations) == nil
-    let preferred = Self.chosenCodec(in: operations)?.exportPreset
+    let asIs = edit.isFast && edit.pace == 1 && !edit.rewritesSound && !edit.repaints && edit.rate == nil && edit.shapes.isEmpty && ImageProcessor.sizeCeiling(from: operations) == nil
+    let preferred = (edit.isCutOut ? AVAssetExportPresetHEVCHighestQualityWithAlpha : nil) ?? Self.chosenCodec(in: operations)?.exportPreset
       ?? (asIs ? AVAssetExportPresetPassthrough : Self.videoPreset(for: operations, available: available))
     let resizing = try await Self.composition(for: asset, operations: operations)
 
@@ -651,6 +672,10 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
         reason: "\(codec.title) does not fit in "
           + "\((FormatCatalog.fileExtension(for: outputType) ?? outputType.identifier).uppercased()). A MOV holds it."
       )
+    }
+
+    guard !edit.isCutOut || session.presetName == AVAssetExportPresetHEVCHighestQualityWithAlpha else {
+      throw ProcessingError.conversionFailed(reason: "A film without its background fits in a MOV, and in nothing else macOS writes.")
     }
 
     session.outputURL = output
@@ -813,14 +838,21 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
 
   /// The video drawn at the size asked for, upright, or nil when no size was.
   private static func composition(for asset: AVAsset, operations: [Operation]) async throws -> AVVideoComposition? {
-    guard let track = try await asset.loadTracks(withMediaType: .video).first,
-          // A phone video is stored sideways with a turn on top; the size asked
-          // for is the size it is watched at.
-          let placed = try MediaEdit(operations).placement(
-            of: try await track.load(.naturalSize), turned: try await track.load(.preferredTransform)
-          ) else { return nil }
+    guard let track = try await asset.loadTracks(withMediaType: .video).first else { return nil }
+    let edit = MediaEdit(operations)
+    let stored = try await track.load(.naturalSize), turned = try await track.load(.preferredTransform)
+    // A phone video is stored sideways with a turn on top; the size asked
+    // for is the size it is watched at.
+    let placed = try edit.placement(of: stored, turned: turned)
+    guard placed != nil || edit.rate != nil else { return nil }
 
     let composition = try await AVMutableVideoComposition.videoComposition(withPropertiesOf: asset)
+    if let rate = edit.rate {
+      composition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(rate))
+      // Otherwise it is the film's own times that are kept.
+      composition.sourceTrackIDForFrameTiming = kCMPersistentTrackID_Invalid
+    }
+    guard let placed else { return composition }
     composition.renderSize = placed.size
     let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
     layer.setTransform(placed.transform, at: .zero)
@@ -861,6 +893,29 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   }
 
   // MARK: - Audio
+
+  /// What macOS does to a sound it cannot write - an MP3 - is done, and the
+  /// sound it made is what a tool is given.
+  private func writeSound(
+    _ sound: URL,
+    of input: URL,
+    to output: URL,
+    operations: [Operation],
+    start: Date,
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> ProcessingResult {
+    do {
+      return try await convertAudio(sound, of: input, to: output, operations: operations, start: start, progress: progress)
+    } catch let error as ProcessingError {
+      guard case .unsupportedConversion = error, MediaEdit(operations).mac != nil, sound != input,
+            ExternalBridge.couldPlan(from: sound.pathExtension, to: output.pathExtension.lowercased()) else { throw error }
+      let rest = operations.filter { if case .tool = $0 { return false } else { return true } }
+      let result = try await ExternalProcessor().process(sound, to: output, with: rest, progress: progress)
+      let tags = PrivacyFilter.metadata(try await AVURLAsset(url: input).load(.metadata), to: PrivacyFilter.policy(in: operations))
+      try? await Self.tagWithFFmpeg(output, tags)
+      return result
+    }
+  }
 
   private func convertAudio(
     _ sound: URL,

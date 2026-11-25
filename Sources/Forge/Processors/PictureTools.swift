@@ -25,6 +25,12 @@ enum PictureTools {
       let backdrop = CIImage(color: isBlack ? .black : .white).cropped(to: image.extent.insetBy(dx: -side, dy: -side))
       return atTheCorner(image.composited(over: backdrop))
     case .mark(let text): return try marked(image, text)
+    case .enhance: return enhanced(image)
+    case .gray: return gray(image)
+    case .blurBackground: return try blurredBehind(image)
+    case .round(let radius): return rounded(image, CGFloat(radius))
+    case .scan: return try scanned(image)
+    case .upscale(let times): return try enlarged(image, by: times)
     default: return image
     }
   }
@@ -85,7 +91,93 @@ enum PictureTools {
       .composited(over: shadow.transformed(by: place).composited(over: image)).cropped(to: image.extent)
   }
 
+  /// The colours given the light each of them has.
+  static func gray(_ image: CIImage) -> CIImage {
+    image.applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0])
+  }
+
+  private static func enhanced(_ image: CIImage) -> CIImage {
+    var better = image
+    for filter in image.autoAdjustmentFilters(options: [.redEye: false, .crop: false, .level: false]) {
+      filter.setValue(better, forKey: kCIInputImageKey)
+      if let made = filter.outputImage { better = made }
+    }
+    return better.cropped(to: image.extent)
+  }
+
+  /// On a side. Larger and nothing opens it.
+  private static let largest = 20_000.0
+
+  /// By arithmetic. macOS has a network for it, made for video calls: tried on a
+  /// picture made half as large and back, it was 21 dB further from what it had been.
+  private static func enlarged(_ image: CIImage, by times: Int) throws -> CIImage {
+    let target = CGRect(x: 0, y: 0, width: image.extent.width * CGFloat(times), height: image.extent.height * CGFloat(times))
+    guard max(target.width, target.height) <= largest else {
+      throw ProcessingError.conversionFailed(
+        reason: "\(times) times as large, it would be \(Int(target.width)) × \(Int(target.height)): the most is \(Int(largest)) on a side."
+      )
+    }
+    return image.clampedToExtent()
+      .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: CGFloat(times), kCIInputAspectRatioKey: 1])
+      .cropped(to: target)
+  }
+
+  private static func rounded(_ image: CIImage, _ radius: CGFloat) -> CIImage {
+    let most = min(image.extent.width, image.extent.height) / 2
+    guard let shape = CIFilter(name: "CIRoundedRectangleGenerator", parameters: [
+      "inputExtent": CIVector(cgRect: image.extent), "inputRadius": min(radius, most), "inputColor": CIColor.white,
+    ])?.outputImage else { return image }
+    return image.applyingFilter("CISourceInCompositing", parameters: [kCIInputBackgroundImageKey: shape]).cropped(to: image.extent)
+  }
+
+  /// The sheet of paper, seen from straight above, with the shadows taken off.
+  private static func scanned(_ image: CIImage) throws -> CIImage {
+    let request = VNDetectDocumentSegmentationRequest()
+    try VNImageRequestHandler(ciImage: image).perform([request])
+    guard let sheet = request.results?.first, sheet.confidence > 0.5 else {
+      throw ProcessingError.conversionFailed(reason: "There is no sheet of paper to be seen in the picture.")
+    }
+    let extent = image.extent
+    func corner(_ point: CGPoint) -> CIVector {
+      CIVector(x: extent.minX + point.x * extent.width, y: extent.minY + point.y * extent.height)
+    }
+    let straight = image.applyingFilter("CIPerspectiveCorrection", parameters: [
+      "inputTopLeft": corner(sheet.topLeft), "inputTopRight": corner(sheet.topRight),
+      "inputBottomLeft": corner(sheet.bottomLeft), "inputBottomRight": corner(sheet.bottomRight),
+    ])
+    let flat = atTheCorner(straight)
+    return flat.applyingFilter("CIDocumentEnhancer", parameters: ["inputAmount": 1.0]).cropped(to: flat.extent)
+  }
+
+  /// What is behind is blurred by itself: blurred with what is in front, a
+  /// coloured mist comes out round its edges.
+  private static func blurredBehind(_ image: CIImage) throws -> CIImage {
+    let mask = try subjectMask(of: image)
+    let radius = max(image.extent.width, image.extent.height) * 0.018
+    let behind = image.applyingFilter("CIBlendWithMask", parameters: [
+      kCIInputBackgroundImageKey: CIImage.empty(), kCIInputMaskImageKey: mask.applyingFilter("CIColorInvert"),
+    ]).cropped(to: image.extent)
+    let blurred = behind.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius])
+      .cropped(to: image.extent).unpremultiplyingAlpha().settingAlphaOne(in: image.extent)
+    return image.applyingFilter("CIBlendWithMask", parameters: [
+      kCIInputBackgroundImageKey: blurred, kCIInputMaskImageKey: mask,
+    ]).cropped(to: image.extent)
+  }
+
+  static func fitted(_ mask: CIImage, to image: CIImage) -> CIImage {
+    atTheCorner(mask).transformed(by: CGAffineTransform(
+      scaleX: image.extent.width / mask.extent.width, y: image.extent.height / mask.extent.height
+    ))
+  }
+
   private static func cutOut(_ image: CIImage) throws -> CIImage {
+    image.applyingFilter("CIBlendWithMask", parameters: [
+      kCIInputBackgroundImageKey: CIImage.empty(), kCIInputMaskImageKey: try subjectMask(of: image),
+    ]).cropped(to: image.extent)
+  }
+
+  /// White where what the picture is of is.
+  private static func subjectMask(of image: CIImage) throws -> CIImage {
     let handler = VNImageRequestHandler(ciImage: image)
     let mask: CVPixelBuffer?
     if #available(macOS 14, *) {
@@ -103,12 +195,7 @@ enum PictureTools {
       throw ProcessingError.conversionFailed(reason: "Nothing in the picture stands out from its background.")
     }
     let cover = CIImage(cvPixelBuffer: mask)
-    let fitted = atTheCorner(cover).transformed(by: CGAffineTransform(
-      scaleX: image.extent.width / cover.extent.width, y: image.extent.height / cover.extent.height
-    ))
-    return image.applyingFilter("CIBlendWithMask", parameters: [
-      kCIInputBackgroundImageKey: CIImage.empty(), kCIInputMaskImageKey: fitted,
-    ]).cropped(to: image.extent)
+    return fitted(cover, to: image)
   }
 }
 

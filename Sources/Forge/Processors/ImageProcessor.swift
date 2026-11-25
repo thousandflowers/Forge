@@ -223,7 +223,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     for operation in operations {
       ciImage = try applyOperation(operation, to: ciImage, isAlone: isAlone)
     }
-    if onWhite, operations.tools.contains(.removeBackground) { ciImage = PictureTools.onWhite(ciImage) }
+    if onWhite, operations.tools.contains(where: { [.removeBackground, .round].contains($0.kind) }) { ciImage = PictureTools.onWhite(ciImage) }
 
     // Whole pixels only. An extent ending at 533.33 was rendered 534 wide, the
     // last column a third picture and the rest nothing.

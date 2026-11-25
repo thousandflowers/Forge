@@ -78,7 +78,38 @@ struct ToolRow: View {
       }
       .labelsHidden().frame(maxWidth: 120, alignment: .leading)
       .accessibilityLabel(Text("Fingerprint"))
-    case .mute, .normalize, .reverse, .removeBackground, .lighter, .wave:
+    case .upscale(let times): picked("Times", times, [2, 3, 4], { "\($0)×" }) { tool = .upscale($0) }
+    case .slowMotion(let times): picked("Times", times, [2, 4, 8], { "\($0)×" }) { tool = .slowMotion($0) }
+    case .round(let radius): typed(radius, in: 10...9999, "px") { tool = .round($0) }
+    case .rate(let frames): typed(frames, in: 1...240, "frames a second") { tool = .rate($0) }
+    case .lines(let lines): picked("Resolution", lines, [480, 720, 1080, 1440, 2160], { $0 == 2160 ? "4K" : "\($0)p" }) { tool = .lines($0) }
+    case .dpi(let dots): typed(dots, in: 36...1200, "dpi") { tool = .dpi($0) }
+    case .sheet(let count): picked("Pages", count, Tool.sheets, { "\($0)" }) { tool = .sheet($0) }
+    case .tile(let across, let down):
+      HStack(spacing: 6) {
+        typed(across, in: 1...99, "across") { tool = .tile($0, $0 * down > 1 ? down : 2) }
+        typed(down, in: 1...99, "down") { tool = .tile(across * $0 > 1 ? across : 2, $0) }
+      }
+    case .still(let second):
+      moment("At", second, none: "0:10") { if let value = $0 { tool = .still(at: value) } }
+    case .fade(let seconds):
+      HStack(spacing: 6) {
+        moment("Seconds", seconds, none: "2") { if let value = $0, value > 0 { tool = .fade(value) } }
+        Text("seconds").foregroundStyle(.secondary)
+      }
+    case .pitch(let steps):
+      HStack(spacing: 6) {
+        NumberToken(value: Binding(get: { steps }, set: { if let value = $0, value != 0 { tool = .pitch(value) } }), placeholder: "2", range: Tool.pitches, startingFrom: steps)
+        Text("semitones").foregroundStyle(.secondary)
+      }
+    case .tidy(let tidying):
+      Picker("", selection: Binding(get: { tidying }, set: { tool = .tidy($0) })) {
+        ForEach(Tool.Tidying.allCases, id: \.self) { Text(Tool.tidy($0).title).tag($0) }
+      }
+      .labelsHidden().frame(maxWidth: 160, alignment: .leading)
+      .accessibilityLabel(Text("Tidy the code"))
+    case .mute, .normalize, .reverse, .removeBackground, .lighter, .wave, .enhance, .scan, .gray, .blurBackground, .layers,
+         .voice, .mono, .noSilence, .lock, .unlock, .numbers, .pictures, .tables:
       Text(tool.kind.summary).font(.callout).foregroundStyle(.secondary)
     }
   }
@@ -91,6 +122,22 @@ struct ToolRow: View {
       set(seconds)
       return true
     }
+  }
+
+  private func typed(_ value: Int, in range: ClosedRange<Int>, _ unit: String, set: @escaping (Int) -> Void) -> some View {
+    HStack(spacing: 6) {
+      NumberToken(value: Binding(get: { value }, set: { set($0 ?? value) }), placeholder: "\(value)", range: range, startingFrom: value)
+        .accessibilityLabel(Text(unit))
+      Text(unit).foregroundStyle(.secondary)
+    }
+  }
+
+  private func picked(_ label: String, _ value: Int, _ all: [Int], _ title: @escaping (Int) -> String, set: @escaping (Int) -> Void) -> some View {
+    Picker("", selection: Binding(get: { value }, set: set)) {
+      ForEach(Array(Set(all + [value])).sorted(), id: \.self) { Text(title($0)).tag($0) }
+    }
+    .labelsHidden().frame(maxWidth: 100, alignment: .leading)
+    .accessibilityLabel(Text(label))
   }
 
   private func pages(_ list: PageList, set: @escaping (PageList) -> Void) -> some View {
@@ -135,6 +182,7 @@ struct ToolRow: View {
       .accessibilityLabel(Text("Shape"))
     case .box(let x, let y, let width, let height):
       Text("\(width) × \(height) from \(x), \(y)").font(.callout).foregroundStyle(.secondary)
+    case .cell: Text(tool.title).font(.callout).foregroundStyle(.secondary)
     }
   }
 }
