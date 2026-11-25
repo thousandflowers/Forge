@@ -180,7 +180,7 @@ private struct StrikingHammer: View {
   @State private var start = Date()
 
   var body: some View {
-    TimelineView(.animation(minimumInterval: 1 / 60, paused: !isWorking)) { timeline in
+    TimelineView(.animation(minimumInterval: 1 / 30, paused: !isWorking)) { timeline in
       let time = isWorking ? timeline.date.timeIntervalSince(start) : 0
       ZStack {
         Image(systemName: "hammer.fill")

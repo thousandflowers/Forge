@@ -196,7 +196,7 @@ enum Blow {
 /// changing it.
 @MainActor
 enum HammerFrames {
-  private static let count = 27
+  private static let count = 18
   static let step = UInt64(Blow.seconds / Double(count) * 1_000_000_000)
   private static let size = NSSize(width: 24, height: 18)
   private static var made: [Int: NSImage] = [:]
