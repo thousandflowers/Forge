@@ -182,7 +182,11 @@ enum Tracer {
     let first = points.first!, last = points.last!, count = points.count
     if count <= 2 { return "L" + said(last) }
     // A straight line is one.
-    let side = unit(last - first), off = points.map { abs(side.x * ($0.y - first.y) - side.y * ($0.x - first.x)) }.max() ?? 0
+    let side = unit(last - first)
+    let off: Double = points.map { (point: Point) -> Double in
+      let across: Double = side.x * (point.y - first.y), along: Double = side.y * (point.x - first.x)
+      return abs(across - along)
+    }.max() ?? 0
     if off < slack, length(last - first) > 0.5 { return "L" + said(last) }
 
     var along = [0.0]
@@ -205,7 +209,9 @@ enum Tracer {
 
   private static func on(_ c: [Point], _ t: Double) -> Point {
     let u = 1 - t
-    return c[0] * (u * u * u) + c[1] * (3 * u * u * t) + c[2] * (3 * u * t * t) + c[3] * (t * t * t)
+    let w0: Double = u * u * u, w1: Double = 3 * u * u * t, w2: Double = 3 * u * t * t, w3: Double = t * t * t
+    let near: Point = c[0] * w0 + c[1] * w1, far: Point = c[2] * w2 + c[3] * w3
+    return near + far
   }
 
   private static func curve(_ points: ArraySlice<Point>, _ along: [Double], _ start: Point, _ end: Point) -> [Point] {
@@ -215,7 +221,9 @@ enum Tracer {
       let u = 1 - t, b1 = 3 * t * u * u, b2 = 3 * t * t * u
       let one = start * b1, two = end * b2
       c00 += dot(one, one); c01 += dot(one, two); c11 += dot(two, two)
-      let rest = point - (first * (u * u * u + b1) + last * (b2 + t * t * t))
+      let nearer: Double = u * u * u + b1, further: Double = b2 + t * t * t
+      let ends: Point = first * nearer + last * further
+      let rest: Point = point - ends
       x0 += dot(one, rest); x1 += dot(two, rest)
     }
     let size = length(last - first), base = c00 * c11 - c01 * c01
@@ -240,8 +248,12 @@ enum Tracer {
   /// A step of Newton's towards the nearest point of the curve.
   private static func nearer(_ point: Point, _ t: Double, _ c: [Point]) -> Double {
     let u = 1 - t, gap = on(c, t) - point
-    let one = (c[1] - c[0]) * (3 * u * u) + (c[2] - c[1]) * (6 * u * t) + (c[3] - c[2]) * (3 * t * t)
-    let two = (c[2] - c[1] * 2 + c[0]) * (6 * u) + (c[3] - c[2] * 2 + c[1]) * (6 * t)
+    // In pieces: some compilers give up on the whole of it.
+    let w0: Double = 3 * u * u, w1: Double = 6 * u * t, w2: Double = 3 * t * t
+    let a: Point = (c[1] - c[0]) * w0, b: Point = (c[2] - c[1]) * w1, d: Point = (c[3] - c[2]) * w2
+    let one: Point = a + b + d
+    let bend0: Point = c[2] - c[1] * 2 + c[0], bend1: Point = c[3] - c[2] * 2 + c[1]
+    let two: Point = bend0 * (6 * u) + bend1 * (6 * t)
     let base = dot(one, one) + dot(gap, two)
     return abs(base) < 1e-12 ? t : min(1, max(0, t - dot(gap, one) / base))
   }

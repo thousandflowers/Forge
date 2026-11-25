@@ -190,12 +190,14 @@ final class NewPictureWordTests: ToolTestCase {
       for (id, data) in layer.planes { info += big(id, 2) + big(data.count, 4) }
       var name = Data([UInt8(layer.name.utf8.count)]) + Data(layer.name.utf8)
       while name.count % 4 != 0 { name.append(0) }
-      info += Data("8BIMnorm".utf8) + Data([255, 0, 0, 0]) + big(8 + name.count, 4) + big(0, 4) + big(0, 4) + name
+      for piece in [Data("8BIMnorm".utf8), Data([255, 0, 0, 0]), big(8 + name.count, 4), big(0, 4), big(0, 4), name] { info.append(piece) }
     }
     for layer in layers { layer.planes.forEach { info += $0.1 } }
     if info.count % 2 == 1 { info.append(0) }
-    let head = Data("8BPS".utf8) + big(1, 2) + Data(count: 6) + big(3, 2) + big(4, 4) + big(8, 4) + big(8, 2) + big(3, 2) + big(0, 4) + big(0, 4)
-    return head + big(info.count + 8, 4) + big(info.count, 4) + info + big(0, 4) + big(0, 2) + Data(repeating: 0, count: 96)
+    var made = Data("8BPS".utf8)
+    for piece in [big(1, 2), Data(count: 6), big(3, 2), big(4, 4), big(8, 4), big(8, 2), big(3, 2), big(0, 4), big(0, 4)] { made.append(piece) }
+    for piece in [big(info.count + 8, 4), big(info.count, 4), info, big(0, 4), big(0, 2), Data(repeating: 0, count: 96)] { made.append(piece) }
+    return made
   }
 
   func test_layersFromTheTopDown() async throws {

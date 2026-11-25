@@ -212,7 +212,11 @@ enum Msg {
     // Where there is no plain body there is a page: its words.
     let page = ole.data("__substg1.0_10130102").flatMap { String(data: $0, encoding: .utf8) ?? String(data: $0, encoding: .windowsCP1252) }
     let body = property("1000") ?? page.map { $0.replacing(#/(?s)<(style|script).*?<\/\1>/#, with: "").replacing(#/<[^>]+>/#, with: "") } ?? ""
-    let attached = Set(ole.names.filter { $0.hasPrefix("__attach") }.compactMap { $0.split(separator: "/").first }).sorted().compactMap { property("3707", in: $0 + "/") ?? property("3704", in: $0 + "/") }
+    let boxes: [Substring] = ole.names.filter { $0.hasPrefix("__attach") }.compactMap { $0.split(separator: "/").first }
+    let attached: [String] = Set(boxes).sorted().compactMap { box -> String? in
+      let place: String = String(box) + "/"
+      return property("3707", in: place) ?? property("3704", in: place)
+    }
     guard property("0037") != nil || !body.isEmpty else { throw ProcessingError.conversionFailed(reason: "\(url.lastPathComponent) is not a message") }
     var lines = headers.compactMap { name, value -> String? in value.flatMap { $0.isEmpty ? nil : "\(name): \($0)" } }
     if !attached.isEmpty { lines.append("Attachments: " + attached.joined(separator: ", ")) }
