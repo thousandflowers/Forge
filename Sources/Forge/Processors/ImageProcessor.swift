@@ -32,7 +32,7 @@ final class ImageProcessor: FileProcessor, @unchecked Sendable {
     if Self.isWebP(target), ExternalTools.locate("cwebp") != nil { return true }
     if target == .svg, file.fileType != .svg { return true }
     // A texture: only as a square whose side is a power of two.
-    if target.goes(by: ["pvr"]) {
+    if FormatCatalog.isTexture(target) {
       guard let size = file.dimensions else { return false }
       return size.width == size.height && size.width.nonzeroBitCount == 1
     }

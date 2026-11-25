@@ -16,7 +16,7 @@ final class ModelProcessor: FileProcessor, @unchecked Sendable {
   }
 
   func takes(_ file: ProcessableFile, to target: UTType) -> Bool {
-    Self.writes(Conversions.fileExtension(of: target)) || FormatCatalog.isWritableImage(target)
+    Self.writes(Conversions.fileExtension(of: target)) || (FormatCatalog.isWritableImage(target) && !FormatCatalog.isTexture(target))
   }
 
   /// SceneKit's, where ModelIO has no reader.

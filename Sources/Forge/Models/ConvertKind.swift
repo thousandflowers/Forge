@@ -39,8 +39,9 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
     } else if fileType.goes(by: MidiProcessor.readable) {
       self = .audio
     // What is opened through something else is filed by what comes of it. A
-    // sheet is data before it is pages.
-    } else if let way = ThroughProcessor.way(for: fileType), way.kind != .data {
+    // sheet is data before it is pages. Not a film, whatever it may be called:
+    // a player gives MPEG the .ps of PostScript.
+    } else if !fileType.conforms(to: .audiovisualContent), let way = ThroughProcessor.way(for: fileType), way.kind != .data {
       self = way.kind
     } else if FormatCatalog.isReadableImage(fileType) {
       self = .image

@@ -125,3 +125,32 @@ final class FileFanTests: BaseTestCase {
     }
   }
 }
+
+final class TexturesAndSlidesTests: BaseTestCase {
+  private func can(_ name: String, _ target: String) throws -> Bool {
+    let file = ProcessableFile(url: path(name), fileType: try XCTUnwrap(UTType(filenameExtension: (name as NSString).pathExtension)), fileName: name, fileSize: 1, dimensions: nil)
+    return Conversions.can(file, become: try XCTUnwrap(UTType(filenameExtension: target)))
+  }
+
+  func test_notOfferedWhereItCannotBeMade() throws {
+    for (file, target) in [("a.pdf", "pvr"), ("a.stl", "pvr"), ("a.usdz", "pvr"), ("a.pptx", "pvr"), ("a.svg", "pptx"), ("a.mov", "cbz")] {
+      XCTAssertFalse(try can(file, target), "\(file) \(target)")
+    }
+    for (file, target) in [("a.pdf", "png"), ("a.stl", "png"), ("a.png", "pptx"), ("a.pdf", "cbz")] {
+      XCTAssertTrue(try can(file, target), "\(file) \(target)")
+    }
+  }
+}
+
+/// A player's type for MPEG carries PostScript's extension too.
+final class MpegIsAFilmTests: BaseTestCase {
+  func test_everyCameraFileIsAFilm_andPostScriptADocument() throws {
+    for name in ["m2p", "ts", "m2ts", "mts"] {
+      guard let type = UTType(filenameExtension: name), type.conforms(to: .audiovisualContent) else { continue }
+      XCTAssertEqual(ConvertKind(fileType: type), .video, name)
+    }
+    for name in ["ps", "eps", "ai"] {
+      XCTAssertEqual(ConvertKind(fileType: try XCTUnwrap(UTType(filenameExtension: name))), .document, name)
+    }
+  }
+}

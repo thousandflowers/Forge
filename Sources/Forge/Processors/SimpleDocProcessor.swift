@@ -57,7 +57,7 @@ final class SimpleDocProcessor: FileProcessor, @unchecked Sendable {
       return true
     }
     // Pictures of the pages: only a PDF has pages to draw.
-    return file.fileType.conforms(to: .pdf) && Self.isAPictureFormat(target)
+    return file.fileType.conforms(to: .pdf) && Self.isAPictureFormat(target) && !FormatCatalog.isTexture(target)
   }
 
   func process(

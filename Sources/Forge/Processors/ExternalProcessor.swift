@@ -366,6 +366,7 @@ enum ExternalBridge {
   /// ffmpeg to know.
   private static func isTimeBased(_ ext: String) -> Bool {
     if Subtitles.carriesCues(ext) { return true }
+    if ComicProcessor.readable.contains(ext) { return false }
     guard let type = UTType(filenameExtension: ext), !type.isDynamic else { return true }
     return type.conforms(to: .audiovisualContent) || type.conforms(to: .audio)
   }
