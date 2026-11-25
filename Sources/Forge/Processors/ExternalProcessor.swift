@@ -358,8 +358,16 @@ enum ExternalBridge {
     let sourceIsTimeBased = sourceType.map {
       $0.conforms(to: .audiovisualContent) || $0.conforms(to: .audio)
     } ?? false
-    if !wantsSomethingStill, sourceIsTimeBased, ExternalTools.locate("ffmpeg") != nil { return true }
+    if !wantsSomethingStill, sourceIsTimeBased, ExternalTools.locate("ffmpeg") != nil { return isTimeBased(target) }
     return libreOffice != nil && libreOfficeWrites(from: source).contains(target)
+  }
+
+  /// A film does not become a letter. What macOS has no name for is left to
+  /// ffmpeg to know.
+  private static func isTimeBased(_ ext: String) -> Bool {
+    if Subtitles.carriesCues(ext) { return true }
+    guard let type = UTType(filenameExtension: ext), !type.isDynamic else { return true }
+    return type.conforms(to: .audiovisualContent) || type.conforms(to: .audio)
   }
 
   static func plan(from input: URL, to output: URL, operations: [Operation]) -> Plan? {
@@ -409,7 +417,7 @@ enum ExternalBridge {
       $0.conforms(to: .audiovisualContent) || $0.conforms(to: .audio)
     } ?? false
 
-    if !wantsSomethingStill, sourceIsTimeBased, let ffmpeg = ExternalTools.locate("ffmpeg") {
+    if !wantsSomethingStill, sourceIsTimeBased, isTimeBased(target), let ffmpeg = ExternalTools.locate("ffmpeg") {
       // Only where the film itself is what is written.
       let isSound = targetType.map(MediaProcessor.isSoundOnly) ?? false
       let edit = MediaEdit(operations)
@@ -513,6 +521,8 @@ enum ExternalBridge {
         before = arguments + film.passArguments(1, log: log) + ["-an", "-sn", "-f", "null", "/dev/null"]
         arguments += film.passArguments(2, log: log)
       }
+      // A ringtone is an M4A under another name, which ffmpeg has not heard.
+      if target == "m4r" { arguments += ["-f", "ipod"] }
       arguments.append(output.path)
       return Plan(tool: ffmpeg, toolName: "ffmpeg", arguments: arguments, before: before, leftovers: leftovers)
     }
@@ -531,6 +541,10 @@ enum ExternalBridge {
           // front of somebody otherwise fails on a locked user directory.
           "-env:UserInstallation=file://\(folder.path)/profile",
           "--headless",
+        ]
+        // Opened as a page of the web it has few ways out; as a letter, all.
+        + (["html", "htm"].contains(source) ? ["--infilter=HTML (StarWriter)"] : [])
+        + [
           "--convert-to", target,
           "--outdir", folder.path,
           input.path,

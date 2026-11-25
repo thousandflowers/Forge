@@ -31,12 +31,31 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // Words are a transcript; sound and film containers are what this writes.
     if Self.isWords(target) { return true }
     if FormatCatalog.audioFormatID(for: target) != nil || FormatCatalog.isWritableVideo(target) { return true }
+    // An icon and a texture take certain sizes, and a frame is not one.
+    if target.goes(by: ["icns", "ico", "pvr"]) { return false }
     // Frames, of something that has a picture.
     return !file.fileType.conforms(to: .audio) && FormatCatalog.isWritableImage(target)
   }
 
   func process(
     _ input: URL,
+    to output: URL,
+    with operations: [Operation],
+    progress: @escaping @Sendable (Double) -> Void
+  ) async throws -> ProcessingResult {
+    do {
+      return try await made(from: input, to: output, with: operations, progress: progress)
+    } catch let error as NSError where error.domain == AVFoundationErrorDomain {
+      // It opened, and what is in it could not be read: AVI, mostly. Where no
+      // tool can do the pair, one can make it into a film that macOS reads.
+      guard Self.handedOn(input, to: output) == nil, let copy = try Self.readable(input) else { throw error }
+      defer { try? FileManager.default.removeItem(at: copy.deletingLastPathComponent()) }
+      return try await made(from: copy, to: output, with: operations, progress: progress)
+    }
+  }
+
+  private func made(
+    from input: URL,
     to output: URL,
     with operations: [Operation],
     progress: @escaping @Sendable (Double) -> Void
@@ -57,7 +76,13 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
       // which say neither what nor why. It lists AVI and MPEG among the files
       // it reads and opens few of them, so "damaged" was said of files that
       // play: a tool that can do the pair is asked before anything is said.
-      throw Self.handedOn(input, to: output) ?? ProcessingError.conversionFailed(
+      let pair = Self.handedOn(input, to: output)
+      // And where no tool can, one can make it into a film that macOS opens.
+      if pair == nil, let copy = try Self.readable(input) {
+        defer { try? FileManager.default.removeItem(at: copy.deletingLastPathComponent()) }
+        return try await made(from: copy, to: output, with: operations, progress: progress)
+      }
+      throw pair ?? ProcessingError.conversionFailed(
         reason: "\(input.lastPathComponent) cannot be opened by macOS: it may use a codec macOS has no reader for, "
           + "or be damaged or still arriving.\(Self.whatWouldRead)"
       )
@@ -367,6 +392,26 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     return .unsupportedConversion(
       from: UTType(filenameExtension: source) ?? .movie, to: UTType(filenameExtension: target) ?? .data
     )
+  }
+
+  /// The same film, as macOS reads one, in a folder of its own. Nothing where
+  /// there is no ffmpeg, or where it cannot read it either.
+  private static func readable(_ input: URL) throws -> URL? {
+    guard input.pathExtension.lowercased() != "mov", let ffmpeg = ExternalTools.locate("ffmpeg") else { return nil }
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("forge-readable-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    let copy = folder.appendingPathComponent(input.deletingPathExtension().lastPathComponent).appendingPathExtension("mov")
+    do {
+      try ExternalTools.run(ffmpeg, [
+        "-hide_banner", "-loglevel", "error", "-y", "-i", input.path, "-map", "0:V:0?", "-map", "0:a:0?",
+        "-c:v", "h264_videotoolbox", "-q:v", "80", "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", copy.path,
+      ])
+      return copy
+    } catch {
+      try? FileManager.default.removeItem(at: folder)
+      if error is CancellationError { throw error }
+      return nil
+    }
   }
 
   private static var whatWouldRead: String {

@@ -50,6 +50,10 @@ enum ConvertKind: String, CaseIterable, Codable, Sendable {
       // while the sheet is being drawn, and it is right for anything with a
       // normal name; a mislabelled file simply gets one control too many.
       self = fileType.conforms(to: .audio) ? .audio : .video
+    // Another app may have given it a type of its own, which macOS does not list
+    // among those it opens: it is a film all the same.
+    } else if fileType.conforms(to: .audiovisualContent) || fileType.conforms(to: .audio), ExternalBridge.canHandle(fileType) {
+      self = fileType.conforms(to: .audio) ? .audio : .video
     } else if DataProcessor.handles(fileType) {
       self = .data
     } else if SimpleDocProcessor.readableTypes.contains(where: { fileType.conforms(to: $0) }) || fileType.goes(by: ComicProcessor.readable) {
