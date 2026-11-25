@@ -62,7 +62,7 @@ final class NotchZone {
     let panel = NotchPanel(contentRect: .zero, styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
     panel.title = "Drop zone"
     panel.hang()
-    panel.contentView = NSHostingView(rootView: Hanging(radius: 11).fill(.black).ignoresSafeArea())
+    panel.contentView = NSHostingView(rootView: Hanging(radius: Hanging.resting).fill(.black).ignoresSafeArea())
     panel.registerForDraggedTypes([.fileURL])
     panel.drop = { [weak self] files in
       self?.hide()
@@ -166,7 +166,7 @@ final class NotchReveal: ObservableObject {
 struct OutOfTheNotch: ViewModifier {
   @ObservedObject var reveal: NotchReveal
   @Environment(\.accessibilityReduceMotion) private var isStill
-  private static let radius: CGFloat = 24
+  private static let radius: CGFloat = 28
 
   func body(content: Content) -> some View {
     let isOut = reveal.isOut || isStill
@@ -175,7 +175,7 @@ struct OutOfTheNotch: ViewModifier {
       .background(Color.black)
       .mask(alignment: .top) {
         GeometryReader { place in
-          Hanging(radius: isOut ? Self.radius : 11)
+          Hanging(radius: isOut ? Self.radius : Hanging.resting)
             .frame(width: isOut ? place.size.width : reveal.notch.width + Hanging.shoulder * 2, height: isOut ? place.size.height : reveal.notch.height)
             .frame(maxWidth: .infinity, alignment: .top)
         }
@@ -191,6 +191,11 @@ struct OutOfTheNotch: ViewModifier {
 /// into it, and round below.
 struct Hanging: Shape {
   static let shoulder: CGFloat = 9
+  /// Round the notch, and so rounder than it.
+  static let resting: CGFloat = 16
+  /// A corner begins before its radius, and leaves the edge by degrees: the
+  /// corners macOS draws, where an arc meets its side at a point.
+  private static let reach: CGFloat = 1.25, pull: CGFloat = 0.6
 
   var radius: CGFloat
   var animatableData: CGFloat {
@@ -202,15 +207,21 @@ struct Hanging: Shape {
   func path(in rect: CGRect) -> Path {
     let s = min(Self.shoulder, rect.height / 2, rect.width / 4)
     let left = rect.minX + s, right = rect.maxX - s
-    let r = min(radius, rect.height - s, (right - left) / 2)
+    let r = min(radius * Self.reach, rect.height - s, (right - left) / 2), k = r * Self.pull
     return Path { path in
       path.move(to: CGPoint(x: rect.minX, y: rect.minY))
       path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
       path.addQuadCurve(to: CGPoint(x: right, y: rect.minY + s), control: CGPoint(x: right, y: rect.minY))
       path.addLine(to: CGPoint(x: right, y: rect.maxY - r))
-      path.addQuadCurve(to: CGPoint(x: right - r, y: rect.maxY), control: CGPoint(x: right, y: rect.maxY))
+      path.addCurve(
+        to: CGPoint(x: right - r, y: rect.maxY),
+        control1: CGPoint(x: right, y: rect.maxY - r + k), control2: CGPoint(x: right - r + k, y: rect.maxY)
+      )
       path.addLine(to: CGPoint(x: left + r, y: rect.maxY))
-      path.addQuadCurve(to: CGPoint(x: left, y: rect.maxY - r), control: CGPoint(x: left, y: rect.maxY))
+      path.addCurve(
+        to: CGPoint(x: left, y: rect.maxY - r),
+        control1: CGPoint(x: left + r - k, y: rect.maxY), control2: CGPoint(x: left, y: rect.maxY - r + k)
+      )
       path.addLine(to: CGPoint(x: left, y: rect.minY + s))
       path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.minY), control: CGPoint(x: left, y: rect.minY))
       path.closeSubpath()

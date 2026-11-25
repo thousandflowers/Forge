@@ -100,7 +100,7 @@ struct NotchSignView: View {
       .background(Color.black)
       // Cut to the shape itself: what is in it is wider than the notch it comes
       // out of, and a box cut the corners off until there was room for it.
-      .mask(Hanging(radius: word == nil || !isOut ? 11 : 20))
+      .mask(Hanging(radius: word == nil || !isOut ? Hanging.resting : 24))
       Spacer(minLength: 0)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
