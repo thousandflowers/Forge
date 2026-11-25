@@ -6,6 +6,11 @@ struct LibraryEntry: Identifiable {
     case output = "Comes out"
     case ask = "Asks each time"
     case transform = "Changes"
+    case pictures = "Pictures"
+    case film = "Film"
+    case sound = "Sound"
+    case pages = "Pages"
+    case text = "Text"
     case encode = "Encodes"
     case privacy = "Privacy"
     case logic = "Logic"
@@ -18,7 +23,7 @@ struct LibraryEntry: Identifiable {
       case .logic: return .indigo
       case .output: return .blue
       case .ask: return .purple
-      case .transform: return .orange
+      case .transform, .pictures, .film, .sound, .pages, .text: return .orange
       case .encode: return .green
       case .privacy: return .pink
       }
@@ -58,13 +63,26 @@ struct LibraryEntry: Identifiable {
       LibraryEntry(kind: .step($0), group: $0.libraryGroup, title: $0.title, symbol: $0.symbol, summary: $0.summary)
     }
     entries += Tool.Kind.allCases.filter { $0.suits(category) }.map {
-      LibraryEntry(kind: .tool($0), group: .transform, title: $0.title, symbol: $0.symbol, summary: $0.summary)
+      LibraryEntry(kind: .tool($0), group: $0.libraryGroup, title: $0.title, symbol: $0.symbol, summary: $0.summary)
     }
     return entries
   }
 }
 
 extension Tool.Kind {
+  /// With what it is for, where that is one thing.
+  var libraryGroup: LibraryEntry.Group {
+    guard kinds.count == 1, let only = kinds.first else { return .transform }
+    switch only.presetCategory {
+    case .image: return .pictures
+    case .video: return .film
+    case .audio: return .sound
+    case .document: return .pages
+    case .data: return .text
+    default: return .transform
+    }
+  }
+
   func suits(_ category: PresetCategory) -> Bool {
     category == .custom || kinds.contains { $0.presetCategory == category }
   }

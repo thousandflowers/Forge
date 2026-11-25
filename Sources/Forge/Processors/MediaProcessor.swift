@@ -142,7 +142,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // be dropped, and the film come out looking as if nothing had been said.
     if !videoTracks.isEmpty, operations.film != nil, wanted.conforms(to: .movie) || wanted.conforms(to: .video) {
       guard ExternalTools.locate("ffmpeg") != nil else {
-        throw ProcessingError.conversionFailed(reason: "Film settings need ffmpeg, which Forge downloads: see Capabilities.")
+        throw ProcessingError.conversionFailed(reason: "Film settings need ffmpeg, which Forge downloads: see Store, Tools.")
       }
       throw ProcessingError.unsupportedConversion(
         from: UTType(filenameExtension: input.pathExtension) ?? .movie, to: wanted
@@ -152,7 +152,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     // Drawn by ffmpeg, from the sound as it has been changed.
     if operations.tools.contains(.wave) {
       guard let ffmpeg = ExternalTools.locate("ffmpeg") else {
-        throw ProcessingError.conversionFailed(reason: "Drawing the sound needs ffmpeg, which Forge downloads: see Capabilities.")
+        throw ProcessingError.conversionFailed(reason: "Drawing the sound needs ffmpeg, which Forge downloads: see Store, Tools.")
       }
       try ExternalTools.run(ffmpeg, [
         "-hide_banner", "-loglevel", "error", "-y", "-i", try await heard(input).path,
@@ -289,7 +289,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
     if let handOn = handedOn(asset.url, to: output) { throw handOn }
     throw ProcessingError.conversionFailed(
       reason: "macOS would leave out \(lost.joined(separator: " and ")) of \(asset.url.lastPathComponent), "
-        + "so it was not converted. ffmpeg keeps every track, and Forge downloads it: see Capabilities."
+        + "so it was not converted. ffmpeg keeps every track, and Forge downloads it: see Store, Tools."
     )
   }
 
@@ -370,7 +370,7 @@ final class MediaProcessor: FileProcessor, @unchecked Sendable {
   }
 
   private static var whatWouldRead: String {
-    ExternalTools.locate("ffmpeg") == nil ? " ffmpeg reads most of what macOS does not, and Forge downloads it: see Capabilities." : ""
+    ExternalTools.locate("ffmpeg") == nil ? " ffmpeg reads most of what macOS does not, and Forge downloads it: see Store, Tools." : ""
   }
 
   static func nothingLeft(of input: URL) -> String { "\(input.lastPathComponent) without its sound has nothing left to write." }

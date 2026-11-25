@@ -294,6 +294,15 @@ enum ExternalBridge {
     return libreOffice != nil && libreOfficeFamilies.contains { $0.reads.contains(ext.lowercased()) }
   }
 
+  /// What would write this, whether or not it is here.
+  static func writer(of type: UTType) -> String? {
+    guard let ext = FormatCatalog.fileExtension(for: type) ?? type.preferredFilenameExtension else { return nil }
+    if type.conforms(to: .image) { return ImageProcessor.isWebP(type) ? "cwebp" : nil }
+    if tables.contains(ext) { return "duckdb" }
+    if books.contains(ext) { return bookTargets.contains(ext) ? ExternalTool.calibre.binary : nil }
+    return type.conforms(to: .audiovisualContent) || type.conforms(to: .audio) ? "ffmpeg" : nil
+  }
+
   /// Whether a tool on this Mac writes the format - what `plan` would find a
   /// writer for, asked of the target alone. Pictures stay ImageIO's, which
   /// hands WebP to cwebp itself.

@@ -170,7 +170,7 @@ extension RulePreset {
   /// What it does to that file, in a few words: what its name says, or else what
   /// the preset does, or else what it becomes.
   func words(for file: ProcessableFile) -> String {
-    func steps(_ chain: [Operation]) -> [String] { chain.flatMap(\.leaves).filter { !$0.isFormat }.map(PresetCard.chip) }
+    func steps(_ chain: [Operation]) -> [String] { chain.flatMap(\.leaves).filter { !$0.isFormat }.map(PresetChip.text) }
     let named = steps(NameTokens.applying(to: [], from: file.fileName, tools: readsTools))
     let all = named.isEmpty ? steps(actions) : named
     guard all.isEmpty else {

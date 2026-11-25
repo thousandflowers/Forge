@@ -22,19 +22,26 @@ struct CutView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      stage.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.black.opacity(0.9))
-      VStack(alignment: .leading, spacing: 12) {
+      stage.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(white: 0.07))
+        .environment(\.colorScheme, .dark)
+      VStack(alignment: .leading, spacing: 14) {
         if model.isTimed { timeline }
         controls
-        Divider()
-        footer
       }
-      .padding(16)
+      .padding(.horizontal, 20)
+      .padding(.vertical, 14)
+      Divider()
+      footer
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
     }
     .frame(minWidth: 720, minHeight: model.hasPicture ? 560 : 260)
     .task {
       await model.load()
       player.part = model.from...max(model.from, model.to)
+      // What was loaded has been told by then: the end going to the end is not
+      // somebody moving it.
+      try? await Task.sleep(nanoseconds: 100_000_000)
       player.begin()
     }
     .onChange(of: model.from) { player.part = $0...max($0, model.to); player.show($0) }
@@ -92,13 +99,21 @@ struct CutView: View {
 
   private var timeline: some View {
     HStack(spacing: 10) {
-      Button { player.toggle() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 18) }
+      Button { player.toggle() } label: {
+        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+          .font(.system(size: 15))
+          .foregroundStyle(.white)
+          .frame(width: 34, height: 34)
+          .background(Color.accentColor, in: Circle())
+          .contentShape(Circle())
+      }
+        .buttonStyle(.plain)
         .keyboardShortcut(.space, modifiers: [])
         .help("Play the part")
         .accessibilityLabel(Text(player.isPlaying ? "Pause" : "Play"))
       Timeline(model: model, player: player)
-      TimeField(label: "From", value: model.from) { model.setFrom($0); return model.from }
-      TimeField(label: "To", value: model.to) { model.setTo($0); return model.to }
+      labelled("From") { TimeField(label: "From", value: model.from) { model.setFrom($0); return model.from } }
+      labelled("To") { TimeField(label: "To", value: model.to) { model.setTo($0); return model.to } }
     }
     .disabled(!isEditing || !model.isReady)
     .background {
@@ -107,6 +122,13 @@ struct CutView: View {
       Button("") { model.setTo(player.time) }.keyboardShortcut("o", modifiers: []).opacity(0).accessibilityHidden(true)
       Button("") { player.step(-1) }.keyboardShortcut(.leftArrow, modifiers: []).opacity(0).accessibilityHidden(true)
       Button("") { player.step(1) }.keyboardShortcut(.rightArrow, modifiers: []).opacity(0).accessibilityHidden(true)
+    }
+  }
+
+  private func labelled<Field: View>(_ name: String, @ViewBuilder _ field: () -> Field) -> some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text(name).font(.caption).foregroundStyle(.secondary).accessibilityHidden(true)
+      field()
     }
   }
 
@@ -121,10 +143,13 @@ struct CutView: View {
         }
         .fixedSize()
         if model.isCropped { Button("Whole picture") { model.showWhole() } }
-        Button { model.turn() } label: { Image(systemName: "rotate.right") }
-          .help("Rotate right").accessibilityLabel(Text("Rotate right"))
-        Button { model.mirror() } label: { Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right") }
-          .help("Mirror").accessibilityLabel(Text("Mirror"))
+        ControlGroup {
+          Button { model.turn() } label: { Image(systemName: "rotate.right") }
+            .help("Rotate right").accessibilityLabel(Text("Rotate right"))
+          Button { model.mirror() } label: { Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right") }
+            .help("Mirror").accessibilityLabel(Text("Mirror"))
+        }
+        .fixedSize()
       }
       if model.isTimed {
         Picker("Speed", selection: $model.speed) {
@@ -151,7 +176,7 @@ struct CutView: View {
 
   private var footer: some View {
     HStack(spacing: 10) {
-      Text(summary).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+      Text(summary).font(.callout.weight(.medium)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
       Spacer(minLength: 12)
       switch state {
       case .editing:
@@ -213,6 +238,18 @@ private struct CropBox: View {
       .fill(Color.black.opacity(0.55), style: FillStyle(eoFill: true))
       .allowsHitTesting(false)
 
+      // In thirds, while it is being moved.
+      Path { path in
+        for third in [1.0 / 3, 2.0 / 3] {
+          path.move(to: CGPoint(x: box.minX + box.width * third, y: box.minY))
+          path.addLine(to: CGPoint(x: box.minX + box.width * third, y: box.maxY))
+          path.move(to: CGPoint(x: box.minX, y: box.minY + box.height * third))
+          path.addLine(to: CGPoint(x: box.maxX, y: box.minY + box.height * third))
+        }
+      }
+      .stroke(Color.white.opacity(start == nil ? 0 : 0.5), lineWidth: 0.5)
+      .allowsHitTesting(false)
+
       Rectangle().strokeBorder(Color.white, lineWidth: 1)
         .background(Color.white.opacity(0.001))
         .frame(width: box.width, height: box.height)
@@ -256,7 +293,7 @@ private struct Timeline: View {
   @State private var frames: [CGImage] = []
   @State private var grabbed: Double?
 
-  private static let height: CGFloat = 44
+  private static let height: CGFloat = 52
   private static let handle: CGFloat = 12
   private static let count = 14
 
@@ -286,7 +323,7 @@ private struct Timeline: View {
         Color.black.opacity(0.55).frame(width: max(0, left - Self.handle), height: Self.height).offset(x: Self.handle).allowsHitTesting(false)
         Color.black.opacity(0.55).frame(width: max(0, Self.handle + width - right), height: Self.height).offset(x: right).allowsHitTesting(false)
 
-        Rectangle().strokeBorder(Color.yellow, lineWidth: 3)
+        Rectangle().strokeBorder(Color.accentColor, lineWidth: 3)
           .frame(width: max(0, right - left), height: Self.height).offset(x: left).allowsHitTesting(false)
         grip("Start", "chevron.compact.left", at: left - Self.handle, perSecond: perSecond, value: model.from) { model.setFrom($0) }
         grip("End", "chevron.compact.right", at: right, perSecond: perSecond, value: model.to) { model.setTo($0) }
@@ -301,9 +338,9 @@ private struct Timeline: View {
   }
 
   private func grip(_ label: String, _ symbol: String, at x: CGFloat, perSecond: CGFloat, value: Double, set: @escaping (Double) -> Void) -> some View {
-    RoundedRectangle(cornerRadius: 4).fill(Color.yellow)
+    RoundedRectangle(cornerRadius: 4).fill(Color.accentColor)
       .frame(width: Self.handle, height: Self.height)
-      .overlay { Image(systemName: symbol).font(.system(size: 12, weight: .bold)).foregroundStyle(.black.opacity(0.7)) }
+      .overlay { Image(systemName: symbol).font(.system(size: 12, weight: .bold)).foregroundStyle(.white) }
       .offset(x: x)
       .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
         .onChanged { moved in

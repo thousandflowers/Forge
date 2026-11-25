@@ -1276,13 +1276,19 @@ final class ConvertKindOfferingTests: XCTestCase {
   }
 }
 
-/// The sidebar counts what is there, as Shortcuts does: presets and folders.
-final class SidebarCountTests: XCTestCase {
-  func test_sidebarCountsPresetsAndFolders() {
-    XCTAssertEqual(AppSection.presets.count(presets: 6, folders: 2), 6)
-    XCTAssertEqual(AppSection.folders.count(presets: 6, folders: 2), 2)
-    XCTAssertEqual(AppSection.process.count(presets: 6, folders: 2), 0, "Convert has nothing to count")
-    XCTAssertEqual(AppSection.history.count(presets: 6, folders: 2), 0, "a number in the hundreds says nothing")
+/// The sidebar counts what is waiting, and nothing else.
+@MainActor
+final class SidebarCountTests: BaseTestCase {
+  func test_whatHasBeenConvertedIsNotWaiting() throws {
+    let batch = BatchViewModel()
+    XCTAssertEqual(batch.waiting, 0)
+    let one = path("one.png"), two = path("two.png")
+    try Fixture.image(at: one, width: 8, height: 8)
+    try Fixture.image(at: two, width: 8, height: 8)
+    batch.files = [try ProcessableFile(url: one), try ProcessableFile(url: two)]
+    XCTAssertEqual(batch.waiting, 2)
+    batch.statusMap[batch.files[0].id] = .completed
+    XCTAssertEqual(batch.waiting, 1)
   }
 }
 
@@ -1378,9 +1384,9 @@ final class ConvertSheetNothingTests: XCTestCase {
   }
 
   func test_keepingEveryTagIsNotCalledNoMetadata() {
-    XCTAssertEqual(PresetCard.chip(.stripMetadata(policy: .keepAll)), "all metadata")
-    XCTAssertEqual(PresetCard.chip(.stripMetadata(policy: .stripLocation)), "no location")
-    XCTAssertEqual(PresetCard.chip(.stripMetadata(policy: .stripAll)), "no metadata")
+    XCTAssertEqual(PresetChip.text(.stripMetadata(policy: .keepAll)), "all metadata")
+    XCTAssertEqual(PresetChip.text(.stripMetadata(policy: .stripLocation)), "no location")
+    XCTAssertEqual(PresetChip.text(.stripMetadata(policy: .stripAll)), "no metadata")
   }
 }
 

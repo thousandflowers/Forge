@@ -20,12 +20,17 @@ struct MenuBarView: View {
   var body: some View {
     let recent = Recent.entries(of: model.history)
     VStack(spacing: 0) {
-      VStack(spacing: 2) {
-        ForEach(running.jobs.prefix(Recent.most)) { RunningRow(job: $0) }
-        ForEach(recent) { RecentRow(entry: $0, opening: openings) }
+      header
+      if recent.isEmpty, running.jobs.isEmpty {
+        nothing
+      } else {
+        VStack(spacing: 2) {
+          ForEach(running.jobs.prefix(Recent.most)) { RunningRow(job: $0) }
+          ForEach(recent) { RecentRow(entry: $0, opening: openings) }
+        }
+        .padding(.horizontal, Self.padding)
+        .padding(.bottom, Self.padding)
       }
-      .padding(Self.padding)
-      if recent.isEmpty, running.jobs.isEmpty { nothing }
       Divider()
       footer
     }
@@ -34,47 +39,70 @@ struct MenuBarView: View {
     .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in openings += 1 }
   }
 
-  private var nothing: some View {
-    VStack(spacing: 4) {
-      Image(systemName: "clock").font(.title2).foregroundStyle(.secondary)
-      Text("No history yet").font(.callout.weight(.medium))
-      Text("Files you convert will show up here.").font(.caption).foregroundStyle(.secondary)
-    }
-    .padding(.vertical, 24)
-  }
-
-  private var footer: some View {
-    HStack(spacing: 12) {
-      Menu("Convert") {
-        if model.usablePresets.isEmpty { Text("No presets turned on") }
-        ForEach(model.usablePresets) { preset in
-          Button(preset.name) { convert(with: preset) }.disabled(!model.canDeliver(preset))
-        }
-      }
-      .menuStyle(.borderlessButton)
-      .fixedSize()
+  private var header: some View {
+    HStack(spacing: 8) {
+      Text(running.jobs.isEmpty ? "Recent" : "Converting").font(.headline)
+      if running.jobs.count > 1 { Tag(text: "\(running.jobs.count)", tint: .accentColor) }
       Spacer()
-      icon("clock.arrow.circlepath", "History") {
+      MenuBarButton(symbol: "clock", name: "History") {
         // The editor covers the window, and is not left without being asked.
         if model.presetEditor == nil { model.section = .history }
         openForge()
       }
-      icon(model.dropZone.isShown ? "rectangle.slash" : "arrow.down.doc", model.dropZone.isShown ? "Hide Drop Zone" : "Show Drop Zone") {
-        model.dropZone.toggle()
-      }
-      icon("macwindow", "Open Forge", openForge)
-      icon("power", "Quit Forge") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }
     .padding(.horizontal, Self.padding + 6)
-    .padding(.vertical, 9)
+    .padding(.top, 10)
+    .padding(.bottom, 6)
   }
 
-  private func icon(_ symbol: String, _ name: String, _ action: @escaping () -> Void) -> some View {
-    Button(action: action) { Image(systemName: symbol).frame(width: 22, height: 22).contentShape(Rectangle()) }
-      .buttonStyle(.plain)
-      .foregroundStyle(.secondary)
-      .help(name)
-      .accessibilityLabel(Text(name))
+  private var nothing: some View {
+    VStack(spacing: 8) {
+      FileFan(isOpen: false, size: 34)
+      Text("No history yet").font(.callout.weight(.medium))
+      Text("Files you convert will show up here.").font(.caption).foregroundStyle(.secondary)
+    }
+    .padding(.vertical, 20)
+  }
+
+  private var footer: some View {
+    HStack(spacing: 4) {
+      Menu {
+        if model.usablePresets.isEmpty { Text("No presets turned on") }
+        ForEach(model.usablePresets) { preset in
+          Button(preset.name) { convert(with: preset) }.disabled(!model.canDeliver(preset))
+        }
+      } label: {
+        Text("Convert")
+      }
+      .menuStyle(.button)
+      .buttonStyle(.bordered)
+      .fixedSize()
+      Spacer()
+      MenuBarButton(symbol: model.dropZone.isShown ? "rectangle.slash" : "arrow.down.doc", name: model.dropZone.isShown ? "Hide Drop Zone" : "Show Drop Zone") {
+        model.dropZone.toggle()
+      }
+      settings
+      MenuBarButton(symbol: "macwindow", name: "Open Forge", action: openForge)
+      MenuBarButton(symbol: "power", name: "Quit Forge") { NSApp.terminate(nil) }.keyboardShortcut("q")
+    }
+    .padding(.horizontal, Self.padding + 4)
+    .padding(.vertical, 8)
+  }
+
+  @ViewBuilder
+  private var settings: some View {
+    if #available(macOS 14, *) {
+      SettingsLink { MenuBarButton.face("gearshape") }
+        .buttonStyle(MenuBarButton.Style())
+        .simultaneousGesture(TapGesture().onEnded { NSApp.activate(ignoringOtherApps: true) })
+        .help("Settings…")
+        .accessibilityLabel(Text("Settings…"))
+    } else {
+      MenuBarButton(symbol: "gearshape", name: "Settings…") {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+      }
+    }
   }
 
   private func openForge() {
@@ -103,6 +131,41 @@ struct MenuBarView: View {
     guard destination.runModal() == .OK, let folder = destination.url else { return }
 
     model.convertFromMenuBar(files.urls, with: preset, into: folder)
+  }
+}
+
+/// A symbol to press, which answers the pointer.
+private struct MenuBarButton: View {
+  let symbol: String
+  let name: String
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) { Self.face(symbol) }
+      .buttonStyle(Style())
+      .help(name)
+      .accessibilityLabel(Text(name))
+  }
+
+  static func face(_ symbol: String) -> some View {
+    Image(systemName: symbol).font(.system(size: 13, weight: .medium)).frame(width: 28, height: 26)
+  }
+
+  struct Style: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { Face(configuration: configuration) }
+
+    private struct Face: View {
+      let configuration: Configuration
+      @State private var isUnder = false
+
+      var body: some View {
+        configuration.label
+          .foregroundStyle(isUnder ? Color.primary : .secondary)
+          .background(Color.primary.opacity(configuration.isPressed ? 0.14 : isUnder ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+          .contentShape(Rectangle())
+          .onHover { isUnder = $0 }
+      }
+    }
   }
 }
 

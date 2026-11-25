@@ -8,6 +8,15 @@ struct PresetsView: View {
   @State private var dropTarget: UUID?
   /// The preset waiting on a yes before it is deleted.
   @State private var deleting: RulePreset?
+  @State private var search = ""
+
+  private var found: [RulePreset] {
+    let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
+    guard !needle.isEmpty else { return model.presets }
+    return model.presets.filter { preset in
+      ([preset.name, preset.description] + preset.actions.map(PresetChip.text)).contains { $0.lowercased().contains(needle) }
+    }
+  }
 
   var body: some View {
     Group {
@@ -15,10 +24,12 @@ struct PresetsView: View {
         EmptyStateView(icon: "slider.horizontal.3", title: "No presets",
                        message: "Create a preset to define how files are converted.",
                        actionTitle: "New Preset") { model.presetEditor = PresetEditorRequest(preset: nil) }
+      } else if found.isEmpty {
+        EmptyStateView(icon: "magnifyingglass", title: "Nothing matches", message: "No preset of yours fits what you are looking for.")
       } else {
         ScrollView {
-          LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 16)], spacing: 16) {
-            ForEach(model.presets) { preset in
+          LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 16)], spacing: 16) {
+            ForEach(found) { preset in
               PresetCard(
                 preset: preset,
                 deliverable: model.canDeliver(preset),
@@ -26,8 +37,7 @@ struct PresetsView: View {
                   get: { preset.isEnabled },
                   set: { model.setPreset(preset, enabled: $0) }
                 ),
-                onShare: { share(preset) },
-                onDelete: { deleting = preset }
+                actions: { actions(for: preset) }
               )
                 .onTapGesture { model.presetEditor = PresetEditorRequest(preset: preset) }
                 // Files dropped on a preset run through it: they go to the
@@ -50,24 +60,14 @@ struct PresetsView: View {
                   RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous)
                     .strokeBorder(Color.accentColor, lineWidth: dropTarget == preset.id ? 2.5 : 0)
                 )
-                .contextMenu {
-                  Button("Edit") { model.presetEditor = PresetEditorRequest(preset: preset) }
-                  Button("Duplicate") { model.duplicatePreset(preset) }
-                  Button("Share…") { share(preset) }
-                  Divider()
-                  Button("Move Up") { model.movePreset(preset, by: -1) }
-                    .disabled(model.presets.first?.id == preset.id)
-                  Button("Move Down") { model.movePreset(preset, by: 1) }
-                    .disabled(model.presets.last?.id == preset.id)
-                  Divider()
-                  Button("Delete…", role: .destructive) { deleting = preset }
-                }
+                .contextMenu { actions(for: preset) }
             }
           }
           .padding(20)
         }
       }
     }
+    .searchable(text: $search, placement: .toolbar, prompt: "Search presets")
     // A preset can be an afternoon's work, and there is no Undo: one click on
     // a small × used to delete it for good.
     .confirmationDialog(
@@ -97,6 +97,20 @@ struct PresetsView: View {
     }
   }
 
+  @ViewBuilder
+  private func actions(for preset: RulePreset) -> some View {
+    Button("Edit") { model.presetEditor = PresetEditorRequest(preset: preset) }
+    Button("Duplicate") { model.duplicatePreset(preset) }
+    Button("Share…") { share(preset) }
+    Divider()
+    Button("Move Up") { model.movePreset(preset, by: -1) }
+      .disabled(model.presets.first?.id == preset.id)
+    Button("Move Down") { model.movePreset(preset, by: 1) }
+      .disabled(model.presets.last?.id == preset.id)
+    Divider()
+    Button("Delete…", role: .destructive) { deleting = preset }
+  }
+
   /// One preset to one file, named after it, so what lands in somebody's
   /// Downloads says which preset it is.
   private func share(_ preset: RulePreset) {
@@ -117,85 +131,56 @@ struct PresetsView: View {
 
 }
 
-struct PresetCard: View {
+struct PresetCard<Actions: View>: View {
   let preset: RulePreset
   /// False when the target format cannot be written on this Mac.
   var deliverable = true
   /// Off presets stay in the list and are offered nowhere.
   @Binding var isEnabled: Bool
-  /// Hand this one preset to somebody. Its own button, on its own card.
-  var onShare: (() -> Void)? = nil
-  let onDelete: () -> Void
+  /// What can be done with it, in the menu on the card.
+  @ViewBuilder let actions: () -> Actions
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      HStack(spacing: 8) {
-        Image(systemName: preset.category.icon)
-          .foregroundStyle(isEnabled ? Color.accentColor : .secondary)
-          .font(.title3)
-        Spacer()
-        Toggle("", isOn: $isEnabled)
-          .toggleStyle(.switch)
-          .controlSize(.mini)
-          .labelsHidden()
-          .help(isEnabled ? "Turn this preset off" : "Turn this preset on")
-          .accessibilityLabel(Text("Use \(preset.name)"))
-        if let onShare {
-          Button(action: onShare) {
-            Image(systemName: "square.and.arrow.up")
-              .font(.caption.weight(.semibold))
-          }
-          .buttonStyle(.borderless)
-          .foregroundStyle(.secondary)
-          .help("Share “\(preset.name)”")
-          .accessibilityLabel(Text("Share \(preset.name)"))
-        }
-        Button(role: .destructive, action: onDelete) {
-          Image(systemName: "xmark")
-            .font(.caption.weight(.semibold))
-        }
-        .buttonStyle(.borderless)
-        .foregroundStyle(.secondary)
-        .help("Delete “\(preset.name)”")
-        .accessibilityLabel(Text("Delete \(preset.name)"))
-      }
-      HStack(spacing: 6) {
+      HStack(spacing: 10) {
+        BlockIcon(symbol: preset.category.icon, tint: isEnabled ? preset.category.tint : .gray, size: 30)
         Text(preset.name).font(.headline).lineLimit(1)
         if !deliverable {
           Image(systemName: "exclamationmark.triangle.fill")
             .foregroundStyle(.orange)
             .help("This Mac cannot write \(preset.targetFormat.flatMap(FormatCatalog.fileExtension(for:))?.uppercased() ?? "that format"). Edit or delete this preset.")
         }
+        Spacer(minLength: 0)
+        Menu(content: actions) { Image(systemName: "ellipsis.circle") }
+          .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+          .accessibilityLabel(Text("More for \(preset.name)"))
       }
       Text(preset.description)
-        .font(.callout).foregroundStyle(.secondary).lineLimit(2)
+        .font(.callout).foregroundStyle(.secondary).lineLimit(2, reservesSpace: true)
         .frame(maxWidth: .infinity, alignment: .leading)
-      if !chips.isEmpty {
-        Spacer(minLength: 0)
-        HStack(spacing: 6) {
-          ForEach(chips, id: \.self) { chip in
-            Text(chip)
-              .font(.caption2)
-              .padding(.horizontal, 6).padding(.vertical, 2)
-              .background(RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.12)))
-          }
-        }
+      Spacer(minLength: 0)
+      HStack(spacing: 8) {
+        TagRow(texts: preset.actions.map(PresetChip.text))
+        Spacer(minLength: 4)
+        Toggle("In Convert", isOn: $isEnabled)
+          .toggleStyle(.switch)
+          .controlSize(.mini)
+          .font(.caption)
+          .fixedSize()
+          .help(isEnabled ? "Offered when you convert" : "Kept, and offered nowhere")
+          .accessibilityLabel(Text("Use \(preset.name)"))
       }
     }
     .padding(14)
-    .frame(height: 150, alignment: .top)
-    .forgeCard()
-    .contentShape(Rectangle())
-    .opacity(isEnabled ? 1 : 0.5)
+    .frame(height: 142, alignment: .top)
+    .forgeCard(lifts: true)
+    .opacity(isEnabled ? 1 : 0.6)
   }
+}
 
-  /// One chip per action, in the order they run, so the card shows the chain
-  /// rather than a summary of fields that no longer exist.
-  private var chips: [String] {
-    preset.actions.map(Self.chip)
-  }
-
-  static func chip(_ action: Operation) -> String {
+/// What a step is, in a word or two.
+enum PresetChip {
+  static func text(_ action: Operation) -> String {
     switch action {
     case .convertFormat(let to):
       return (FormatCatalog.fileExtension(for: to) ?? "fmt").uppercased()

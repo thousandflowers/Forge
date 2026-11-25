@@ -161,30 +161,36 @@ struct BatchProcessingView: View {
   }
 
   private var dropZone: some View {
-    VStack(spacing: 14) {
-      Image(systemName: "square.and.arrow.down.on.square")
-        .font(.system(size: 52, weight: .light))
-        .foregroundStyle(isTargeted ? Color.accentColor : Color.secondary)
-      Text("Drop files to convert").font(.title2.weight(.medium))
+    let shape = RoundedRectangle(cornerRadius: Metrics.blockRadius, style: .continuous)
+    return VStack(spacing: 14) {
+      FileFan(isOpen: isTargeted)
+      Text("Drop files to convert").font(.title2.weight(.semibold))
       Button { addFiles() } label: { Label("Choose Files…", systemImage: "folder") }
-        .controlSize(.large).padding(.top, 4)
+        .controlSize(.large)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(
-      RoundedRectangle(cornerRadius: 16)
-        .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [7]))
-        .foregroundStyle(isTargeted ? Color.accentColor : Color.secondary.opacity(0.22))
+    .background(shape.fill(Color.accentColor.opacity(isTargeted ? 0.08 : 0)))
+    .overlay(
+      shape.strokeBorder(style: StrokeStyle(lineWidth: isTargeted ? 2.5 : 1.5, dash: [7]))
+        .foregroundStyle(isTargeted ? Color.accentColor : Color.secondary.opacity(0.28))
     )
-    .padding(28)
+    .padding(20)
     .contentShape(Rectangle())
   }
 
   private var fileTable: some View {
     Table(vm.files.sorted(using: sortOrder), sortOrder: $sortOrder) {
       TableColumn("File", value: \.fileName) { f in
-        Text(f.fileName)
-          .lineLimit(1)
-          .truncationMode(.middle)
+        HStack(spacing: 8) {
+          PreviewImage(url: f.url, maxPixels: 64)
+            .frame(width: 24, height: 24)
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .accessibilityHidden(true)
+          Text(f.fileName)
+            .lineLimit(1)
+            .truncationMode(.middle)
+        }
+          .frame(height: 30)
           .contextMenu {
             // Images only: Vision reads pictures, and offering this for a CSV
             // would be a menu item that finds nothing every time.
@@ -235,6 +241,7 @@ struct BatchProcessingView: View {
         }
       }
     }
+    .tableStyle(.inset(alternatesRowBackgrounds: false))
   }
 
   private var processingBar: some View {
@@ -271,6 +278,14 @@ struct BatchProcessingView: View {
         Text(saving).font(.callout).foregroundStyle(.secondary)
       }
       Spacer()
+      Menu {
+        StartChoices(batch: vm)
+      } label: {
+        Label(vm.startsAt.map { "Starts at \($0.formatted(date: .omitted, time: .shortened))" } ?? "Start now", systemImage: "clock")
+      }
+      .menuStyle(.borderlessButton)
+      .fixedSize()
+      .help("Start this conversion now, or later")
       Button(vm.convertTitle) { openOptions() }
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
@@ -488,7 +503,7 @@ struct BatchProcessingView: View {
     lines.append("\(vm.files.count) file\(vm.files.count == 1 ? "" : "s"), \(totalSize.formatted(.byteCount(style: .file)))")
 
     if let preset {
-      let chain = preset.actions.map(PresetCard.chip).joined(separator: " · ")
+      let chain = preset.actions.map(PresetChip.text).joined(separator: " · ")
       if !chain.isEmpty { lines.append(chain) }
     }
 
@@ -520,6 +535,8 @@ struct BatchProcessingView: View {
 @MainActor
 final class BatchViewModel: ObservableObject {
   @Published var files: [ProcessableFile] = []
+  /// Put here, and nothing done about them yet.
+  var waiting: Int { files.filter { statusMap[$0.id] == nil }.count }
   /// What they should become, kept with them.
   @Published var choice = ConvertChoice()
   /// A chain handed to the screen rather than chosen on it - a row in history
@@ -833,4 +850,44 @@ final class BatchViewModel: ObservableObject {
 private extension ProcessableFile {
   /// What the Type column shows and sorts by.
   var kindName: String { fileType.localizedDescription ?? fileType.preferredFilenameExtension ?? "—" }
+}
+
+/// When the next conversion starts.
+struct StartChoices: View {
+  @ObservedObject var batch: BatchViewModel
+
+  var body: some View {
+    Button(batch.startsAt == nil ? "✓ Now" : "Now") { batch.startsAt = nil }
+    ForEach([15, 60, 180, 480], id: \.self) { minutes in
+      Button(minutes < 60 ? "In \(minutes) minutes" : "In \(minutes / 60) \(minutes == 60 ? "hour" : "hours")") {
+        batch.startsAt = Date().addingTimeInterval(Double(minutes) * 60)
+      }
+    }
+    if let startsAt = batch.startsAt { Text("At \(startsAt.formatted(date: .omitted, time: .shortened))") }
+  }
+}
+
+/// A picture, a film and a page, which make room for what is being brought.
+struct FileFan: View {
+  let isOpen: Bool
+  var size: CGFloat = 62
+  @Environment(\.accessibilityReduceMotion) private var isStill
+
+  private static let kinds: [PresetCategory] = [.image, .document, .video]
+
+  var body: some View {
+    ZStack {
+      ForEach(Array(Self.kinds.enumerated()), id: \.offset) { index, kind in
+        let side = CGFloat(index - 1)
+        BlockIcon(symbol: kind.icon, tint: kind.tint, size: size)
+          .shadow(color: .black.opacity(0.18), radius: 5, y: 3)
+          .rotationEffect(.degrees(Double(side) * (isOpen ? 16 : 9)))
+          .offset(x: side * size * (isOpen ? 0.86 : 0.6), y: abs(side) * size * 0.1)
+          .zIndex(index == 1 ? 1 : 0)
+      }
+    }
+    .frame(width: size * 3, height: size * 1.4)
+    .animation(isStill ? nil : .spring(response: 0.3, dampingFraction: 0.7), value: isOpen)
+    .accessibilityHidden(true)
+  }
 }

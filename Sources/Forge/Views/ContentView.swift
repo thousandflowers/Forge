@@ -8,9 +8,7 @@ struct ContentView: View {
   var body: some View {
     NavigationSplitView {
       List(AppSection.allCases, selection: $model.section) { item in
-        Label(item.title, systemImage: item.icon)
-          .badge(item.count(presets: model.presets.count, folders: model.folders.count))
-          .tag(item)
+        SectionRow(section: item, batch: batch).tag(item)
       }
       .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
       .navigationTitle("Forge")
@@ -22,7 +20,10 @@ struct ContentView: View {
     // that reads the window that way.
     .accessibilityHidden(model.presetEditor != nil)
     .task { await model.bootstrap() }
-    .onAppear { model.showWindow = { openWindow(id: MenuBarView.windowID) } }
+    .onAppear {
+      model.showWindow = { openWindow(id: MenuBarView.windowID) }
+      if !UserDefaults.standard.bool(forKey: WelcomeView.seenKey) { openWindow(id: WelcomeView.windowID) }
+    }
     .preferredColorScheme(model.settings.appearance.colorScheme)
     // A preset is a program, and a program is not written in a sheet: the
     // editor takes the window, sidebar included, the way Shortcuts does.
@@ -31,13 +32,16 @@ struct ContentView: View {
         PresetEditorView(
           preset: request.preset,
           conversion: request.conversion,
-          onSave: { model.savePreset($0) },
+          offer: request.offer,
+          onSave: { request.offer == nil ? model.savePreset($0) : model.install($0) },
           onClose: { model.presetEditor = nil }
         )
         .id(request.id)
         .transition(.move(edge: .bottom).combined(with: .opacity))
       }
     }
+    // What is in it is for what the editor covers.
+    .toolbar(model.presetEditor == nil ? .automatic : .hidden, for: .windowToolbar)
     .animation(.easeInOut(duration: 0.2), value: model.presetEditor?.id)
     // Running something again from History is a conversion, so the Convert
     // screen is where it happens.
@@ -62,11 +66,21 @@ struct ContentView: View {
     switch model.section ?? .process {
     case .process:  BatchProcessingView(vm: batch)
     case .presets:  PresetsView()
-    case .gallery:  GalleryView()
+    case .store:    StoreView()
     case .folders:  MonitoredFoldersView()
-    case .capabilities: CapabilitiesView()
     case .history:  HistoryView()
-    case .settings: SettingsView()
     }
+  }
+}
+
+/// A place in the sidebar, and what is waiting there. What is only there is
+/// not counted: a number that never goes away is not read.
+private struct SectionRow: View {
+  let section: AppSection
+  @ObservedObject var batch: BatchViewModel
+
+  var body: some View {
+    Label(section.title, systemImage: section.icon)
+      .badge(section == .process ? batch.waiting : 0)
   }
 }

@@ -8,7 +8,7 @@ struct MonitoredFoldersView: View {
   var body: some View {
     Group {
       if model.folders.isEmpty {
-        EmptyStateView(icon: "folder.badge.gearshape", title: "No monitored folders",
+        EmptyStateView(icon: "folder.badge.gearshape", title: "No watched folders",
                        message: "Rename a file on the Desktop to clip_mute.mp4, and it is done. Or add a folder, and Forge converts what is dropped into it.",
                        actionTitle: "Watch my Desktop and Downloads for names",
                        action: { model.watchForNames() })
@@ -43,13 +43,13 @@ private struct FolderRow: View {
   var body: some View {
     HStack(spacing: 14) {
       HStack(spacing: 6) {
-        Image(systemName: folder.isActive ? "folder.fill" : "folder")
-          .font(.title2).foregroundStyle(folder.isActive ? Color.accentColor : .secondary)
+        BlockIcon(symbol: "folder.fill", tint: folder.isActive ? .accentColor : .gray, size: 30)
         Image(systemName: "arrow.right").font(.caption).foregroundStyle(.secondary)
-        Image(systemName: preset?.category.icon ?? "questionmark")
-          .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
-          .frame(width: Metrics.iconSize + 4, height: Metrics.iconSize + 4)
-          .background(folder.isActive ? Color.accentColor : .secondary, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        // Without a preset it is the name that says.
+        BlockIcon(
+          symbol: folder.ruleId == AppModel.noPreset ? "character.cursor.ibeam" : preset?.category.icon ?? "questionmark",
+          tint: folder.isActive ? preset?.category.tint ?? .orange : .gray, size: 30
+        )
       }
       VStack(alignment: .leading, spacing: 2) {
         Text(folder.arrivalSentence).font(.system(size: Metrics.bodyText, weight: .semibold))

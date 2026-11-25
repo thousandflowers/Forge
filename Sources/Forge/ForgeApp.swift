@@ -11,7 +11,8 @@ struct ForgeApp: App {
     Window("Forge", id: MenuBarView.windowID) {
       ContentView(batch: batch)
         .environmentObject(model)
-        .frame(minWidth: 880, minHeight: 600)
+        // The editor, with a column of blocks and the library beside it.
+        .frame(minWidth: 960, minHeight: 620)
         .onAppear { delegate.inbox.deliver = { model.open($0) } }
     }
     // Files opened from outside come through the delegate, to the window there
@@ -21,6 +22,17 @@ struct ForgeApp: App {
     .commands {
       SidebarCommands()
       ForgeCommands(model: model, batch: batch)
+    }
+
+    Window("Welcome to Forge", id: WelcomeView.windowID) {
+      WelcomeView().environmentObject(model)
+    }
+    .windowStyle(.hiddenTitleBar)
+    .windowResizability(.contentSize)
+    .handlesExternalEvents(matching: [])
+
+    Settings {
+      SettingsView().environmentObject(model)
     }
 
     // A conversion is usually a small errand, and going to the window for it
@@ -107,6 +119,12 @@ final class OpenedFiles {
   }
 }
 
+private struct WelcomeCommand: View {
+  @Environment(\.openWindow) private var openWindow
+
+  var body: some View { Button("Welcome to Forge") { openWindow(id: WelcomeView.windowID) } }
+}
+
 /// The menu bar's own commands: each one does what the window's button does.
 struct ForgeCommands: Commands {
   @ObservedObject var model: AppModel
@@ -119,26 +137,13 @@ struct ForgeCommands: Commands {
         .disabled(model.presetEditor != nil)
       Button("Add Files…") { addFiles() }
         .keyboardShortcut("o")
-      Menu("Start Next Conversion") {
-        Button(batch.startsAt == nil ? "✓ Now" : "Now") { batch.startsAt = nil }
-        ForEach([15, 60, 180, 480], id: \.self) { minutes in
-          Button(minutes < 60 ? "In \(minutes) minutes" : "In \(minutes / 60) \(minutes == 60 ? "hour" : "hours")") {
-            batch.startsAt = Date().addingTimeInterval(Double(minutes) * 60)
-          }
-        }
-        if let startsAt = batch.startsAt { Text("At \(startsAt.formatted(date: .omitted, time: .shortened))") }
-      }
+      Menu("Start Next Conversion") { StartChoices(batch: batch) }
       Button("Cut…") { cut() }
         .keyboardShortcut("t")
     }
-    // Where every Mac app keeps it, as well as in the sidebar.
-    CommandGroup(replacing: .appSettings) {
-      Button("Settings…") { model.section = .settings }
-        .keyboardShortcut(",")
-        .disabled(model.presetEditor != nil)
-    }
     // The default item put up "Help isn't available for Forge."
     CommandGroup(replacing: .help) {
+      WelcomeCommand()
       Button("Forge Help") { NSWorkspace.shared.open(Self.helpURL) }
     }
     CommandGroup(after: .sidebar) {

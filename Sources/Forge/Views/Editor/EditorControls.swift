@@ -269,7 +269,7 @@ struct BlockCard<Content: View>: View {
     // the frame that centres it, or it spans the whole canvas.
     .background(
       RoundedRectangle(cornerRadius: Metrics.blockRadius, style: .continuous)
-        .fill(Color(nsColor: .controlBackgroundColor))
+        .fill(Color(nsColor: .card))
     )
     .frame(maxWidth: .infinity)
   }

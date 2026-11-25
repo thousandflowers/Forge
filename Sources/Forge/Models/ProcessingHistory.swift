@@ -89,7 +89,7 @@ extension ProcessingHistory {
     let formats = actions.compactMap { if case .convertFormat(let to) = $0 { return OutputFormat(type: to).label } else { return nil } }
     let others = actions
       .filter { !$0.isFormat }
-      .map(PresetCard.chip)
+      .map(PresetChip.text)
 
     let into = formats.isEmpty ? "" : "→ " + formats.joined(separator: " + ")
     let head = [from, into].filter { !$0.isEmpty }.joined(separator: " ")

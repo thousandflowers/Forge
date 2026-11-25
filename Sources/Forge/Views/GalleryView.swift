@@ -1,9 +1,39 @@
 import AppKit
 import SwiftUI
 
+/// Where presets and tools come from, in one place.
+struct StoreView: View {
+  enum Shelf: String, CaseIterable {
+    case presets = "Presets", tools = "Tools"
+  }
+
+  @AppStorage("storeShelf") private var shelf = Shelf.presets
+
+  var body: some View {
+    Group {
+      switch shelf {
+      case .presets: GalleryView()
+      case .tools: CapabilitiesView()
+      }
+    }
+    .navigationTitle("Store")
+    .toolbar {
+      ToolbarItem(placement: .principal) {
+        Picker("Show", selection: $shelf) {
+          ForEach(Shelf.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+      }
+    }
+  }
+}
+
 /// Presets other people have published.
 struct GalleryView: View {
   @EnvironmentObject private var model: AppModel
+  @ObservedObject private var installer = ToolInstaller.shared
   @State private var entries: [PresetGallery.Entry] = []
   @State private var loading = true
   @State private var failure: String?
@@ -44,7 +74,7 @@ struct GalleryView: View {
         browser
       }
     }
-    .navigationTitle("Gallery")
+    .confirmsToolInstalls(with: installer)
     .searchable(text: $search, placement: .toolbar, prompt: "Search presets")
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
@@ -63,12 +93,17 @@ struct GalleryView: View {
     string: "https://github.com/thousandflowers/Forge/blob/main/Gallery/presets.json"
   )!
 
+  private static let fewEnough = 12
+
   // MARK: - Browsing
 
   private var browser: some View {
     VStack(spacing: 0) {
-      filterBar
-      Divider()
+      // A few are looked at; only many are narrowed.
+      if entries.count >= Self.fewEnough {
+        filterBar
+        Divider()
+      }
       if visible.isEmpty {
         EmptyStateView(
           icon: "magnifyingglass",
@@ -199,51 +234,28 @@ struct GalleryView: View {
       entry.preset.category.rawValue,
     ]
     haystack.append(contentsOf: entry.tags ?? [])
-    haystack.append(contentsOf: entry.preset.actions.map(PresetCard.chip))
+    haystack.append(contentsOf: entry.preset.actions.map(PresetChip.text))
 
     return haystack.contains { $0.lowercased().contains(needle) }
   }
 
   // MARK: - One card
 
+  /// The card opens what it does; the button takes it as it is.
   private func card(_ entry: PresetGallery.Entry) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack(alignment: .top) {
-        Image(systemName: entry.preset.category.icon)
-          .font(.title3)
-          .foregroundStyle(.tint)
-        Spacer()
-        // One share button per entry, next to that entry's own download.
-        Button {
-          share(entry.preset)
-        } label: {
-          Image(systemName: "square.and.arrow.up")
+    let tool = PresetGallery.toolNeeded(by: entry.preset)
+    let offer = PresetOffer(isInstalled: isInstalled(entry), tool: tool)
+    return VStack(alignment: .leading, spacing: 8) {
+      HStack(spacing: 10) {
+        BlockIcon(symbol: entry.preset.category.icon, tint: entry.preset.category.tint, size: 30)
+        VStack(alignment: .leading, spacing: 1) {
+          Button { open(entry, offer) } label: { Text(entry.preset.name).font(.headline).lineLimit(1) }
+            .buttonStyle(.plain)
+            .help("See how it works")
+          Text("by \(entry.author)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
         }
-        .buttonStyle(.borderless)
-        .foregroundStyle(.secondary)
-        .help("Share “\(entry.preset.name)”")
-        .accessibilityLabel(Text("Share \(entry.preset.name)"))
-
-        // The same + on every card: one colour, one shape. Already added, it
-        // is greyed out rather than turned into something else.
-        Button {
-          model.install(entry.preset)
-        } label: {
-          Image(systemName: "plus.circle.fill").font(.title3)
-        }
-        .buttonStyle(.borderless)
-        .foregroundStyle(Color.accentColor)
-        .disabled(isInstalled(entry))
-        .help(isInstalled(entry) ? "Already in your presets" : "Add “\(entry.preset.name)” to your presets")
-        .accessibilityLabel(Text(isInstalled(entry) ? "\(entry.preset.name), already added" : "Add \(entry.preset.name)"))
+        Spacer(minLength: 0)
       }
-
-      Text(entry.preset.name)
-        .font(.headline)
-        .lineLimit(2)
-      Text("by \(entry.author)")
-        .font(.caption)
-        .foregroundStyle(.secondary)
 
       // Two lines always, so every card keeps the same shape.
       Text(entry.summary)
@@ -252,29 +264,36 @@ struct GalleryView: View {
         .lineLimit(2, reservesSpace: true)
         .frame(maxWidth: .infinity, alignment: .leading)
 
-      Spacer(minLength: 6)
+      Spacer(minLength: 4)
 
-      chipRow(entry.preset.actions.map(PresetCard.chip), tint: Color.secondary.opacity(0.12))
-        .frame(height: 18, alignment: .leading).clipped()
-      // Every card has its tag row, empty or not, so the rows line up.
-      chipRow(entry.tags ?? [], tint: Color.accentColor.opacity(0.16))
-        .frame(height: 18, alignment: .leading).clipped()
+      HStack(spacing: 8) {
+        TagRow(texts: entry.preset.actions.map(PresetChip.text), warning: tool.map { "Needs \($0.name)" })
+        Spacer(minLength: 4)
+        Button(offer.isInstalled ? "Installed" : "Install") { install(entry, offer) }
+          .controlSize(.small)
+          .disabled(offer.isInstalled)
+          .accessibilityLabel(Text(offer.isInstalled ? "\(entry.preset.name), already added" : "\(offer.installTitle): \(entry.preset.name)"))
+          .help(offer.isInstalled ? "Already in your presets" : offer.installTitle)
+      }
     }
     .padding(14)
     // One height for every card: the user asked for them all the same.
-    .frame(height: 196, alignment: .top)
-    .forgeCard()
+    .frame(height: 152, alignment: .top)
+    .forgeCard(lifts: true)
+    .onTapGesture { open(entry, offer) }
+    .contextMenu {
+      Button("Open") { open(entry, offer) }
+      Button("Share…") { share(entry.preset) }
+    }
   }
 
-  private func chipRow(_ titles: [String], tint: Color) -> some View {
-    FlowLayout(spacing: 5) {
-      ForEach(titles, id: \.self) { title in
-        Text(title)
-          .font(.caption2)
-          .padding(.horizontal, 6).padding(.vertical, 2)
-          .background(RoundedRectangle(cornerRadius: 4).fill(tint))
-      }
-    }
+  private func open(_ entry: PresetGallery.Entry, _ offer: PresetOffer) {
+    model.presetEditor = PresetEditorRequest(preset: entry.preset, offer: offer)
+  }
+
+  private func install(_ entry: PresetGallery.Entry, _ offer: PresetOffer) {
+    model.install(entry.preset)
+    if let tool = offer.tool { installer.ask(tool) }
   }
 
   /// One preset to one file, named after it, the same way the Presets screen

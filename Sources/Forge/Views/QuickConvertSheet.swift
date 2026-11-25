@@ -90,7 +90,7 @@ struct QuickConvertSheet: View {
       if !presets.isEmpty { presetField }
       if choice.draft.parameters.contains(where: { $0.source == .prompt }) { questions }
       if !choice.steps.isEmpty {
-        Text("Also: \(choice.steps.map(PresetCard.chip).joined(separator: ", ")). Change it in More…")
+        Text("Also: \(choice.steps.map(PresetChip.text).joined(separator: ", ")). Change it in More…")
           .font(.callout)
           .foregroundStyle(.secondary)
       }
@@ -265,7 +265,7 @@ struct QuickConvertSheet: View {
         Spacer(minLength: 12)
 
         if let last = sameAsLast {
-          let chain = last.preset.actions.map(PresetCard.chip).joined(separator: " · ")
+          let chain = last.preset.actions.map(PresetChip.text).joined(separator: " · ")
           Button {
             dismiss()
             onSameAsLast()
@@ -308,7 +308,7 @@ struct QuickConvertSheet: View {
     guard let preset = choice.resolved(against: presets) else { return "Choose what they should become" }
 
     var parts = [sources.count == 1 ? "1 file" : "\(sources.count) files"]
-    let chain = preset.actions.map(PresetCard.chip).joined(separator: " · ")
+    let chain = preset.actions.map(PresetChip.text).joined(separator: " · ")
     if !chain.isEmpty { parts.append(chain) }
 
     switch choice.destinationMode {

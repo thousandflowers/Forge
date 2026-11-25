@@ -1,33 +1,103 @@
 import SwiftUI
 import AppKit
 
+/// Settings, in the window every Mac app has them in.
 struct SettingsView: View {
   @EnvironmentObject private var model: AppModel
   @State private var opensAtLogin = LoginItem.isOn
 
   var body: some View {
-    Form {
+    TabView {
+      page { general }.tabItem { Label("General", systemImage: "gearshape") }
+      page { conversions }.tabItem { Label("Conversions", systemImage: "arrow.triangle.2.circlepath") }
+      page { dragging }.tabItem { Label("Dragging", systemImage: "hand.draw") }
+      page { automatic }.tabItem { Label("Automatic", systemImage: "bolt") }
+    }
+    .frame(width: 600, height: 560)
+    .preferredColorScheme(model.settings.appearance.colorScheme)
+    .onChange(of: model.settings) { _ in model.saveSettings() }
+  }
+
+  private func page<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+    Form(content: content).formStyle(.grouped)
+  }
+
+  private func stepper(_ title: String, _ value: Binding<Int>, in range: ClosedRange<Int>) -> some View {
+    LabeledContent(title) {
+      HStack(spacing: 6) {
+        Text("\(value.wrappedValue)").monospacedDigit()
+        Stepper(title, value: value, in: range).labelsHidden()
+      }
+    }
+  }
+
+  private var general: some View {
+    Group {
       Section("Appearance") {
         Picker("Window", selection: $model.settings.appearance) {
           ForEach(Appearance.allCases, id: \.self) { Text($0.title).tag($0) }
         }
-        Text("Sheets and panels let the window show through either way.")
+      }
+      Section("While converting") {
+        HStack {
+          let hasNotch = NotchZone.cutout() != nil
+          Picker("Show it in", selection: Binding(
+            get: { model.settings.workSign.shown(hasNotch: hasNotch) }, set: { model.settings.workSign = $0 }
+          )) {
+            ForEach(AppSettings.WorkSign.choices(hasNotch: hasNotch), id: \.self) { Text($0.title).tag($0) }
+          }
+          Button("Try It") { model.signs.rehearse() }
+            .controlSize(.small)
+            .disabled(model.settings.workSign == .nowhere)
+        }
+        Text("The hammer strikes while Forge works. A check says what was done; a cross says that it was not.")
           .font(.caption)
           .foregroundStyle(.secondary)
       }
-      Section("Performance") {
-        Stepper(value: $model.settings.maxConcurrentNative, in: 1...8) {
-          LabeledContent("Max concurrent conversions", value: "\(model.settings.maxConcurrentNative)")
+      Section("When the Mac starts") {
+        Toggle("Open Forge at login", isOn: Binding(get: { opensAtLogin }, set: { on in
+          do { try LoginItem.set(on) } catch { model.report(error, doing: "changing what opens at login") }
+          opensAtLogin = LoginItem.isOn
+        }))
+        if LoginItem.isWaiting {
+          Text("Allow Forge in System Settings › General › Login Items.").font(.caption).foregroundStyle(.secondary)
         }
       }
-      Section("File handling") {
-        Toggle("Create backup before overwrite", isOn: $model.settings.createBackupBeforeOverwrite)
+      Section {
+        LabeledContent("Version", value: Bundle.main.shortVersion)
+      }
+    }
+  }
+
+  private var conversions: some View {
+    Group {
+      Section("Defaults for new conversions") {
+        Picker("Resizing means", selection: $model.settings.defaultFitMode) {
+          ForEach(ResizeFitMode.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        stepper("Quality when a preset says none", $model.settings.defaultQuality, in: 1...100)
+        Picker("Metadata", selection: $model.settings.privacy) {
+          ForEach(PrivacyPolicy.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        Text(model.settings.privacy.summary + " A preset, a batch, or a file named _privacy can ask for more.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        Picker("Spoken in recordings", selection: $model.settings.spokenLanguage) {
+          Text("The Mac’s language").tag("")
+          ForEach(Transcription.languages, id: \.tag) { Text($0.name).tag($0.tag) }
+        }
+        TemplateField(title: "Name new files", template: $model.settings.nameTemplate)
+        Text("Any preset can override this. A preset that asks a question adds its own token too, so {name}_{maxsize} writes holiday_10MB.jpg.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      Section("Speed") {
+        stepper("Conversions at once", $model.settings.maxConcurrentNative, in: 1...8)
+      }
+      Section("Safety") {
         HStack {
-          Text("Backups are kept in \(MonitoredFolder.abbreviated(PersistenceManager.shared.backupsDirectory)).")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-          Spacer()
-          Button("Show in Finder") {
+          Toggle("Back up what is replaced", isOn: $model.settings.createBackupBeforeOverwrite)
+          Button("Show Backups") {
             let backups = PersistenceManager.shared.backupsDirectory
             try? FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
             NSWorkspace.shared.activateFileViewerSelecting([backups])
@@ -35,21 +105,17 @@ struct SettingsView: View {
           .controlSize(.small)
         }
       }
-      Section("Without being asked") {
-        Toggle("Make copied pictures lighter", isOn: $model.settings.lighterClipboard)
-        Toggle("Make screen recordings lighter", isOn: $model.settings.lighterRecordings)
-        Toggle("Turn HEIC, WebP and AVIF downloads into JPEGs", isOn: $model.settings.friendlyDownloads)
-        Toggle("Convert files I rename to another extension", isOn: $model.settings.convertsRenames)
-        Text("On the Desktop, and in Downloads, Documents and Pictures, when you rename in the Finder: photo.pdf becomes a real photo.jpg. "
-          + (model.settings.createBackupBeforeOverwrite ? "The original is kept in Backups." : "The original stays beside it."))
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        Text(model.settings.createBackupBeforeOverwrite
-          ? "A card in the corner says what was done and undoes it. Originals are kept in Backups; a result that would not be lighter is not used."
-          : "A card in the corner says what was done and undoes it. Backups are off, so nothing is replaced: the lighter copy is put beside it.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+      Section("When a batch finishes") {
+        Toggle("Notify me", isOn: $model.settings.notifyWhenFinished)
+        Picker("And then", selection: $model.settings.whenFinished) {
+          ForEach(AppSettings.WhenFinished.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
       }
+    }
+  }
+
+  private var dragging: some View {
+    Group {
       Section("While dragging") {
         // A Mac without one has nothing to turn on.
         if NotchZone.cutout() != nil || model.settings.notchZone {
@@ -79,67 +145,28 @@ struct SettingsView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
-      Section("While converting") {
-        HStack {
-          let hasNotch = NotchZone.cutout() != nil
-          Picker("Show it in", selection: Binding(
-            get: { model.settings.workSign.shown(hasNotch: hasNotch) }, set: { model.settings.workSign = $0 }
-          )) {
-            ForEach(AppSettings.WorkSign.choices(hasNotch: hasNotch), id: \.self) { Text($0.title).tag($0) }
-          }
-          Button("Try It") { model.signs.rehearse() }
-            .controlSize(.small)
-            .disabled(model.settings.workSign == .nowhere)
-        }
-        Text("The hammer strikes while Forge works. A check says what was done; a cross says that it was not.")
+    }
+  }
+
+  private var automatic: some View {
+    Group {
+      Section("Without being asked") {
+        Toggle("Make copied pictures lighter", isOn: $model.settings.lighterClipboard)
+        Toggle("Make screen recordings lighter", isOn: $model.settings.lighterRecordings)
+        Toggle("Turn HEIC, WebP and AVIF downloads into JPEGs", isOn: $model.settings.friendlyDownloads)
+        Toggle("Convert files I rename to another extension", isOn: $model.settings.convertsRenames)
+        Text("On the Desktop, and in Downloads, Documents and Pictures, when you rename in the Finder: photo.pdf becomes a real photo.jpg. "
+          + (model.settings.createBackupBeforeOverwrite ? "The original is kept in Backups." : "The original stays beside it."))
+          .fixedSize(horizontal: false, vertical: true)
           .font(.caption)
           .foregroundStyle(.secondary)
-      }
-      Section("What everything starts from") {
-        Picker("Resizing means", selection: $model.settings.defaultFitMode) {
-          ForEach(ResizeFitMode.allCases, id: \.self) { Text($0.title).tag($0) }
-        }
-        Stepper(value: $model.settings.defaultQuality, in: 1...100) {
-          LabeledContent("Quality when a preset says none", value: "\(model.settings.defaultQuality)")
-        }
-        Picker("Metadata", selection: $model.settings.privacy) {
-          ForEach(PrivacyPolicy.allCases, id: \.self) { Text($0.title).tag($0) }
-        }
-        Text(model.settings.privacy.summary + " A preset, a batch, or a file named _privacy can ask for more.")
+        Text(model.settings.createBackupBeforeOverwrite
+          ? "A card in the corner says what was done and undoes it. Originals are kept in Backups; a result that would not be lighter is not used."
+          : "A card in the corner says what was done and undoes it. Backups are off, so nothing is replaced: the lighter copy is put beside it.")
           .font(.caption)
           .foregroundStyle(.secondary)
-        Picker("Spoken in recordings", selection: $model.settings.spokenLanguage) {
-          Text("The Mac’s language").tag("")
-          ForEach(Transcription.languages, id: \.tag) { Text($0.name).tag($0.tag) }
-        }
-        TemplateField(title: "Name new files", template: $model.settings.nameTemplate)
-        Text("Any preset can override this. A preset that asks a question adds its own token too, so {name}_{maxsize} writes holiday_10MB.jpg.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-      Section("When the Mac starts") {
-        Toggle("Open Forge at login", isOn: Binding(get: { opensAtLogin }, set: { on in
-          do { try LoginItem.set(on) } catch { model.report(error, doing: "changing what opens at login") }
-          opensAtLogin = LoginItem.isOn
-        }))
-        if LoginItem.isWaiting {
-          Text("Allow Forge in System Settings › General › Login Items.").font(.caption).foregroundStyle(.secondary)
-        }
-      }
-      Section("When a batch finishes") {
-        Toggle("Notify me", isOn: $model.settings.notifyWhenFinished)
-        Picker("And then", selection: $model.settings.whenFinished) {
-          ForEach(AppSettings.WhenFinished.allCases, id: \.self) { Text($0.title).tag($0) }
-        }
-      }
-      Section("About") {
-        LabeledContent("Version", value: Bundle.main.shortVersion)
-        LabeledContent("Frameworks", value: "Core Image · AVFoundation · PDFKit")
       }
     }
-    .formStyle(.grouped)
-    .navigationTitle("Settings")
-    .onChange(of: model.settings) { _ in model.saveSettings() }
   }
 }
 

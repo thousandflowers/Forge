@@ -8,7 +8,7 @@ final class DropZone: ObservableObject {
   @Published private(set) var isShown = false
   var take: ([URL]) -> Void = { _ in }
   private var panel: NSPanel?
-  private static let size = NSSize(width: 132, height: 96)
+  private static let size = NSSize(width: 168, height: 128)
   private static let gap: CGFloat = 24
 
   func toggle() { isShown ? hide() : show() }
@@ -52,19 +52,25 @@ private struct DropZoneView: View {
   let close: () -> Void
   @State private var isOver = false
   @State private var isInside = false
+  @Environment(\.accessibilityReduceMotion) private var isStill
 
   var body: some View {
-    VStack(spacing: 6) {
-      Image(systemName: "arrow.down.doc").font(.system(size: 24, weight: .medium))
-      Text("Drop here").font(.callout.weight(.medium))
+    let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+    return VStack(spacing: 6) {
+      FileFan(isOpen: isOver, size: 34)
+      Text("Drop here").font(.callout.weight(.semibold)).foregroundStyle(isOver ? Color.accentColor : .primary)
     }
-    .foregroundStyle(isOver ? Color.white : .secondary)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(isOver ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.regularMaterial), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.primary.opacity(0.15), style: StrokeStyle(lineWidth: 1.5, dash: [5])))
+    .background(.regularMaterial, in: shape)
+    .background(shape.fill(Color.accentColor.opacity(isOver ? 0.25 : 0)))
+    .overlay(shape.strokeBorder(isOver ? Color.accentColor : Color.primary.opacity(0.12), lineWidth: isOver ? 2.5 : 1))
+    .shadow(color: .black.opacity(0.22), radius: 8, y: 3)
+    .scaleEffect(isOver && !isStill ? 1.04 : 1)
+    .animation(isStill ? nil : .spring(response: 0.28, dampingFraction: 0.75), value: isOver)
+    .padding(12)
     .overlay(alignment: .topTrailing) {
       Button(action: close) { Image(systemName: "xmark.circle.fill") }
-        .buttonStyle(.plain).foregroundStyle(.secondary).padding(7)
+        .buttonStyle(.plain).foregroundStyle(.secondary).padding(19)
         .opacity(isInside ? 1 : 0)
         .accessibilityLabel(Text("Close the drop zone"))
     }

@@ -26,6 +26,11 @@ extension RulePreset {
   }
 }
 
+private extension RulePreset {
+  /// Written by a tool that is here.
+  var isCarriedByATool: Bool { withoutFilesOfItsOwn == self && (targetFormat.map(ExternalBridge.canWrite) ?? false) }
+}
+
 actor PresetGallery {
 
   /// Where the published list lives. Contributions are pull requests against
@@ -69,12 +74,26 @@ actor PresetGallery {
   func entries() async throws -> [Entry] {
     let data = try await load(source)
     let entries = try JSONDecoder().decode([Readable].self, from: data).compactMap(\.entry)
-    return entries.filter { Self.isRunnable($0.preset) }
+    return entries.filter { Self.isRunnable($0.preset) || $0.preset.isCarriedByATool || Self.toolNeeded(by: $0.preset) != nil }
   }
 
   private struct Readable: Decodable {
     let entry: Entry?
     init(from decoder: Decoder) throws { entry = try? Entry(from: decoder) }
+  }
+
+  /// What a preset needs that is not on this Mac, if having it is enough.
+  static func toolNeeded(by preset: RulePreset) -> ExternalTool? {
+    guard preset.withoutFilesOfItsOwn == preset else { return nil }
+    let binary: String
+    if preset.actions.contains(where: { if case .film = $0 { return true } else { return false } }) {
+      binary = "ffmpeg"
+    } else {
+      guard let format = preset.targetFormat, !isRunnable(preset), !ExternalBridge.canWrite(format),
+            let needed = ExternalBridge.writer(of: format) else { return nil }
+      binary = needed
+    }
+    return ToolOffers.all.first { $0.binary == binary && !$0.isInstalled }
   }
 
   /// Whether every action in a preset means something on this machine. A
