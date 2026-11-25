@@ -50,6 +50,8 @@ struct AppSettings: Codable, Sendable, Equatable {
   /// Bring the menu up over a file dragged with the keys held.
   var dragMenu: Bool = false
   var dragMenuKeys: HoldKeys = .usual
+  /// Open the notch for a file that is being dragged.
+  var notchZone: Bool = false
   /// Apps the menu keeps out of, by bundle identifier.
   var dragMenuIgnored: [String] = []
   /// The presets in the menu, where they were chosen. None, and the menu goes by
@@ -148,7 +150,7 @@ extension AppSettings {
     case maxConcurrentNative, createBackupBeforeOverwrite, notifyWhenFinished, whenFinished
     case defaultFitMode, defaultQuality, privacy, nameTemplate, appearance
     case lighterClipboard, lighterRecordings, friendlyDownloads, convertsRenames
-    case dragMenu, dragMenuKeys, dragMenuIgnored, menuPresets, spokenLanguage
+    case dragMenu, dragMenuKeys, dragMenuIgnored, menuPresets, spokenLanguage, notchZone
   }
 
   /// Every key is optional on the way in. A setting added in a later version
@@ -173,6 +175,7 @@ extension AppSettings {
     dragMenu = try c.decodeIfPresent(Bool.self, forKey: .dragMenu) ?? fresh.dragMenu
     dragMenuKeys = try c.decodeIfPresent(HoldKeys.self, forKey: .dragMenuKeys) ?? fresh.dragMenuKeys
     dragMenuIgnored = try c.decodeIfPresent([String].self, forKey: .dragMenuIgnored) ?? fresh.dragMenuIgnored
+    notchZone = try c.decodeIfPresent(Bool.self, forKey: .notchZone) ?? fresh.notchZone
     menuPresets = try c.decodeIfPresent([UUID].self, forKey: .menuPresets) ?? fresh.menuPresets
     spokenLanguage = try c.decodeIfPresent(String.self, forKey: .spokenLanguage) ?? fresh.spokenLanguage
   }

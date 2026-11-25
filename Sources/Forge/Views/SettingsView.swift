@@ -51,6 +51,10 @@ struct SettingsView: View {
           .foregroundStyle(.secondary)
       }
       Section("While dragging") {
+        // A Mac without one has nothing to turn on.
+        if NotchZone.cutout() != nil || model.settings.notchZone {
+          Toggle("Use the notch as a drop zone", isOn: $model.settings.notchZone)
+        }
         Toggle("Show a menu over the file", isOn: $model.settings.dragMenu)
         LabeledContent("Keys to hold") {
           HStack(spacing: 6) {

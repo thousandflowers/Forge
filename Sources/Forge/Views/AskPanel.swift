@@ -11,8 +11,16 @@ final class AskPanel {
   /// SwiftUI hands the keyboard to the first field a moment after it appears.
   private static let settling: TimeInterval = 0.15
 
+  /// Where it hangs from, if it comes out of the notch.
+  private let notch: NSRect?
+  private let reveal: NotchReveal?
+
   /// - Parameter tiles: where a file being dragged can be dropped.
-  init(session: AskSession, tiles: DropTiles? = nil, close: @escaping () -> Void) {
+  /// - Parameter notch: what it comes out of, where that is not the pointer.
+  init(session: AskSession, tiles: DropTiles? = nil, notch: NSRect? = nil, close: @escaping () -> Void) {
+    self.notch = notch
+    let reveal = notch.map { NotchReveal(notch: $0.size) }
+    self.reveal = reveal
     tallest = {
       NSHostingController(rootView: AskView(session: session, tiles: DropTiles(), isOpen: true, close: {})).view.fittingSize.height
     }
@@ -33,13 +41,17 @@ final class AskPanel {
     panel.backgroundColor = .clear
     panel.isOpaque = false
     panel.onEscape = close
+    if notch != nil {
+      panel.hang()
+      panel.isHung = true
+    }
     if let tiles {
       panel.takeDrops(on: tiles)
       tiles.openMore = { [weak session] in session?.showsMore = true }
     }
     // The controller's preferred size is the window's: it grows and shrinks
     // with what is being asked.
-    let host = NSHostingController(rootView: AskView(session: session, tiles: tiles ?? DropTiles(), close: close))
+    let host = NSHostingController(rootView: AskView(session: session, tiles: tiles ?? DropTiles(), notch: reveal, close: close))
     host.sizingOptions = [.preferredContentSize]
     panel.contentViewController = host
   }
@@ -51,6 +63,13 @@ final class AskPanel {
     let mouse = NSEvent.mouseLocation
     let screen = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.visibleFrame ?? .zero
     panel.setContentSize(size)
+    if let notch {
+      panel.setFrameOrigin(NotchShape.origin(of: panel.frame.size, under: notch))
+      takingKeys ? takeKeys() : panel.orderFrontRegardless()
+      // Drawn once as the notch, to be seen to come out of it.
+      DispatchQueue.main.async { [reveal] in reveal?.isOut = true }
+      return
+    }
     let room = NSSize(width: panel.frame.width, height: max(panel.frame.height, tallest()))
     let origin = Self.origin(for: room, at: mouse, in: screen, lead: takingKeys ? nil : Self.lead(of: panel.frame.height))
     panel.setFrameOrigin(NSPoint(x: origin.x, y: origin.y + room.height - panel.frame.height))
@@ -102,6 +121,8 @@ final class AskPanel {
 
   /// What is left when the choices have gone is where the file was let go.
   func gather(at mouse: NSPoint = NSEvent.mouseLocation) {
+    // What hangs from the notch stays there.
+    guard notch == nil else { return }
     let screen = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.visibleFrame ?? .zero
     panel.gather(to: Self.top(around: mouse.y, in: screen, from: panel.frame))
   }
@@ -115,6 +136,11 @@ final class AskPanel {
     panel.unregisterDraggedTypes()
     panel.ignoresMouseEvents = true
     let panel = panel
+    if let reveal {
+      reveal.isOut = false
+      DispatchQueue.main.asyncAfter(deadline: .now() + NotchReveal.seconds) { panel.orderOut(nil) }
+      return
+    }
     fade(to: 0, in: Self.fadeOut) { Task { @MainActor in panel.orderOut(nil) } }
   }
 }
@@ -123,6 +149,12 @@ final class AskPanel {
 private final class KeyPanel: NSPanel, NSDraggingDestination {
   var onEscape: () -> Void = {}
   override var canBecomeKey: Bool { true }
+  var isHung = false
+
+  /// Left to itself AppKit puts it under the menu bar.
+  override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+    isHung ? frameRect : super.constrainFrameRect(frameRect, to: screen)
+  }
 
   /// It grows downwards. Its top is where the eye, and a file being held, is.
   override func setFrame(_ frame: NSRect, display: Bool) {
@@ -185,6 +217,7 @@ private final class KeyPanel: NSPanel, NSDraggingDestination {
 /// What these files should be, in as few presses as it takes.
 struct AskView: View {
   static let width: CGFloat = 400
+  static let notchWidth: CGFloat = 520
   static let headerHeight: CGFloat = padding + portrait + section
   /// With nothing left to choose.
   static let restingHeight: CGFloat = padding * 2 + portrait
@@ -197,6 +230,9 @@ struct AskView: View {
   fileprivate static let inset: CGFloat = 10
   /// Two of a row of four are as wide as one of a row of two, so they line up.
   private static let shapes = [4, 2]
+  /// The notch is wide and low, so that nothing in it is far from it.
+  private static let notchShapes = [6, 3]
+  private static let ear: CGFloat = 22
   /// A choice with nothing said under it.
   fileprivate static let plain: CGFloat = 34
   private static let weighed: CGFloat = 44
@@ -212,6 +248,7 @@ struct AskView: View {
   @ObservedObject var tiles: DropTiles
   /// To be measured, whatever is folded.
   var isOpen = false
+  var notch: NotchReveal?
   let close: () -> Void
   @Environment(\.accessibilityReduceMotion) private var isStill
   @State private var typed: [AskRequest.Question: String] = [:]
@@ -225,7 +262,13 @@ struct AskView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      header
+      if let notch {
+        // Made, it is said under it, and larger.
+        ears(around: notch.notch).opacity(outputs.isEmpty ? 1 : 0).accessibilityHidden(!outputs.isEmpty)
+        if !outputs.isEmpty { header.padding(.top, Self.gap) }
+      } else {
+        header
+      }
       if isAsking {
         choices
       } else if !isFolded {
@@ -241,11 +284,9 @@ struct AskView: View {
     .overlay(alignment: .bottom) { progress }
     .onPreferenceChange(DropTileFrames.self) { tiles.frames = $0 }
     .onPreferenceChange(MoreFrame.self) { tiles.more = $0 }
-    .padding(Self.padding)
-    .frame(width: Self.width, alignment: .leading)
-    .background(BehindGlass().overlay(Color(nsColor: .windowBackgroundColor).opacity(0.6)))
-    .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
-    .overlay(RoundedRectangle(cornerRadius: Self.radius, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
+    .padding(notch == nil ? .all : [.horizontal, .bottom], Self.padding)
+    .frame(width: width, alignment: .leading)
+    .modifier(Dress(notch: notch, radius: Self.radius))
     .task {
       try? await Task.sleep(nanoseconds: Self.arming)
       armed = true
@@ -262,7 +303,38 @@ struct AskView: View {
     }
   }
 
+  private var width: CGFloat { notch == nil ? Self.width : Self.notchWidth }
+  private var shapes: [Int] { notch == nil ? Self.shapes : Self.notchShapes }
+
   // MARK: - What it is, and what it would be
+
+  /// On either side of the notch: what it is, and what it weighs.
+  private func ears(around notch: NSSize) -> some View {
+    let room = max((width - notch.width) / 2 - Self.padding - Self.gap, 0)
+    return HStack(spacing: 0) {
+      HStack(spacing: 7) {
+        PreviewImage(url: outputs.first ?? session.files[0].url, maxPixels: 60)
+          .frame(width: Self.ear, height: Self.ear)
+          .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        Text(name).font(.callout).lineLimit(1).truncationMode(.middle)
+      }
+      .frame(width: room, alignment: .leading)
+      Spacer(minLength: 0)
+      HStack(spacing: 7) {
+        if outputs.isEmpty { detail.font(.callout.weight(.semibold).monospacedDigit()).lineLimit(1).minimumScaleFactor(0.7) }
+        if !tiles.isLive, outputs.isEmpty { leave }
+      }
+      .frame(width: room, alignment: .trailing)
+    }
+    .frame(height: notch.height)
+  }
+
+  private var leave: some View {
+    Button(action: close) { Image(systemName: "xmark.circle.fill").font(.title3) }
+      .buttonStyle(.plain).foregroundStyle(.secondary)
+      .help("Leave it as it is")
+      .accessibilityLabel(Text("Leave it as it is"))
+  }
 
   private var isAsking: Bool { if case .asking = session.state { return !session.isStarted } else { return false } }
 
@@ -279,10 +351,10 @@ struct AskView: View {
   private var progress: some View {
     if case .working(let fraction) = session.state {
       GeometryReader { place in
-        Color.accentColor.frame(width: (place.size.width + Self.padding * 2) * max(fraction, 0.02), height: 3)
+        Capsule().fill(Color.accentColor).frame(width: (place.size.width + overhang * 2) * max(fraction, 0.02), height: 3)
       }
       .frame(height: 3)
-      .offset(x: -Self.padding, y: Self.padding)
+      .offset(x: -overhang, y: notch == nil ? Self.padding : 3)
       .opacity(isSlow ? 1 : 0)
       .animation(.easeOut(duration: 0.15), value: fraction)
       .accessibilityElement()
@@ -295,6 +367,9 @@ struct AskView: View {
     }
   }
 
+  /// To the edges beside the pointer. Out of the notch the corners would hide it.
+  private var overhang: CGFloat { notch == nil ? Self.padding : 0 }
+
   private var aimed: DropTiles.Tile? { tiles.over ?? (tiles.isLive ? nil : hovered) }
 
   private var header: some View {
@@ -302,6 +377,7 @@ struct AskView: View {
       PreviewImage(url: outputs.first ?? session.files[0].url, maxPixels: 120)
         .frame(width: Self.portrait, height: Self.portrait)
         .clipShape(RoundedRectangle(cornerRadius: Self.inset, style: .continuous))
+        .modifier(DraggedOut(file: outputs.first))
       VStack(alignment: .leading, spacing: 2) {
         Text(name).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
         detail.font(.title3.weight(.semibold).monospacedDigit()).lineLimit(1).minimumScaleFactor(0.8)
@@ -312,12 +388,7 @@ struct AskView: View {
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(outputs); close() }.controlSize(.small)
       }
       // Nothing to press while the button is down.
-      if !tiles.isLive {
-        Button(action: close) { Image(systemName: "xmark.circle.fill").font(.title3) }
-          .buttonStyle(.plain).foregroundStyle(.secondary)
-          .help("Leave it as it is")
-          .accessibilityLabel(Text("Leave it as it is"))
-      }
+      if !tiles.isLive { leave }
     }
     .frame(height: Self.portrait)
   }
@@ -416,7 +487,7 @@ struct AskView: View {
         Image(systemName: "chevron.down").font(.callout.weight(.semibold)).foregroundStyle(.secondary)
       }
       .padding(.horizontal, Self.padding + Self.inset)
-      .frame(width: Self.width, height: Self.bar)
+      .frame(width: width, height: Self.bar)
       .background(alignment: .leading) {
         // As long as it takes to open, so that it is seen to be opening.
         Color.accentColor.opacity(0.3)
@@ -440,12 +511,12 @@ struct AskView: View {
   private var numbered: AskRequest.Question? { session.questions.first { $0 != .forYou && $0 != .join } }
 
   /// As many to a row as leave every one of them room for its words.
-  static func columns(for labels: [String]) -> Int {
+  static func columns(for labels: [String], shapes: [Int] = shapes, in width: CGFloat = width) -> Int {
     let widest = labels.map { ($0 as NSString).size(withAttributes: [.font: labelFont]).width }.max() ?? 0
-    return shapes.first { widest + inset * 2 <= cell(of: $0) } ?? 2
+    return shapes.first { widest + inset * 2 <= cell(of: $0, in: width) } ?? shapes.last ?? 2
   }
 
-  private static func cell(of columns: Int) -> CGFloat {
+  private static func cell(of columns: Int, in width: CGFloat) -> CGFloat {
     (width - padding * 2 - gap * CGFloat(columns - 1)) / CGFloat(columns)
   }
 
@@ -466,7 +537,7 @@ struct AskView: View {
   private var handsOutCut: Bool {
     guard session.questions.contains(.cut), session.questions.contains(.format) else { return false }
     let labels = session.choices(for: .format).map(\.label)
-    return Self.leftOver(labels.count, in: Self.columns(for: labels)) > 0
+    return Self.leftOver(labels.count, in: Self.columns(for: labels, shapes: shapes, in: width)) > 0
   }
 
   private func grid(_ question: AskRequest.Question, numbered: Bool) -> some View {
@@ -476,8 +547,8 @@ struct AskView: View {
     let joinsTools = question == .tool && !handsOutCut, fillsRow = question == .format && handsOutCut
     let offers = session.choices(for: question).enumerated().map { Offer(question: question, choice: $1, number: byNumber && $0 < 9 ? $0 + 1 : nil) }
       + [joinsTools ? byHand : nil].compactMap { $0 }.map { Offer(question: .cut, choice: $0, number: nil) }
-    let columns = Self.columns(for: offers.map(\.choice.label))
-    let cell = Self.cell(of: columns)
+    let columns = Self.columns(for: offers.map(\.choice.label), shapes: shapes, in: width)
+    let cell = Self.cell(of: columns, in: width)
     let height: CGFloat = session.weighs && question != .join || offers.contains { $0.choice.isDefault } ? Self.weighed : Self.plain
     let rows = stride(from: 0, to: offers.count, by: columns).map { Array(offers[$0..<min($0 + columns, offers.count)]) }
     return VStack(alignment: .leading, spacing: Self.gap) {
@@ -521,7 +592,7 @@ struct AskView: View {
     let face = ChoiceFace(
       label: choice.label, says: says, number: offer.number, isLit: isLit, isAimed: isAimed,
       isHeavier: isHeavier, isWeighed: isWeighed, isFaint: !isLit && (tiles.over != nil || weight.map { $0.bytes == nil } ?? false), isHovered: hovered == tile && !tiles.isLive, isCommand: question == .cut,
-      isStill: isStill, width: width, height: height
+      isStill: isStill, isOnBlack: notch != nil, width: width, height: height
     )
     return Button { pick(choice.value, for: question) } label: { face.animation(isStill ? nil : Self.quick, value: tiles.over) }
     .buttonStyle(.plain)
@@ -560,6 +631,23 @@ struct AskView: View {
   }
 }
 
+/// Glass beside the pointer, and black out of the notch.
+private struct Dress: ViewModifier {
+  let notch: NotchReveal?
+  let radius: CGFloat
+
+  func body(content: Content) -> some View {
+    if let notch {
+      content.modifier(OutOfTheNotch(reveal: notch))
+    } else {
+      content
+        .background(BehindGlass().overlay(Color(nsColor: .windowBackgroundColor).opacity(0.6)))
+        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
+    }
+  }
+}
+
 /// What one choice looks like.
 private struct ChoiceFace: View {
   let label: String
@@ -574,11 +662,13 @@ private struct ChoiceFace: View {
   /// Something done to it, among what it can become.
   let isCommand: Bool
   let isStill: Bool
+  /// Where the glass's greys cannot be told from it.
+  let isOnBlack: Bool
   let width: CGFloat
   let height: CGFloat
 
   private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: AskView.inset, style: .continuous) }
-  private var fill: Color { isLit ? .accentColor : Color.primary.opacity(isHovered ? 0.13 : isCommand ? 0 : 0.07) }
+  private var fill: Color { isLit ? .accentColor : Color.primary.opacity((isHovered ? 0.13 : isCommand ? 0 : 0.07) * (isOnBlack ? 2.2 : 1)) }
   private var weightColor: Color { isLit ? Color.white.opacity(0.9) : isHeavier ? .heavier : .secondary }
 
   var body: some View {
@@ -595,12 +685,12 @@ private struct ChoiceFace: View {
     .padding(.horizontal, AskView.inset)
     .frame(width: width, height: height, alignment: .leading)
     .background(shape.fill(fill))
-    .overlay(shape.strokeBorder(Color.primary.opacity(isCommand && !isLit ? 0.16 : 0)))
+    .overlay(shape.strokeBorder(Color.primary.opacity(isCommand && !isLit ? isOnBlack ? 0.3 : 0.16 : 0)))
     .foregroundColor(isLit ? .white : .primary)
     .contentShape(Rectangle())
     .scaleEffect(isAimed && !isStill ? 1.05 : 1)
     .shadow(color: Color.accentColor.opacity(isAimed ? 0.35 : 0), radius: 8, y: 3)
-    .opacity(isFaint ? 0.55 : 1)
+    .opacity(isFaint ? isOnBlack ? 0.7 : 0.55 : 1)
   }
 
   private var weight: some View {

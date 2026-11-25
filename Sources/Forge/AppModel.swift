@@ -18,6 +18,8 @@ final class AppModel: ObservableObject {
   private let dragMenu = DragMenu()
   private let cuts = CutCenter()
   let dropZone = DropZone()
+  let running = Running()
+  private let notchZone = NotchZone()
   private var inHand: Set<String> = []
   private var watchedPlaces: [Automatic.Place: URL] = [:]
   private var automatic: [Automatic.Place: MonitoredFolderWatcher] = [:]
@@ -71,6 +73,9 @@ final class AppModel: ObservableObject {
     asks.preview = { file, preset, folder in try await coordinator.preview(file, with: preset, into: folder) }
     dragMenu.preview = asks.preview
     asks.cut = { [weak self] file in self?.cut(file) }
+    running.ended = { [weak self] in Task { await self?.refreshHistory() } }
+    let running = running
+    Task { await running.listen(to: coordinator) }
   }
 
   /// Load persisted state on launch; seed default presets on first run.
@@ -506,6 +511,9 @@ final class AppModel: ObservableObject {
     asks.suggest = dragMenu.suggest
     ResultHand.more = { [weak self] in self?.dragMenu.present($0) }
     dropZone.take = { [weak self] in self?.dragMenu.present($0) }
+    notchZone.take = { [weak self] in self?.dragMenu.present($0, outOf: self?.notchZone.here()) }
+    dragMenu.notch = settings.notchZone ? notchZone : nil
+    dragMenu.answersKeys = settings.dragMenu
     dragMenu.keys = settings.dragMenuKeys
     dragMenu.ignored = Set(settings.dragMenuIgnored)
     dragMenu.convert = { [weak self] file, preset in try await self?.convertInHand(file, with: preset) ?? [] }
@@ -517,7 +525,7 @@ final class AppModel: ObservableObject {
       Task { await self.refreshHistory() }
       return made
     }
-    settings.dragMenu ? dragMenu.start() : dragMenu.stop()
+    settings.dragMenu || settings.notchZone ? dragMenu.start() : dragMenu.stop()
   }
 
   func suggestions(for files: [ProcessableFile]) -> [RulePreset] {
