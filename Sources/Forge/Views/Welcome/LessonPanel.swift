@@ -141,20 +141,15 @@ struct LessonView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      Group {
-        if lesson.step == .hello {
-          hello
-        } else {
-          VStack(alignment: .leading, spacing: 12) {
-            header
-            content
-          }
-          .frame(maxWidth: .infinity, alignment: .leading)
-        }
+      VStack(spacing: 6) {
+        header
+        words
+        // In the middle of what is left, whatever it is and however many lines
+        // there are above it.
+        thing.frame(maxWidth: .infinity, maxHeight: .infinity).padding(.bottom, 10)
       }
       .id(lesson.step)
       .transition(isStill ? .opacity : .asymmetric(insertion: .offset(x: 14).combined(with: .opacity), removal: .opacity))
-      Spacer(minLength: 0)
       footer
     }
     .padding(18)
@@ -164,31 +159,20 @@ struct LessonView: View {
     .padding(Floating.room)
   }
 
-  /// Everything on one axis, and the files in the middle of it.
-  private var hello: some View {
-    VStack(spacing: 6) {
-      Text(title).font(.system(size: 15, weight: .semibold))
-      Text(more)
-        .font(.system(size: 13)).foregroundStyle(.secondary)
-        .multilineTextAlignment(.center)
-        .fixedSize(horizontal: false, vertical: true)
-      LessonFan(size: 42) { lesson.pop() }
-    }
-    .frame(maxWidth: .infinity)
-  }
-
+  /// The tick beside it takes no room: the title stays in the middle.
   private var header: some View {
-    HStack(alignment: .firstTextBaseline, spacing: 8) {
-      Text(title).font(.system(size: 15, weight: .semibold))
-      Spacer(minLength: 8)
-      Image(systemName: "checkmark.circle.fill")
-        .font(.system(size: 17))
-        .foregroundStyle(.green)
-        .opacity(lesson.isDone ? 1 : 0)
-        .scaleEffect(lesson.isDone || isStill ? 1 : 0.4)
-        .accessibilityHidden(!lesson.isDone)
-        .accessibilityLabel(Text("Done"))
-    }
+    Text(title)
+      .font(.system(size: 15, weight: .semibold))
+      .frame(maxWidth: .infinity)
+      .overlay(alignment: .trailing) {
+        Image(systemName: "checkmark.circle.fill")
+          .font(.system(size: 17))
+          .foregroundStyle(.green)
+          .opacity(lesson.isDone ? 1 : 0)
+          .scaleEffect(lesson.isDone || isStill ? 1 : 0.4)
+          .accessibilityHidden(!lesson.isDone)
+          .accessibilityLabel(Text("Done"))
+      }
   }
 
   private var title: String {
@@ -217,43 +201,52 @@ struct LessonView: View {
 
   private var keys: String { lesson.model?.settings.dragMenuKeys.symbols ?? "⇧" }
 
-  @ViewBuilder
-  private var content: some View {
+  private var words: some View {
     Text(lesson.problem ?? more)
       .font(.system(size: 13)).foregroundStyle(lesson.problem == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
+      .multilineTextAlignment(.center)
       .fixedSize(horizontal: false, vertical: true)
+  }
+
+  @ViewBuilder
+  private var thing: some View {
     switch lesson.step {
-    case .hello: EmptyView()
+    case .hello: LessonFan(size: 42) { lesson.pop() }
     case .drag: if let model = lesson.model { DragSwitch(model: model, keys: keys) }
     case .end: if let model = lesson.model { EndSwitch(model: model) }
     default: if let (from, to) = lesson.renaming() { TypedName(from: from, to: to, isStill: isStill) }
     }
   }
 
+  /// What is pressed in the middle; how far it is, and the sound, at the sides.
   private var footer: some View {
     HStack(spacing: 8) {
       switch lesson.step {
       case .hello:
-        Spacer(minLength: 0)
         Button("Not Now") { lesson.openForge() }.keyboardShortcut(.cancelAction)
         Button("Open the Folder") { lesson.begin() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-        Spacer(minLength: 0)
       case .end:
         Button("Open Forge") { lesson.openForge(.process) }
-        Spacer()
         Button("Done") { lesson.close() }.buttonStyle(.borderedProminent)
       default:
-        dots
-        Spacer()
-        Button { lesson.isLoud.toggle() } label: { Image(systemName: lesson.isLoud ? "speaker.wave.2" : "speaker.slash").frame(width: 18) }
-          .buttonStyle(.plain).foregroundStyle(.secondary)
-          .help(lesson.isLoud ? "Turn the sound off" : "Turn the sound on")
-          .accessibilityLabel(Text(lesson.isLoud ? "Turn the sound off" : "Turn the sound on"))
         if lesson.renaming() != nil, !lesson.isDone { Button("Show Me") { lesson.showHow() } }
         Button(lesson.isDone ? "Next" : "Skip") { lesson.next() }
       }
     }
     .controlSize(.regular)
+    .frame(maxWidth: .infinity)
+    .overlay(alignment: .leading) { if isTrying { dots } }
+    .overlay(alignment: .trailing) { if isTrying { sound } }
+  }
+
+  private var isTrying: Bool { lesson.step != .hello && lesson.step != .end }
+
+  private var sound: some View {
+    let name = lesson.isLoud ? "Turn the sound off" : "Turn the sound on"
+    return Button { lesson.isLoud.toggle() } label: { Image(systemName: lesson.isLoud ? "speaker.wave.2" : "speaker.slash").frame(width: 18) }
+      .buttonStyle(.plain).foregroundStyle(.secondary)
+      .help(name)
+      .accessibilityLabel(Text(name))
   }
 
   private var dots: some View {
@@ -284,15 +277,19 @@ private struct TypedName: View {
       let shown = isStill ? typed.count : min(max(0, beat - 4), typed.count)
       HStack(spacing: 8) {
         Image(nsImage: NSWorkspace.shared.icon(forFile: from.path)).resizable().frame(width: 22, height: 22)
-        (Text(head) + Text(String(typed.prefix(shown))).foregroundColor(.accentColor) + Text(end))
-          .font(.system(size: 13, weight: .medium))
-          .lineLimit(1)
-        Spacer(minLength: 0)
+        // As wide as it will be: in the middle, it moved with every letter.
+        Text(new).hidden().overlay(alignment: .leading) {
+          (Text(head) + Text(String(typed.prefix(shown))).foregroundColor(.accentColor) + Text(end)).fixedSize()
+        }
+        .font(.system(size: 13, weight: .medium))
+        .lineLimit(1)
       }
     }
     .padding(.horizontal, 10)
+    .frame(maxWidth: .infinity)
     .frame(height: 38)
-    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    // As where a name is typed in the Finder.
+    .background(Color(nsColor: .textBackgroundColor).opacity(0.7), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     .accessibilityElement()
     .accessibilityLabel(Text("\(old) becomes \(new)"))
   }
