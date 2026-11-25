@@ -30,7 +30,7 @@ struct ForgeApp: App {
         .environmentObject(model)
     } label: {
       // The symbol's own name was what VoiceOver read: "Build" ("Compilazione").
-      MenuBarLabel(model: model, delegate: delegate)
+      MenuBarLabel(model: model, signs: model.signs, delegate: delegate)
     }
     // Pictures, and things to drag, which a menu cannot hold.
     .menuBarExtraStyle(.window)
@@ -41,11 +41,12 @@ struct ForgeApp: App {
 /// so it is what says where files from outside go.
 private struct MenuBarLabel: View {
   let model: AppModel
+  @ObservedObject var signs: WorkSigns
   let delegate: AppDelegate
   @Environment(\.openWindow) private var openWindow
 
   var body: some View {
-    Image(systemName: "hammer")
+    Image(nsImage: HammerFrames.image(for: signs.hammer))
       .accessibilityLabel(Text("Forge"))
       .onAppear {
         model.showWindow = { openWindow(id: MenuBarView.windowID) }

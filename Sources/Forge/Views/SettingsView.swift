@@ -79,6 +79,22 @@ struct SettingsView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
+      Section("While converting") {
+        HStack {
+          Picker("Show it in", selection: $model.settings.workSign) {
+            // A Mac without one has nothing to choose.
+            ForEach(AppSettings.WorkSign.allCases.filter { NotchZone.cutout() != nil || $0 == .nowhere || $0 == .menuBar || $0 == model.settings.workSign }, id: \.self) {
+              Text($0.title).tag($0)
+            }
+          }
+          Button("Try It") { model.signs.rehearse() }
+            .controlSize(.small)
+            .disabled(model.settings.workSign == .nowhere)
+        }
+        Text("The hammer strikes while Forge works. A check says what was done; a cross says that it was not.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
       Section("What everything starts from") {
         Picker("Resizing means", selection: $model.settings.defaultFitMode) {
           ForEach(ResizeFitMode.allCases, id: \.self) { Text($0.title).tag($0) }

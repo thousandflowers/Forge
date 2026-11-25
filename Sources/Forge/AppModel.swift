@@ -19,6 +19,8 @@ final class AppModel: ObservableObject {
   private let cuts = CutCenter()
   let dropZone = DropZone()
   let running = Running()
+  let signs = WorkSigns()
+  private lazy var notchSign = NotchSign(signs)
   private let notchZone = NotchZone()
   private var inHand: Set<String> = []
   private var watchedPlaces: [Automatic.Place: URL] = [:]
@@ -74,6 +76,7 @@ final class AppModel: ObservableObject {
     dragMenu.preview = asks.preview
     asks.cut = { [weak self] file in self?.cut(file) }
     running.ended = { [weak self] in Task { await self?.refreshHistory() } }
+    running.heard = { [weak self] in self?.signs.hear($0) }
     let running = running
     Task { await running.listen(to: coordinator) }
   }
@@ -525,6 +528,8 @@ final class AppModel: ObservableObject {
       Task { await self.refreshHistory() }
       return made
     }
+    signs.place = settings.workSign
+    notchSign.follow()
     settings.dragMenu || settings.notchZone ? dragMenu.start() : dragMenu.stop()
   }
 

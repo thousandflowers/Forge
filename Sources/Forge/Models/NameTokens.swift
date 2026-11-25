@@ -166,4 +166,19 @@ extension RulePreset {
   func tools(for file: ProcessableFile) -> [Tool] {
     (actions + NameTokens.applying(to: [], from: file.fileName, tools: readsTools)).everyTool
   }
+
+  /// What it does to that file, in a few words: what its name says, or else what
+  /// the preset does, or else what it becomes.
+  func words(for file: ProcessableFile) -> String {
+    func steps(_ chain: [Operation]) -> [String] { chain.flatMap(\.leaves).filter { !$0.isFormat }.map(PresetCard.chip) }
+    let named = steps(NameTokens.applying(to: [], from: file.fileName, tools: readsTools))
+    let all = named.isEmpty ? steps(actions) : named
+    guard all.isEmpty else {
+      return all.prefix(Self.mostWords).joined(separator: ", ") + (all.count > Self.mostWords ? "…" : "")
+    }
+    let formats = actions.flatMap(\.leaves).compactMap { if case .convertFormat(let to) = $0 { return OutputFormat(type: to).label } else { return nil } }
+    return formats.isEmpty ? name : formats.joined(separator: ", ")
+  }
+
+  private static let mostWords = 2
 }

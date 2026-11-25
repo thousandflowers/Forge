@@ -55,7 +55,8 @@ actor ProcessingCoordinator {
     let fileId = file.id
     let hears = hears, job = UUID()
     hears?(.began(job, file.url))
-    defer { hears?(.ended(job)) }
+    var outcome = Running.Outcome.quiet
+    defer { hears?(.ended(job, outcome)) }
 
     let started = Date()
     let task = Task {
@@ -125,10 +126,26 @@ actor ProcessingCoordinator {
     // id, and a task of its own does not hear its caller being cancelled. The
     // CLI's Ctrl-C and the editor's Preview cancel from outside, so it is
     // passed on here: otherwise the export ran to the end regardless.
-    return try await withTaskCancellationHandler {
-      try await task.value
-    } onCancel: {
-      task.cancel()
+    do {
+      let history = try await withTaskCancellationHandler {
+        try await task.value
+      } onCancel: {
+        task.cancel()
+      }
+      outcome = .done(preset.words(for: file))
+      return history
+    } catch {
+      outcome = Self.outcome(of: error)
+      throw error
+    }
+  }
+
+  /// What is not Forge's to convert, and what was stopped, is nothing to say.
+  private static func outcome(of error: Error) -> Running.Outcome {
+    switch error {
+    case is CancellationError, ProcessingError.unreadableFormat, ProcessingError.unsupportedConversion, ProcessingError.unknownType: return .quiet
+    case ProcessingError.leftAlone(let reason): return .leftAlone(reason)
+    default: return .failed(error.localizedDescription)
     }
   }
 
