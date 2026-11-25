@@ -9,12 +9,15 @@ final class PremiumTests: BaseTestCase {
     func entry(_ from: String, _ to: String) -> ProcessingHistory {
       ProcessingHistory(fileURL: path(from), status: .completed, duration: 0, outputURL: path(to))
     }
-    XCTAssertTrue(Lesson.answers(entry("First light_gray.png", "First light.png"), .word))
-    XCTAssertFalse(Lesson.answers(entry("Ember_reverse.wav", "Ember.wav"), .word))
     XCTAssertTrue(Lesson.answers(entry("Letter.md", "Letter.pdf"), .kind))
     XCTAssertFalse(Lesson.answers(entry("First light.png", "First light.pdf"), .kind))
-    XCTAssertTrue(Lesson.answers(entry("First light_ask.png", "First light.jpg"), .ask))
-    XCTAssertTrue(Lesson.answers(entry("Ember_reverse.wav", "Ember.wav"), .sound))
+    XCTAssertTrue(Lesson.answers(entry("Ember_reverse.wav", "Ember.wav"), .word))
+    XCTAssertFalse(Lesson.answers(entry("First light_gray.png", "First light.png"), .word))
+    XCTAssertTrue(Lesson.answers(entry("First light.png", "First light.jpg"), .drag))
+    XCTAssertFalse(Lesson.answers(entry("Ember_reverse.wav", "Ember.wav"), .drag))
+    XCTAssertFalse(Lesson.answers(entry("Letter.md", "Letter.docx"), .drag))
+    // Said in its name, it was not dragged.
+    XCTAssertFalse(Lesson.answers(entry("First light_gray.png", "First light.png"), .drag))
     XCTAssertTrue(Lesson.isIn(path("a"), path("a/b.png")))
     XCTAssertFalse(Lesson.isIn(path("a"), path("b.png")))
   }

@@ -180,8 +180,6 @@ struct LessonView: View {
     case .hello: return "Try Forge"
     case .word: return "Say it in the name"
     case .kind: return "Change what it is"
-    case .ask: return "Let it ask"
-    case .sound: return "Sound, too"
     case .drag: return "Or just drag"
     case .end: return "That’s all there is to it"
     }
@@ -190,10 +188,8 @@ struct LessonView: View {
   private var more: String {
     switch lesson.step {
     case .hello: return "Three files to play with, in a folder of their own."
-    case .word: return "Select the picture, press Return, and add _gray."
     case .kind: return "Give the letter another extension. If the Finder asks, choose Use .pdf."
-    case .ask: return "Not sure? Add _ask, and choose from a menu."
-    case .sound: return "Add _reverse to the recording, and listen."
+    case .word: return "Add _reverse to the recording, and listen."
     case .drag: return "Hold \(keys) while you drag the picture, and let go on a format."
     case .end: return "It works the same in any folder you watch."
     }

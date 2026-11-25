@@ -10,7 +10,8 @@ final class Lesson: ObservableObject {
   static let seenKey = "welcomeSeen"
   static var isNew: Bool { !UserDefaults.standard.bool(forKey: seenKey) }
 
-  enum Step: Int, CaseIterable { case hello, word, kind, ask, sound, drag, end }
+  /// One file each, and each its own gesture.
+  enum Step: Int, CaseIterable { case hello, kind, word, drag, end }
 
   @Published private(set) var step = Step.hello
   /// It was done: said for a moment before the next thing.
@@ -54,7 +55,7 @@ final class Lesson: ObservableObject {
         model.startLesson(in: made.folder)
         watching = model.$history.dropFirst().sink { [weak self] in self?.heard($0) }
         panel?.follow(made.folder)
-        go(to: .word)
+        go(to: .kind)
       } catch {
         problem = error.localizedDescription
       }
@@ -123,8 +124,8 @@ final class Lesson: ObservableObject {
     problem = nil
     score.play(.shimmer)
     withAnimation(Motion.arrive) { isDone = true }
-    if step == .sound, let output = entry.outputURL { score.play(output) }
-    let pause: UInt64 = step == .sound ? 6_200_000_000 : 1_700_000_000
+    if step == .word, let output = entry.outputURL { score.play(output) }
+    let pause: UInt64 = step == .word ? 6_200_000_000 : 1_700_000_000
     going = Task { [weak self] in
       try? await Task.sleep(nanoseconds: pause)
       guard !Task.isCancelled else { return }
@@ -141,11 +142,9 @@ final class Lesson: ObservableObject {
     let from = entry.fileURL.pathExtension.lowercased(), to = entry.outputURL?.pathExtension.lowercased()
     switch step {
     case .hello, .end: return false
-    case .word: return from == "png" && name.contains("_")
     case .kind: return name.hasPrefix(WelcomeSamples.letter) && to != nil && to != "md"
-    case .ask: return name.contains("_ask")
-    case .sound: return from == "wav" && name.contains("_")
-    case .drag: return true
+    case .word: return from == "wav" && name.contains("_")
+    case .drag: return from == "png" && !name.contains("_")
     }
   }
 
@@ -154,14 +153,11 @@ final class Lesson: ObservableObject {
   /// The name it is to be given, and the one it has now.
   func renaming() -> (from: URL, to: URL)? {
     guard let files else { return nil }
-    func word(_ file: URL, _ word: String) -> (URL, URL) {
-      (file, file.deletingLastPathComponent().appendingPathComponent("\(file.deletingPathExtension().lastPathComponent)_\(word)").appendingPathExtension(file.pathExtension))
-    }
     switch step {
-    case .word: return word(files.picture, "gray")
     case .kind: return (files.letter, files.letter.deletingPathExtension().appendingPathExtension("pdf"))
-    case .ask: return word(files.picture, "ask")
-    case .sound: return word(files.sound, "reverse")
+    case .word:
+      let file = files.sound, name = file.deletingPathExtension().lastPathComponent
+      return (file, file.deletingLastPathComponent().appendingPathComponent("\(name)_reverse").appendingPathExtension(file.pathExtension))
     case .hello, .drag, .end: return nil
     }
   }
