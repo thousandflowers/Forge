@@ -91,16 +91,16 @@ struct NotchSignView: View {
     // Not past its own edge, which is where the panel ends: it lost its corners there.
     let spring = Animation.spring(response: 0.36, dampingFraction: 1)
     VStack(spacing: 0) {
-      ZStack(alignment: .top) {
-        Hanging(radius: word == nil ? 11 : 20).fill(.black)
-        VStack(spacing: 0) {
-          ears.frame(height: notch.height)
-          if let word { says(word).transition(.opacity) }
-        }
-        .opacity(isOut ? 1 : 0)
+      VStack(spacing: 0) {
+        ears.frame(height: notch.height)
+        if let word { says(word).transition(.opacity) }
       }
-      .frame(width: width, height: notch.height + (word != nil && isOut ? Self.shelf : 0))
-      .clipped()
+      .opacity(isOut ? 1 : 0)
+      .frame(width: width, height: notch.height + (word != nil && isOut ? Self.shelf : 0), alignment: .top)
+      .background(Color.black)
+      // Cut to the shape itself: what is in it is wider than the notch it comes
+      // out of, and a box cut the corners off until there was room for it.
+      .mask(Hanging(radius: word == nil || !isOut ? 11 : 20))
       Spacer(minLength: 0)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
