@@ -110,3 +110,18 @@ final class OfferedIsMadeTests: BaseTestCase {
     XCTAssertEqual(entry.outputURL?.pathExtension, "m4r")
   }
 }
+
+/// What the tiles turn into is what Forge makes.
+final class FileFanTests: BaseTestCase {
+  func test_eachTileHasFormats_allOfThemOffered() throws {
+    let offers = FileFan.offers()
+    for category in FileFan.kinds {
+      let kind = try XCTUnwrap(ConvertKind(rawValue: category.rawValue))
+      let labels = Set(kind.outputGroups.flatMap(\.formats).map { $0.label.lowercased() })
+      let named = try XCTUnwrap(offers[category])
+      XCTAssertGreaterThan(named.count, 1, category.rawValue)
+      XCTAssertTrue(named.allSatisfy(labels.contains), "\(named)")
+      print("QQ", category.rawValue, named)
+    }
+  }
+}
