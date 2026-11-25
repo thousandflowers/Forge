@@ -41,7 +41,7 @@ private struct LessonTile: View {
   /// What it is now; its own icon when it is nothing else.
   @State private var format: String?
   @State private var next = 0
-  /// Half turns: at an odd one its back is to the front, and is written backwards.
+  /// Half turns.
   @State private var turns = 0
   @Environment(\.accessibilityReduceMotion) private var isStill
 
@@ -79,12 +79,11 @@ private struct LessonTile: View {
         }
       }
       .transition(.opacity)
-      .scaleEffect(x: turns.isMultiple(of: 2) ? 1 : -1)
     }
     .foregroundStyle(.white)
     .frame(width: size, height: size)
     .shadow(color: .black.opacity(isUnder ? 0.28 : 0.18), radius: isUnder ? 8 : 5, y: isUnder ? 5 : 3)
-    .rotation3DEffect(.degrees(Double(turns) * 180), axis: (x: 0, y: 1, z: 0), perspective: 0.4)
+    .modifier(Turning(degrees: Double(turns) * 180))
     .rotationEffect(.degrees(isUnder ? 0 : Double(side) * (isOpen ? 14 : 5)))
     .scaleEffect(isUnder && !isStill ? 1.1 : 1)
     .offset(x: isOpen ? 0 : -side * size * 0.6, y: isUnder && !isStill ? -5 : abs(side) * size * 0.1)
@@ -110,5 +109,22 @@ private struct LessonTile: View {
       format = new
       if !isStill { turns += 1 }
     }
+  }
+}
+
+/// Round its middle, and never the wrong way round: asked at every moment of the
+/// turn, since what has just come in has no idea how far it has got.
+private struct Turning: ViewModifier, Animatable {
+  var degrees: Double
+
+  var animatableData: Double {
+    get { degrees }
+    set { degrees = newValue }
+  }
+
+  func body(content: Content) -> some View {
+    content
+      .scaleEffect(x: cos(degrees * .pi / 180) < 0 ? -1 : 1)
+      .rotation3DEffect(.degrees(degrees), axis: (x: 0, y: 1, z: 0), perspective: 0.4)
   }
 }

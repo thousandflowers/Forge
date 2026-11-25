@@ -182,6 +182,7 @@ struct LessonView: View {
     case .kind: return "Change what it is"
     case .drag: return "Or just drag"
     case .scan: return "A little magic"
+    case .keep: return "Anywhere else"
     case .end: return "That’s all there is to it"
     }
   }
@@ -193,7 +194,8 @@ struct LessonView: View {
     case .word: return "Add _reverse to the recording, and listen."
     case .drag: return "Hold \(keys) while you drag the picture, and let go on a format."
     case .scan: return "Add _scan to the photo of the recipe."
-    case .end: return "It works the same in any folder you watch."
+    case .keep: return "It works the same in any folder you watch."
+    case .end: return lesson.made == nil ? "A few more names to try." : "The PDF is yours: drag it anywhere."
     }
   }
 
@@ -213,7 +215,11 @@ struct LessonView: View {
     case .drag: if let files = lesson.files { HeldFile(file: files.picture, keys: keys) }
     case .end:
       VStack(spacing: 8) {
+        if let made = lesson.made { LessonMade(file: made) }
         LessonExtras(lesson: lesson)
+      }
+    case .keep:
+      VStack(spacing: 10) {
         if let model = lesson.model {
           EndSwitch(model: model)
           if lesson.isDragMenuNew { DragSwitch(model: model, keys: keys) }
@@ -238,7 +244,9 @@ struct LessonView: View {
         Button("Open the Folder") { lesson.begin() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
       case .end:
         Button("Open Forge") { lesson.openForge(.process) }
-        Button("Done") { lesson.close() }.buttonStyle(.borderedProminent)
+        Button("Done") { lesson.close() }.buttonStyle(Prominent())
+      case .keep:
+        Button("Next") { lesson.next() }
       default:
         if lesson.renaming() != nil, !lesson.isDone { Button("Show Me") { lesson.showHow() } }
         Button(lesson.isDone ? "Next" : "Skip") { lesson.next() }
@@ -250,7 +258,9 @@ struct LessonView: View {
     .overlay(alignment: .trailing) { if isTrying { sound } }
   }
 
-  private var isTrying: Bool { lesson.step != .hello && lesson.step != .end }
+  private var isTrying: Bool { !Self.aside.contains(lesson.step) }
+  /// Nothing to be done here.
+  private static let aside: Set<Lesson.Step> = [.hello, .keep, .end]
 
   private var sound: some View {
     let name = lesson.isLoud ? "Turn the sound off" : "Turn the sound on"
@@ -262,12 +272,12 @@ struct LessonView: View {
 
   private var dots: some View {
     HStack(spacing: 5) {
-      ForEach(Lesson.Step.allCases.filter { $0 != .hello && $0 != .end }, id: \.self) { other in
+      ForEach(Lesson.Step.allCases.filter { !Self.aside.contains($0) }, id: \.self) { other in
         Circle().fill(Color.primary.opacity(other.rawValue < lesson.step.rawValue || other == lesson.step ? 0.7 : 0.18)).frame(width: 6, height: 6)
       }
     }
     .accessibilityElement()
-    .accessibilityLabel(Text("Step \(lesson.step.rawValue) of \(Lesson.Step.allCases.count - 2)"))
+    .accessibilityLabel(Text("Step \(lesson.step.rawValue) of \(Lesson.Step.allCases.count - Self.aside.count)"))
   }
 }
 
@@ -303,6 +313,18 @@ private struct TypedName: View {
     .background(Color(nsColor: .textBackgroundColor).opacity(0.7), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     .accessibilityElement()
     .accessibilityLabel(Text("\(old) becomes \(new)"))
+  }
+}
+
+/// The Finder has the keys, and the system's own is drawn like any other
+/// button without them.
+private struct Prominent: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .foregroundStyle(.white)
+      .padding(.horizontal, 10)
+      .frame(height: 20)
+      .background(Color.accentColor.opacity(configuration.isPressed ? 0.75 : 1), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
   }
 }
 

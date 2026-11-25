@@ -12,7 +12,7 @@ final class Lesson: ObservableObject {
   static var isNew: Bool { !UserDefaults.standard.bool(forKey: seenKey) }
 
   /// One file taken from a photo to a PDF, and then the other two.
-  enum Step: Int, CaseIterable { case hello, scan, kind, word, drag, end }
+  enum Step: Int, CaseIterable { case hello, scan, kind, word, drag, keep, end }
 
   @Published private(set) var step = Step.hello
   /// It was done: said for a moment before the next thing.
@@ -182,7 +182,7 @@ final class Lesson: ObservableObject {
     let name = entry.fileURL.deletingPathExtension().lastPathComponent
     let from = entry.fileURL.pathExtension.lowercased(), to = entry.outputURL?.pathExtension.lowercased()
     switch step {
-    case .hello, .end: return false
+    case .hello, .keep, .end: return false
     case .kind: return name.hasPrefix(WelcomeSamples.recipe) && to != nil && to != "jpg"
     case .word: return from == "wav" && name.contains("_")
     case .drag: return from == "png" && !name.contains("_")
@@ -202,8 +202,14 @@ final class Lesson: ObservableObject {
     case .kind: return word(files.recipe, ".pdf")
     case .word: return word(files.sound, "_reverse")
     case .scan: return word(files.recipe, "_scan")
-    case .hello, .drag, .end: return nil
+    case .hello, .drag, .keep, .end: return nil
     }
+  }
+
+  /// What somebody made here, if they did: theirs to take away.
+  var made: URL? {
+    guard let url = files?.recipe.deletingPathExtension().appendingPathExtension("pdf"), FileManager.default.fileExists(atPath: url.path) else { return nil }
+    return url
   }
 
   /// Asked again whenever something is tried: one of them is no longer a picture.

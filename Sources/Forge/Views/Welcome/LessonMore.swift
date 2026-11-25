@@ -17,6 +17,23 @@ struct LessonChain: View {
   }
 }
 
+/// What was made, to be taken away.
+struct LessonMade: View {
+  let file: URL
+
+  var body: some View {
+    PreviewImage(url: file, maxPixels: 160)
+      .frame(width: 35, height: 50)
+      .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+      .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
+      .contentShape(Rectangle())
+      .onDrag { NSItemProvider(object: file as NSURL) }
+      .help("Drag it anywhere")
+      .accessibilityLabel(Text(file.lastPathComponent))
+      .accessibilityAction { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+  }
+}
+
 /// A few more names, each given by pressing it.
 struct LessonExtras: View {
   @ObservedObject var lesson: Lesson
