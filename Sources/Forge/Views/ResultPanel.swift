@@ -6,9 +6,18 @@ import SwiftUI
 @MainActor
 final class ResultPanel {
   private let panel: NSPanel
+  private let host: NSHostingController<ResultCards>
+  private let center: ResultCenter
   private static let gap: CGFloat = 18
+  /// As long as it takes the cards to come down to where they are going.
+  private static let settling = 0.8
 
   init(center: ResultCenter) {
+    self.center = center
+    let room = Room()
+    host = NSHostingController(rootView: ResultCards(center: center, room: room))
+    self.room = room
+    host.sizingOptions = []
     panel = NSPanel(contentRect: .zero, styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
     panel.title = "Forge did this"
     panel.level = .floating
@@ -19,40 +28,109 @@ final class ResultPanel {
     panel.backgroundColor = .clear
     panel.isOpaque = false
     panel.hasShadow = false
-    let host = NSHostingController(rootView: ResultCards(center: center) { [weak self] in self?.place() })
-    host.sizingOptions = [.preferredContentSize]
     panel.contentViewController = host
+    room.changed = { [weak self] in self?.follow() }
+  }
+
+  /// How high the cards stand, as they say themselves.
+  @MainActor
+  final class Room {
+    var changed: () -> Void = {}
+    var height: CGFloat = 0 {
+      didSet { if height != oldValue { changed() } }
+    }
   }
 
   func appear() {
+    guard !panel.isVisible else { return }
+    // On one screen for as long as there are cards in it.
+    let mouse = NSEvent.mouseLocation
+    screen = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.visibleFrame
+    place(atLeast: 0)
     panel.orderFrontRegardless()
-    DispatchQueue.main.async { [weak self] in self?.place() }
   }
 
-  func close() { panel.orderOut(nil) }
+  /// There are more cards, or fewer: room is made before they move, and taken
+  /// away when they have moved.
+  func follow() {
+    place(atLeast: panel.frame.height)
+    // Once, for however many came and went meanwhile.
+    settle?.cancel()
+    let work = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      if center.cards.isEmpty { panel.orderOut(nil) } else { place(atLeast: 0) }
+    }
+    settle = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.settling, execute: work)
+  }
 
-  private func place() {
-    let mouse = NSEvent.mouseLocation
-    guard let screen = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.visibleFrame else { return }
-    if let size = panel.contentViewController?.view.fittingSize, size.width > 0 { panel.setContentSize(size) }
-    panel.setFrameOrigin(NSPoint(x: screen.maxX - panel.frame.width - Self.gap + Floating.room, y: screen.minY + Self.gap - Floating.room))
+  private let room: Room
+  private var screen: NSRect?
+  private var settle: DispatchWorkItem?
+
+  private func place(atLeast height: CGFloat) {
+    guard let screen else { return }
+    let width = ResultCards.width + Floating.room * 2
+    panel.setFrame(
+      NSRect(x: screen.maxX - width - Self.gap + Floating.room, y: screen.minY + Self.gap - Floating.room, width: width, height: max(room.height, height, 1)),
+      display: true
+    )
   }
 }
 
 private struct ResultCards: View {
+  static let width: CGFloat = 392
   @ObservedObject var center: ResultCenter
-  let changed: () -> Void
+  let room: ResultPanel.Room
+  @Environment(\.accessibilityReduceMotion) private var isStill
+
+  /// Until the others are out of the way, or the one that goes has gone: two
+  /// in one place is neither.
+  private static let makingWay = 0.2, going = 0.14
+
+  private var coming: AnyTransition {
+    guard !isStill else { return .opacity }
+    let slide = AnyTransition.modifier(active: Slide(x: 24, opacity: 0), identity: Slide(x: 0, opacity: 1))
+    return .asymmetric(
+      insertion: slide.animation(Motion.move.delay(center.cards.count > 1 ? Self.makingWay : 0)),
+      removal: slide.animation(.easeOut(duration: Self.going))
+    )
+  }
 
   var body: some View {
+    // The one that comes is at the bottom, and those before it move up.
     VStack(spacing: 10) {
       ForEach(center.cards) { card in
         ResultCardView(card: card, close: { center.close(card.id) }) { inside in
           if inside { center.held.insert(card.id) } else { center.held.remove(card.id) }
         }
+        .transition(coming)
       }
     }
+    .animation(isStill ? nil : Motion.move.delay(center.isLeaving ? Self.going : 0), value: center.cards.map(\.id))
     .padding(Floating.room)
-    .onChange(of: center.cards.map(\.id)) { _ in DispatchQueue.main.async { changed() } }
+    .background(GeometryReader { proxy in
+      Color.clear.onAppear { room.height = proxy.size.height }.onChange(of: proxy.size.height) { room.height = $0 }
+    })
+    .frame(maxHeight: .infinity, alignment: .bottom)
+  }
+}
+
+/// All of it moves as one: what is drawn in it halfway is where the rest is.
+private struct Slide: ViewModifier {
+  let x: CGFloat
+  let opacity: Double
+
+  func body(content: Content) -> some View { content.modifier(Shift(x: x)).opacity(opacity) }
+
+  private struct Shift: GeometryEffect {
+    var x: CGFloat
+    var animatableData: CGFloat {
+      get { x }
+      set { x = newValue }
+    }
+
+    func effectValue(size: CGSize) -> ProjectionTransform { ProjectionTransform(CGAffineTransform(translationX: x, y: 0)) }
   }
 }
 
@@ -62,8 +140,6 @@ private struct ResultCardView: View {
   let hover: (Bool) -> Void
   @State private var inside = false
   @State private var isTooLate = false
-  @State private var isIn = false
-  @Environment(\.accessibilityReduceMotion) private var isStill
 
   var body: some View {
     HStack(spacing: 12) {
@@ -84,6 +160,7 @@ private struct ResultCardView: View {
             }
           }
           .font(.callout).monospacedDigit()
+          .lineLimit(1).minimumScaleFactor(0.75)
         }
       }
       Spacer(minLength: 4)
@@ -99,11 +176,8 @@ private struct ResultCardView: View {
         .accessibilityLabel(Text("Close"))
     }
     .padding(12)
-    .frame(width: 360, alignment: .leading)
+    .frame(width: ResultCards.width, alignment: .leading)
     .floatingGlass(radius: 18)
-    .offset(x: isIn || isStill ? 0 : 28)
-    .opacity(isIn ? 1 : 0)
-    .onAppear { withAnimation(isStill ? nil : Motion.move) { isIn = true } }
     .onHover { inside = $0; hover($0) }
   }
 

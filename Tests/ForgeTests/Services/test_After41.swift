@@ -154,3 +154,24 @@ final class MpegIsAFilmTests: BaseTestCase {
     }
   }
 }
+
+@MainActor
+final class ResultCardsStackTests: XCTestCase {
+  private func card(_ name: String) -> ResultCard {
+    ResultCard(title: name, file: URL(fileURLWithPath: "/\(name)"), before: 2, after: 1, undo: { false })
+  }
+
+  /// The one that comes is the last, three stay, and which way they are going is
+  /// known: up to make room, or down into it.
+  func test_theNewOneIsLast_andWhetherOneIsLeavingIsSaid() {
+    let center = ResultCenter(shows: false)
+    for name in ["a", "b", "c", "d"] {
+      center.show(card(name))
+      XCTAssertFalse(center.isLeaving, name)
+    }
+    XCTAssertEqual(center.cards.map(\.title), ["b", "c", "d"])
+    center.close(center.cards[1].id)
+    XCTAssertTrue(center.isLeaving)
+    XCTAssertEqual(center.cards.map(\.title), ["b", "d"])
+  }
+}
