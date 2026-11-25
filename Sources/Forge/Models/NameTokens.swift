@@ -53,6 +53,14 @@ enum NameTokens {
     return pieces.joined(separator: "_")
   }
 
+  /// The name once it has asked, and been answered.
+  static func answered(_ stem: String, ext: String) -> String {
+    let (said, instructions) = parse("\(stem).\(ext)")
+    guard said.ask != nil else { return stem }
+    let pieces = stem.split(separator: "_").map(String.init), last = pieces.count - instructions
+    return (Array(pieces[..<last]) + pieces[last...].filter { Ask(rawValue: $0.lowercased()) == nil }).joined(separator: "_")
+  }
+
   /// Every width asked for, in the order it is written. Only those at the end:
   /// anywhere else a number of pixels is part of the name.
   static func widths(_ fileName: String) -> [Int] {
