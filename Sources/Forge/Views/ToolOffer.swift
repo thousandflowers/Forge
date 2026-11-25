@@ -117,7 +117,7 @@ extension View {
       }
     } message: {
       if let tool = installer.confirming, let release = tool.release {
-        Text("\(tool.name) \(release.version), \(tool.weight), from \(release.build.url.host ?? ""). License: \(release.licence). Forge checks it is the one it expects and keeps it in its own folder.")
+        Text("\(tool.name) \(release.version), \(tool.weight), from \(release.build.url.host ?? ""). License: \(release.licence). Forge verifies the download and keeps it in its own folder.")
       }
     }
   }

@@ -262,7 +262,7 @@ enum Capabilities {
       ),
       Capability(
         id: "office-suite",
-        title: "Office, whole",
+        title: "All of Office",
         summary: "Visio, Publisher, Pages, Numbers and Keynote, and from any Office format to any other.",
         symbol: "doc.richtext",
         status: .needsPack(.init(
@@ -308,7 +308,7 @@ enum Capabilities {
       Capability(
         id: "parquet",
         title: "Parquet",
-        summary: "The data format of analysts, to and from CSV and JSON.",
+        summary: "The data format analysts use, to and from CSV and JSON.",
         symbol: "cylinder.split.1x2",
         status: .needsPack(.init(
           name: "Parquet",
@@ -322,7 +322,7 @@ enum Capabilities {
       Capability(
         id: "typst",
         title: "Typst",
-        summary: "Typst documents, set as PDF, PNG or SVG.",
+        summary: "Typst documents as PDF, PNG or SVG.",
         symbol: "doc.plaintext",
         status: .needsPack(.init(
           name: "Typst",
