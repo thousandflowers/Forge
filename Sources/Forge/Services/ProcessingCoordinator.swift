@@ -231,6 +231,10 @@ actor ProcessingCoordinator {
       destinationURL = destinationMode == .overwrite ? file.url.deletingLastPathComponent() : destinationURL
       destinationMode = .copyTo
     }
+    // Told apart from the one it is beside.
+    if preset.nameTemplate == nil, chains.contains(where: { $0.actions.tools.contains(.lock) }) {
+      preset.nameTemplate = settings.nameTemplate + " locked"
+    }
     guard chains.count > 1 || chains.first?.branch != nil || resolution.merge != nil else {
       var flat = preset
       flat.actions = chains.first?.actions ?? []

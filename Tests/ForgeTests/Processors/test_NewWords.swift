@@ -469,6 +469,21 @@ final class NewPDFWordTests: ToolTestCase {
     XCTAssertEqual(questions.map(\.isAgain), [false, true])
   }
 
+  /// Asked to replace it, the original stays all the same, and no copy of it is
+  /// put away without its password.
+  func test_theOriginalStaysAndNothingOfItIsPutAway() async throws {
+    let source = try Fixture.pdf(at: path("contract_askpassword.pdf"), pages: 1)
+    let before = try Data(contentsOf: source)
+    for mode in [DestinationMode.overwrite, .moveTo] {
+      _ = answering(["goose"])
+      let made = try await run([], on: source, mode: mode)
+      XCTAssertEqual(made.map(\.lastPathComponent), ["contract locked.pdf"])
+      XCTAssertEqual(PDFDocument(url: made[0])?.isLocked, true)
+      XCTAssertEqual(try Data(contentsOf: source), before)
+      XCTAssertEqual(contents(of: store.backupsDirectory), [])
+    }
+  }
+
   func test_aLockedPDFBecomesPictures() async throws {
     let source = try Fixture.pdf(at: path("a.pdf"), pages: 2)
     _ = answering(["goose", "goose"])

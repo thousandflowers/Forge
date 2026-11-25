@@ -323,7 +323,9 @@ extension Tool {
   }
 
   /// What it makes is about the file, and not the file.
-  var leavesTheOriginal: Bool { [.digest, .frames, .wave, .still, .layers, .pictures, .tables].contains(kind) }
+  /// And a locked copy is beside the document: in its place, what is kept of the
+  /// original would be it without its password, out of sight.
+  var leavesTheOriginal: Bool { [.digest, .frames, .wave, .still, .layers, .pictures, .tables, .lock].contains(kind) }
 
   /// What it makes of a film is pictures.
   var takesAFrame: Bool { kind == .frames || kind == .still }
