@@ -26,8 +26,8 @@ final class WelcomeScore {
     for (sound, buffers) in made.sounds { sounds[sound] = buffers }
     for node in effects + [sample] { engine.attach(node) }
     engine.attach(room)
-    room.loadFactoryPreset(.plate)
-    room.wetDryMix = 28
+    room.loadFactoryPreset(.mediumRoom)
+    room.wetDryMix = 18
     let mix = AVAudioMixerNode()
     engine.attach(mix)
     for node in effects { engine.connect(node, to: mix, format: format) }
@@ -94,35 +94,36 @@ final class WelcomeScore {
   }
 
   nonisolated static func make(_ sound: Sound, _ way: Int = 0) -> AVAudioPCMBuffer? {
-    let tubes = WelcomeChimes.tubes.count
     switch sound {
-    // Wind through all of it, and a long way to the ground.
+    // Up once, up again from higher, and a burst at the top.
     case .hello:
-      return chimes(4, way) { chimes in
-        chimes.stir(13, among: 0...(tubes - 1), from: 0, over: 1.5, loud: 0.06, fade: 1.7)
-        chimes.dust(80, from: 0.1, over: 2.4, loud: 0.03)
+      return chimes(2.6, way) { chimes in
+        chimes.run(6, from: 0, at: 0, over: 0.36, loud: 0.05, fade: 4)
+        chimes.run(8, from: 3, at: 0.4, over: 0.42, loud: 0.055, fade: 3.2)
+        chimes.dust(50, from: 0.1, over: 0.8, loud: 0.022)
+        chimes.dust(110, from: 0.8, over: 1.3, loud: 0.038)
       }
-    // A fingertip.
+    // A fingertip, and a giggle.
     case .pop:
-      return chimes(1.3, way) { chimes in
-        chimes.stir(2 + way % 2, among: 3...(tubes - 1), from: 0, over: 0.13, loud: 0.075, fade: 4)
-        chimes.dust(14, from: 0.02, over: 0.45, loud: 0.035)
+      return chimes(0.9, way) { chimes in
+        chimes.run(3, from: 3 + way % 4, at: 0, over: 0.15, loud: 0.07, fade: 8)
+        chimes.dust(22, from: 0.03, over: 0.4, loud: 0.034)
       }
     case .latch:
-      return chimes(1.4, way) { chimes in
-        chimes.stir(2, among: 1...5, from: 0, over: 0.2, loud: 0.06, fade: 3.4)
-        chimes.dust(8, from: 0.04, over: 0.5, loud: 0.022)
+      return chimes(0.9, way) { chimes in
+        chimes.run(2, from: 3 + way, at: 0, over: 0.16, loud: 0.06, fade: 7)
+        chimes.dust(12, from: 0.05, over: 0.4, loud: 0.024)
       }
-    // A hand through all of them.
+    // A wand.
     case .shimmer:
-      return chimes(2.8, way) { chimes in
-        chimes.stir(9, among: 2...(tubes - 1), from: 0, over: 0.6, loud: 0.07, fade: 2.3)
-        chimes.dust(70, from: 0.05, over: 1.5, loud: 0.04)
+      return chimes(1.9, way) { chimes in
+        chimes.run(8, from: 1 + way, at: 0, over: 0.4, loud: 0.06, fade: 4.6)
+        chimes.dust(110, from: 0.04, over: 1.2, loud: 0.04)
       }
-    // Held, so that it does not ring: it did not come off.
+    // Down two, and held: it did not come off.
     case .thud:
-      return chimes(0.8, way) { chimes in
-        chimes.stir(2, among: 0...2, from: 0, over: 0.2, loud: 0.08, fade: 13)
+      return chimes(0.6, way) { chimes in
+        chimes.run(2, from: 4, by: -1, at: 0, over: 0.2, loud: 0.07, fade: 14)
       }
     }
   }

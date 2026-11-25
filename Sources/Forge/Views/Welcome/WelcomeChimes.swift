@@ -1,7 +1,7 @@
 import Foundation
 
-/// A wind chime in the light: metal tubes of no scale anybody tuned, knocked
-/// together unevenly, and the sparks that come off them.
+/// A wind chime in the light: short metal tubes of a glad scale, none of them
+/// quite in tune, knocked together in a hurry, and the sparks that go up.
 struct WelcomeChimes {
   let left: UnsafeMutablePointer<Float>
   let right: UnsafeMutablePointer<Float>
@@ -10,12 +10,12 @@ struct WelcomeChimes {
   /// What happens is decided by this, and is never quite what happened before.
   var chance: WelcomeSamples.Chance
 
-  /// Hertz, from the longest. Cut by eye.
-  static let tubes: [Double] = [631, 718, 846, 937, 1093, 1239, 1466, 1642, 1931, 2204]
+  /// Hertz, from the longest: five notes to the octave, and no sad ones.
+  static let tubes: [Double] = [784, 880, 988, 1175, 1319, 1568, 1760, 1976, 2349, 2637, 3136]
 
   /// How a bar that is free at both ends rings: not at all like a string.
   private static let modes: [(ratio: Double, loud: Double, fade: Double)] = [
-    (1, 0.55, 1), (2.756, 0.85, 1.5), (5.404, 0.5, 2.6), (8.933, 0.26, 4.6), (13.34, 0.12, 8),
+    (1, 1, 1), (2.756, 0.5, 1.7), (5.404, 0.3, 3), (8.933, 0.18, 5), (13.34, 0.1, 8),
   ]
   private static let highest = 17_000.0
   /// What is this soft is not heard, and not worked out.
@@ -23,25 +23,25 @@ struct WelcomeChimes {
 
   private mutating func between(_ low: Double, _ high: Double) -> Double { low + (high - low) * chance.next() }
 
-  /// Several of them, one after another and none twice running.
-  mutating func stir(_ hits: Int, among range: ClosedRange<Int>, from start: Double, over seconds: Double, loud: Double, fade: Double = 2.4) {
-    var last = -1, when = start
+  /// Several of them, one after another: climbing, or tumbling down. Not by even
+  /// steps, and now and then one is gone back to.
+  mutating func run(_ hits: Int, from first: Int, by direction: Int = 1, at start: Double, over seconds: Double, loud: Double, fade: Double) {
+    var tube = first, when = start
     for hit in 0..<hits {
-      var tube = range.lowerBound + Int(chance.next() * Double(range.count)) % range.count
-      if tube == last { tube = tube == range.upperBound ? range.lowerBound : tube + 1 }
-      last = tube
-      knock(tube, at: when, loud: loud * between(0.55, 1) * (1 - 0.35 * Double(hit) / Double(hits)), fade: fade)
-      when += seconds / Double(hits) * between(0.35, 1.65)
+      knock(min(max(tube, 0), Self.tubes.count - 1), at: when, loud: loud * between(0.6, 1), fade: fade)
+      let isBack = hit > 1 && chance.next() < 0.18
+      tube += direction * (isBack ? -1 : 1 + Int(chance.next() * 1.6))
+      when += seconds / Double(hits) * between(0.6, 1.4)
     }
   }
 
   private mutating func knock(_ tube: Int, at start: Double, loud: Double, fade: Double) {
     // The air, the sun, where it was caught.
-    let hertz = Self.tubes[tube] * between(0.986, 1.014)
+    let hertz = Self.tubes[tube] * between(0.994, 1.006)
     let pan = min(0.9, max(0.1, 0.12 + 0.76 * Double(tube) / Double(Self.tubes.count - 1) + between(-0.1, 0.1)))
     ring(hertz, at: start, loud: loud, fade: fade, pan: pan)
     // What hit it comes back for a second, softer, go.
-    if chance.next() < 0.45 { ring(hertz, at: start + between(0.035, 0.1), loud: loud * 0.35, fade: fade * 1.2, pan: pan) }
+    if chance.next() < 0.35 { ring(hertz, at: start + between(0.03, 0.07), loud: loud * 0.35, fade: fade * 1.3, pan: pan) }
   }
 
   private mutating func ring(_ hertz: Double, at start: Double, loud: Double, fade: Double, pan: Double) {
@@ -68,15 +68,14 @@ struct WelcomeChimes {
     }
   }
 
-  /// Sparks: tiny, very high, at no note at all, and fewer as it goes on. Some
-  /// of them only crackle.
+  /// Sparks: tiny, very high, going up as they go out. Some of them only crackle.
   mutating func dust(_ grains: Int, from start: Double, over seconds: Double, loud: Double) {
     for _ in 0..<grains {
       let when = pow(chance.next(), 1.6), at = start + when * seconds, level = loud * between(0.25, 1) * (1 - 0.7 * when), pan = between(0.08, 0.92)
       if chance.next() < 0.3 {
         touch(at: at, loud: level * 0.8, pan: pan)
       } else {
-        let hertz = 4_200 * pow(3, chance.next())
+        let hertz = 3_900 * pow(3.2, 0.6 * when + 0.4 * chance.next())
         tone(hertz, at: at, loud: level, fade: between(18, 55), pan: pan)
         tone(hertz * between(1.2, 1.5), at: at, loud: level * 0.4, fade: between(40, 80), pan: pan)
       }

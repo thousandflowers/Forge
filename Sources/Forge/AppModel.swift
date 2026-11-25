@@ -903,6 +903,9 @@ final class AppModel: ObservableObject {
     // Every file it wrote, not only the first: the second one lands in the
     // same watched folder and would be converted again.
     entry.outputs.forEach(remember)
+    // Known by its name at once: renamed in the second the watcher takes to
+    // come by, it was a file nobody had seen, and its word meant nothing.
+    memories[folder.id].map { memory in entry.outputs.forEach(memory.know) }
     Task { await refreshHistory() }
     return entry.outputs
   }

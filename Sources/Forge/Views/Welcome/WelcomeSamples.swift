@@ -11,7 +11,26 @@ enum WelcomeSamples {
     let picture: URL
     let sound: URL
     let letter: URL
+    let recipe: URL
   }
+
+  /// A file by its name, and what is put after it: a word, or another extension.
+  struct Extra: Sendable {
+    let name: String
+    let word: String
+
+    func name(from old: String) -> String {
+      let stem = (old as NSString).deletingPathExtension
+      return word.hasPrefix(".") ? stem + word : "\(stem)\(word).\((old as NSString).pathExtension)"
+    }
+  }
+
+  /// What is done in a moment: reading the words of a picture keeps somebody
+  /// waiting half a minute, the first time.
+  static let extras = [
+    Extra(name: "First light", word: "_gray"), Extra(name: "First light", word: "_crop1x1"),
+    Extra(name: "Ember", word: "_speed2x"), Extra(name: "Recipe", word: ".pdf"),
+  ]
 
   struct Sample: Sendable {
     let kind: PresetCategory
@@ -49,10 +68,11 @@ enum WelcomeSamples {
     if FileManager.default.fileExists(atPath: folder.path) { try FileManager.default.trashItem(at: folder, resultingItemURL: nil) }
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     func file(_ name: String) -> URL { folder.appendingPathComponent(name) }
-    let files = Files(folder: folder, picture: file("First light.png"), sound: file("Ember.wav"), letter: file("\(letter).md"))
+    let files = Files(folder: folder, picture: file("First light.png"), sound: file("Ember.wav"), letter: file("\(letter).md"), recipe: file("Recipe.jpg"))
     try write(picture(), to: files.picture)
     try writeSound(to: files.sound)
     try Data(words.utf8).write(to: files.letter)
+    try WelcomeRecipe.write(to: files.recipe)
     return files
   }
 
