@@ -20,7 +20,8 @@ struct ResultCard: Identifiable {
   /// Only a saving is claimed: a JPEG made of a HEIC is often the heavier.
   static func percent(from before: Int64, to after: Int64) -> String? {
     guard before > 0, after > 0, after < before else { return nil }
-    let share = Int((Double(before - after) / Double(before) * 100).rounded())
+    // Something is left of it.
+    let share = min(Int((Double(before - after) / Double(before) * 100).rounded()), 99)
     return share > 0 ? "−\(share)%" : nil
   }
 }

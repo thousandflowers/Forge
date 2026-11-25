@@ -332,8 +332,10 @@ private struct Timeline: View {
         grip("Start", "chevron.compact.left", isLeft: true, at: left - Self.handle, perSecond: perSecond, value: model.from) { model.setFrom($0) }
         grip("End", "chevron.compact.right", isLeft: false, at: right, perSecond: perSecond, value: model.to) { model.setTo($0) }
 
-        Capsule().fill(Color.white).frame(width: 3, height: Self.height + 8).shadow(radius: 1)
-          .offset(x: Self.handle + min(player.time, model.length) * perSecond - 1.5, y: -4)
+        Capsule().fill(Color.white)
+          .overlay(Capsule().strokeBorder(Color.black.opacity(0.35), lineWidth: 0.5))
+          .frame(width: 4, height: Self.height + 8).shadow(color: .black.opacity(0.3), radius: 1)
+          .offset(x: Self.handle + min(player.time, model.length) * perSecond - 2, y: -4)
           .allowsHitTesting(false)
       }
     }

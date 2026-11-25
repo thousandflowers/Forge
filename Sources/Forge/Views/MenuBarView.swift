@@ -250,7 +250,7 @@ private struct RecentRow: View {
     guard let before = recent.before else { return Text(size).foregroundColor(.secondary) }
     let percent = ResultCard.percent(from: before, to: after).map { "  \($0)" } ?? ""
     return Text("\(before.formatted(.byteCount(style: .file))) → \(size)").foregroundColor(.secondary)
-      + Text(percent).foregroundColor(.green).fontWeight(.semibold)
+      + Text(percent).foregroundColor(.lighter).fontWeight(.semibold)
   }
 }
 

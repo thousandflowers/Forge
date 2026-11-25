@@ -272,6 +272,8 @@ struct BlockCard<Content: View>: View {
       RoundedRectangle(cornerRadius: Metrics.blockRadius, style: .continuous)
         .fill(Color(nsColor: .card))
     )
+    // On white it has nothing else to end at.
+    .overlay(RoundedRectangle(cornerRadius: Metrics.blockRadius, style: .continuous).strokeBorder(Color.primary.opacity(0.07)))
     .frame(maxWidth: .infinity)
   }
 

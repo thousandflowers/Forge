@@ -12,7 +12,7 @@ struct ForgeApp: App {
       ContentView(batch: batch)
         .environmentObject(model)
         // The editor, with a column of blocks and the library beside it.
-        .frame(minWidth: 960, minHeight: 620)
+        .frame(minWidth: 960, minHeight: 650)
         .onAppear { delegate.inbox.deliver = { model.open($0) } }
     }
     // Files opened from outside come through the delegate, to the window there

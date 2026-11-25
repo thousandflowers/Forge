@@ -270,6 +270,7 @@ final class ResultCardTests: XCTestCase {
 
   func test_itSaysWhatWasSaved() {
     XCTAssertEqual(ResultCard.percent(from: 1000, to: 160), "−84%")
+    XCTAssertEqual(ResultCard.percent(from: 3_400_000, to: 4_000), "−99%", "nothing is not what is left")
     XCTAssertNil(ResultCard.percent(from: 1000, to: 1000))
     XCTAssertNil(ResultCard.percent(from: 0, to: 10))
     XCTAssertNil(ResultCard.percent(from: 100, to: 200), "a JPEG of a HEIC can be heavier, and no saving is claimed")

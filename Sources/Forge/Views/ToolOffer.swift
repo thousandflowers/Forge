@@ -168,7 +168,7 @@ struct ToolOfferRow: View {
     switch installer.state(of: tool.binary) {
     case .running(let share): ToolProgress(tool: tool, share: share)
     case .failed(let reason): Text(reason).font(.caption).foregroundStyle(.red).lineLimit(2)
-    case .installed: Text("Ready.").font(.caption).foregroundStyle(.green)
+    case .installed: Text("Ready.").font(.caption).foregroundStyle(Color.lighter)
     case .idle: EmptyView()
     }
   }

@@ -36,11 +36,12 @@ struct QuickConvertSheet: View {
     VStack(spacing: 0) {
       header
       Divider()
-      ScrollView { fields.padding(24) }
+      ScrollView { fields.padding(.horizontal, 24).padding(.vertical, 16) }
       Divider()
       footer
     }
-    .frame(width: 680, height: 560)
+    // As tall as what has to be answered, with where it goes in sight.
+    .frame(width: 680, height: 588)
     // The sheet is where an install is started, so it is where it is confirmed.
     .confirmsToolInstalls(with: installer)
     .translucentSheet()
@@ -62,7 +63,7 @@ struct QuickConvertSheet: View {
       Spacer()
     }
     .padding(.horizontal, 24)
-    .padding(.vertical, 18)
+    .padding(.vertical, 12)
   }
 
   private var headline: String {
@@ -84,7 +85,7 @@ struct QuickConvertSheet: View {
   // MARK: - Fields
 
   private var fields: some View {
-    VStack(alignment: .leading, spacing: 16) {
+    VStack(alignment: .leading, spacing: 12) {
       if let kind { formatCard(for: kind) } else { mixedNote }
       if kind != nil { toolCard }
       if !presets.isEmpty { presetField }
@@ -287,7 +288,8 @@ struct QuickConvertSheet: View {
         .disabled(!canConvert)
       }
     }
-    .padding(20)
+    .padding(.horizontal, 20)
+    .padding(.vertical, 14)
   }
 
   /// Says what is in there for these files, and nothing they cannot use.

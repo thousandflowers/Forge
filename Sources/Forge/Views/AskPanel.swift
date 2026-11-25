@@ -741,7 +741,7 @@ private struct NumberKey: ViewModifier {
   }
 }
 
-private extension Color {
+extension Color {
   /// The system's green and orange are too pale to be read on a light panel.
   static let lighter = Color(nsColor: shade(light: NSColor(red: 0.05, green: 0.45, blue: 0.22, alpha: 1), dark: .systemGreen))
   static let heavier = Color(nsColor: shade(light: NSColor(red: 0.65, green: 0.3, blue: 0, alpha: 1), dark: .systemOrange))

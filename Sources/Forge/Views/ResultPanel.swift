@@ -80,7 +80,7 @@ private struct ResultCardView: View {
           HStack(spacing: 6) {
             Text(card.isSomethingElse ? size(card.after) : "\(size(card.before)) → \(size(card.after))").foregroundStyle(.secondary)
             if !card.isSomethingElse, let percent = ResultCard.percent(from: card.before, to: card.after) {
-              Text(percent).fontWeight(.semibold).foregroundStyle(.green)
+              Text(percent).fontWeight(.semibold).foregroundStyle(Color.lighter)
             }
           }
           .font(.callout).monospacedDigit()

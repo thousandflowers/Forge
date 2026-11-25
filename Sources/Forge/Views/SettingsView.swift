@@ -13,7 +13,7 @@ struct SettingsView: View {
       page { dragging }.tabItem { Label("Dragging", systemImage: "hand.draw") }
       page { automatic }.tabItem { Label("Automatic", systemImage: "bolt") }
     }
-    .frame(width: 600, height: 560)
+    .frame(width: 600, height: 650)
     .preferredColorScheme(model.settings.appearance.colorScheme)
     .onChange(of: model.settings) { _ in model.saveSettings() }
   }
@@ -25,8 +25,11 @@ struct SettingsView: View {
   /// Under a group rather than in it: in it, it looked like a row of its own.
   private func note(_ text: String) -> some View {
     Text(text).font(.caption).foregroundStyle(.secondary)
+      // Left to the form, its second line began at the other side.
+      .multilineTextAlignment(.leading)
       .fixedSize(horizontal: false, vertical: true)
       .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.horizontal, 8)
   }
 
   private func stepper(_ title: String, _ value: Binding<Int>, in range: ClosedRange<Int>) -> some View {

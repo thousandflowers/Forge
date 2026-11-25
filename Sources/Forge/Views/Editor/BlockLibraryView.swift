@@ -85,7 +85,7 @@ struct BlockLibraryView: View {
       // A compact row, as in Shortcuts' library: small icon and name; what it
       // does is in the tooltip rather than under every row.
       HStack(spacing: 8) {
-        BlockIcon(symbol: entry.symbol, tint: entry.group.color, size: 18)
+        BlockIcon(symbol: entry.symbol, tint: usable ? entry.group.color : .gray, size: 18)
         Text(entry.title).font(.system(size: Metrics.bodyText))
         Spacer(minLength: 4)
         Image(systemName: usable ? "plus.circle.fill" : "checkmark.circle")
@@ -98,7 +98,7 @@ struct BlockLibraryView: View {
       .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
     .disabled(!usable)
-    .opacity(usable ? 1 : 0.45)
+    .opacity(usable ? 1 : 0.55)
     .onDrag { NSItemProvider(object: entry.id as NSString) }
     .help(usable ? "\(entry.summary) — click, or drag onto the canvas" : "Already on the canvas")
     .accessibilityLabel(Text("Add \(entry.title)"))
