@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forge · Rename a file, and it becomes what you called it.</title>
+<meta name="description" content="A free, open source file converter for macOS.">
+<meta property="og:title" content="Forge">
+<meta property="og:description" content="Rename a file, and it becomes what you called it. A free, open source file converter for macOS.">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#F8F9F9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#101112" media="(prefers-color-scheme: dark)">
+<script>const qt = new URLSearchParams(location.search).get('theme'); if (qt) document.documentElement.dataset.theme = qt;</script>
+<link rel="icon" href="media/icon.png">
+<link rel="apple-touch-icon" href="media/icon.png">
+<link rel="preload" href="media/fonts/geist.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="files.css">
+<style>
+:root { --bg: #F8F9F9; --ink: #1D1D1F; --mute: #84878C; --line: rgba(0,0,0,.09); --pill: rgba(226,228,230,.78); --picked: rgba(0,0,0,.07); --sel: #0A63E1; --hl: #B3D4FF; --tag: #EE6B3D; --lt: block; --dk: none; --blend: multiply; color-scheme: light; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #101112; --ink: #ECECEE; --mute: #808388; --line: rgba(255,255,255,.1); --pill: rgba(44,46,49,.78); --picked: rgba(255,255,255,.09); --sel: #3B8BFF; --hl: #2C5AA0; --lt: none; --dk: block; --blend: lighten; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #101112; --ink: #ECECEE; --mute: #808388; --line: rgba(255,255,255,.1); --pill: rgba(44,46,49,.78); --picked: rgba(255,255,255,.09); --sel: #3B8BFF; --hl: #2C5AA0; --lt: none; --dk: block; --blend: lighten; color-scheme: dark; }
+
+/* Geist and Geist Mono, SIL Open Font License (media/fonts/OFL.txt). Served from here: nothing is asked of another site. */
+@font-face { font-family: Geist; src: url(media/fonts/geist.woff2) format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Geist Mono"; src: url(media/fonts/geist-mono.woff2) format("woff2"); font-weight: 100 900; font-display: swap; }
+* { box-sizing: border-box; margin: 0; }
+html { scroll-behavior: smooth; scroll-padding-top: 64px; }
+body { background: var(--bg); color: var(--ink); font: 400 15px/1.5 Geist, -apple-system, system-ui, sans-serif; letter-spacing: -.005em; -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
+code { font-family: "Geist Mono", ui-monospace, monospace; font-size: .92em; letter-spacing: 0; }
+.lt { display: var(--lt); } .dk { display: var(--dk); }
+
+.pill { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; align-items: center; gap: 2px; padding: 4px; background: var(--pill); backdrop-filter: blur(18px) saturate(1.5); -webkit-backdrop-filter: blur(18px) saturate(1.5); border-radius: 4px; font-weight: 600; font-size: 14px; }
+.pill a { padding: 5px 9px; border-radius: 2px; display: flex; gap: 7px; align-items: center; text-decoration: none; transition: background .15s; }
+.pill a:first-child, .pill a:hover { background: var(--bg); }
+.pill img { border-radius: 4px; }
+
+/* One grid for the whole page: seven columns, five, or three. */
+.grid, .sec { --cols: 7; display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); column-gap: clamp(16px, 3.4vw, 52px); max-width: 1600px; margin: 0 auto; padding-left: clamp(16px, 2.2vw, 32px); padding-right: clamp(16px, 2.2vw, 32px); }
+
+/* The folder. */
+.grid { row-gap: 26px; padding-top: 72px; padding-bottom: 56px; grid-auto-flow: dense; }
+.title { grid-column: 3 / 6; grid-row: 2 / 4; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 0 4px; }
+.appicon { width: clamp(84px, 8.4vw, 124px); height: auto; margin-bottom: clamp(14px, 1.6vw, 22px); filter: drop-shadow(0 10px 24px rgba(232,80,50,.28)) drop-shadow(0 2px 4px rgba(0,0,0,.12)); }
+.title h1 { font-size: clamp(32px, 3.6vw, 54px); font-weight: 600; letter-spacing: -.038em; line-height: 1; text-wrap: balance; }
+.title .sub { color: var(--mute); margin-top: 14px; }
+.btn { display: inline-block; background: var(--ink); color: var(--bg); padding: 10px 18px; border-radius: 4px; font-weight: 600; text-decoration: none; transition: opacity .15s; }
+.btn:hover { opacity: .82; }
+.title .btn { margin-top: 22px; }
+.title .hint { margin-top: 12px; font-size: 12px; color: var(--mute); }
+.title .hint a { color: var(--mute); }
+
+.f { position: relative; display: flex; flex-direction: column; align-items: center; gap: 7px; cursor: pointer; border: 0; background: none; color: inherit; font: inherit; padding: 0; -webkit-tap-highlight-color: transparent; }
+.f .pic { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: end center; padding-bottom: 6%; border-radius: 6px; transition: background .15s; }
+.f .pic > .ff-page { width: 66%; }
+.f .pic .ff-photo { max-height: 100%; }
+.f.picked .pic, .f.editing .pic { background: var(--picked); }
+.f.hit .pic > * { animation: hit .42s cubic-bezier(.2,.8,.2,1); transform-origin: 50% 100%; }
+@keyframes hit { 30% { transform: scale(1.07, .88); } 62% { transform: scale(.97, 1.03); } }
+.f .lbl { font-size: 12px; font-weight: 500; line-height: 1.25; padding: 1px 5px 2px; border-radius: 3px; text-align: center; max-width: 100%; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.f.picked .lbl { background: #0A63E1; color: #fff; }
+.f.editing .lbl { background: #fff; color: #111; box-shadow: 0 0 0 2px #3B8BFF; display: block; white-space: nowrap; overflow: visible; }
+.f .lbl .sel { background: var(--hl); }
+.f .lbl .caret { display: inline-block; width: 1px; height: 1.1em; background: #0A63E1; vertical-align: -.18em; }
+.f .lbl .gone { display: inline-block; opacity: 0; max-width: 0; overflow: hidden; vertical-align: bottom; white-space: nowrap; transition: opacity .25s, max-width .35s cubic-bezier(.2,.8,.2,1); }
+.f .lbl .gone.at-start { opacity: 1; max-width: 12em; transition: none; }
+.f.done .lbl::after { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--tag); margin-left: 5px; vertical-align: .1em; }
+.f .word { position: absolute; top: 4px; right: 4px; font: 500 11px "Geist Mono", ui-monospace, monospace; color: var(--mute); background: var(--bg); padding: 2px 5px; border-radius: 3px; opacity: 0; transform: translateY(2px); transition: opacity .15s, transform .15s; pointer-events: none; }
+@media (hover: hover) { .f:not(.done):not(.busy):hover .word, .f:focus-visible .word { opacity: 1; transform: none; } }
+.f:focus-visible { outline: none; }
+.f:focus-visible .pic { box-shadow: 0 0 0 2px #3B8BFF; }
+.f, .title { animation: arrive .7s cubic-bezier(.2,.8,.2,1) both; animation-delay: var(--d, 0ms); }
+@keyframes arrive { from { opacity: 0; transform: translateY(10px); } }
+
+/* Sections: a folder name and a few lines on the left, what it looks like on the right. */
+.sec { padding-top: clamp(72px, 9vw, 136px); padding-bottom: clamp(72px, 9vw, 136px); border-top: 1px solid var(--line); }
+.side { grid-column: 1 / 3; align-self: start; position: sticky; top: 84px; }
+.main { grid-column: 3 / 8; min-width: 0; }
+.side .folder { width: 34px; height: 28px; display: block; margin-bottom: 14px; }
+.side h2 { font-size: clamp(24px, 2.2vw, 32px); font-weight: 600; letter-spacing: -.03em; line-height: 1.08; margin-bottom: 16px; text-wrap: balance; }
+.side p { color: var(--mute); max-width: 34ch; }
+.side p + p { margin-top: 12px; }
+.side p b { color: var(--ink); font-weight: 600; }
+.side ul { list-style: none; padding: 0; max-width: 36ch; }
+.side li { padding: 11px 0; border-top: 1px solid var(--line); }
+.side li:last-child { border-bottom: 1px solid var(--line); }
+
+.shot { width: 100%; height: auto; border-radius: 10px; box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 24px 60px -12px rgba(0,0,0,.22); }
+.note { color: var(--mute); font-size: 13px; margin-top: 14px; }
+
+/* Presets: the picture takes the whole width, the words sit above it in two columns. */
+.sec.wide .side { grid-column: 1 / 3; position: static; }
+.sec.wide .side2 { grid-column: 4 / 8; align-self: end; color: var(--mute); columns: 2; column-gap: clamp(16px, 3.4vw, 52px); }
+.sec.wide .side2 p { break-inside: avoid; margin-bottom: 12px; }
+.sec.wide .side2 b { color: var(--ink); font-weight: 600; }
+.sec.wide .main { grid-column: 1 / -1; margin-top: clamp(36px, 4vw, 64px); }
+/* Careful: the promises are the content; History is the proof, small. */
+.promises { list-style: none; padding: 0; border-top: 1px solid var(--line); }
+.promises li { padding: 16px 0; border-bottom: 1px solid var(--line); font-size: clamp(18px, 1.6vw, 23px); letter-spacing: -.02em; line-height: 1.3; }
+.promises b { font-weight: 600; }
+.careful { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: clamp(24px, 3vw, 48px); align-items: start; }
+.careful .shot { border-radius: 8px; }
+
+/* Say it in the name */
+.renames { border-top: 1px solid var(--line); }
+.rn { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 24px; align-items: baseline; padding: 18px 0; border-bottom: 1px solid var(--line); }
+.rn .from { font: 500 clamp(15px, 1.5vw, 21px) "Geist Mono", ui-monospace, monospace; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.rn .from em { font-style: normal; color: var(--sel); }
+.arw { font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-weight: 300; color: var(--mute); margin: 0 .45em; }
+.rn .get { color: var(--mute); }
+
+/* What it does to a file */
+.words { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 28px; }
+.words h3 { font-size: 13px; font-weight: 600; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.words ul { list-style: none; padding: 0; font: 400 14px/2 "Geist Mono", ui-monospace, monospace; }
+.adds { margin-top: 40px; font-size: clamp(18px, 1.7vw, 24px); letter-spacing: -.02em; line-height: 1.35; max-width: 36ch; }
+.adds code { color: var(--sel); }
+.adds .quiet { color: var(--mute); }
+
+/* Or any other way you like */
+.ways { list-style: none; padding: 0; counter-reset: way; border-top: 1px solid var(--line); }
+.ways > li { display: grid; grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1.1fr); gap: 20px; padding: 26px 0; border-bottom: 1px solid var(--line); align-items: start; }
+.ways > li::before { counter-increment: way; content: counter(way, decimal-leading-zero); font: 500 13px "Geist Mono", ui-monospace, monospace; color: var(--mute); padding-top: 3px; }
+.ways b { font-weight: 600; }
+.ways .vis:empty { display: none; }
+.ways video { width: 100%; max-width: 420px; height: auto; mix-blend-mode: var(--blend); }
+.term { background: #111214; color: #E6E6E6; border-radius: 8px; padding: 16px 18px; font: 400 13px/1.7 "Geist Mono", ui-monospace, monospace; overflow-x: auto; white-space: pre; box-shadow: 0 12px 30px -10px rgba(0,0,0,.35); }
+.term .p { color: #7D8085; }
+.term .o { color: #9DF5B4; }
+
+/* The window */
+.promise { margin-top: clamp(40px, 5vw, 72px); display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 32px; align-items: start; }
+.promise h3 { font-size: clamp(28px, 3vw, 44px); font-weight: 600; letter-spacing: -.035em; line-height: 1.02; text-wrap: balance; }
+.promise p { color: var(--mute); }
+.measure { margin-top: 18px; font: 500 14px "Geist Mono", ui-monospace, monospace; color: var(--ink) !important; }
+.measure span { color: var(--mute); }
+
+/* What leaves with your files */
+.big { font-size: clamp(22px, 2.6vw, 38px); letter-spacing: -.03em; line-height: 1.22; max-width: 30ch; text-wrap: pretty; }
+.big code { color: var(--sel); font-size: .86em; }
+.big .quiet { color: var(--mute); }
+
+/* Before you download */
+.install p { max-width: 58ch; }
+.install p + p, .install ol + p { margin-top: 14px; }
+.install ol { margin: 14px 0 0; padding-left: 0; list-style: none; max-width: 58ch; }
+.install li { padding: 14px 0; border-top: 1px solid var(--line); }
+.install li:last-child { border-bottom: 1px solid var(--line); }
+.install .actions { display: flex; gap: 20px; align-items: center; margin-top: 32px; flex-wrap: wrap; }
+.install .facts { margin-top: 18px; color: var(--mute); font-size: 13px; }
+.warn { font-weight: 600; }
+
+footer { border-top: 1px solid var(--line); padding: 56px 16px 72px; display: flex; flex-direction: column; align-items: center; gap: 12px; color: var(--mute); font-size: 13px; text-align: center; }
+footer img { width: 56px; height: auto; }
+footer a { color: var(--mute); }
+
+.reveal { opacity: 0; transform: translateY(14px); transition: opacity .8s cubic-bezier(.2,.8,.2,1), transform .8s cubic-bezier(.2,.8,.2,1); }
+.reveal.in { opacity: 1; transform: none; }
+
+@media (max-width: 1099px) {
+  .grid, .sec { --cols: 5; }
+  .title { grid-column: 2 / 5; }
+  .f:nth-of-type(n+20) { display: none; }
+  .side { grid-column: 1 / -1; position: static; margin-bottom: 40px; }
+  .side p, .side ul { max-width: 60ch; }
+  .main { grid-column: 1 / -1; }
+  .sec.wide .side2 { grid-column: 1 / -1; columns: 1; margin-top: 0; }
+}
+@media (max-width: 699px) {
+  .grid, .sec { --cols: 3; }
+  .grid { column-gap: 18px; row-gap: 18px; padding-top: 60px; }
+  .title { grid-column: 1 / -1; grid-row: 1; padding: 28px 0 26px; }
+  .f:nth-of-type(n+13) { display: none; }
+  .rn { grid-template-columns: 1fr; gap: 4px; }
+  .words { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ways > li { grid-template-columns: 32px minmax(0, 1fr); }
+  .ways .vis { grid-column: 2; }
+  .promise { grid-template-columns: 1fr; }
+  .careful { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .f, .title { animation: none; } .f.hit .pic > * { animation: none; }
+  .reveal { opacity: 1; transform: none; transition: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="folder" viewBox="0 0 34 28"><path d="M2 6a3 3 0 0 1 3-3h8.2l3 3H29a3 3 0 0 1 3 3v2H2z" fill="#4F9FEC"/><rect x="2" y="8.5" width="30" height="17.5" rx="3" fill="#76B8F5"/><rect x="2" y="8.5" width="30" height="1.2" fill="#fff" opacity=".35"/></symbol>
+</svg>
+
+<nav class="pill" aria-label="Forge">
+  <a href="#top"><img src="media/icon.png" alt="" width="16" height="16">Forge</a>
+  <a href="#download">Download</a>
+  <a href="https://github.com/thousandflowers/Forge">GitHub</a>
+</nav>
+
+<main>
+<div class="grid" id="files">
+  <div class="title" id="top">
+    <img class="appicon" src="media/icon.png" alt="Forge" width="124" height="124">
+    <h1>Rename a file, and it becomes what you called it.</h1>
+    <p class="sub">A free, open source file converter for macOS.</p>
+    <a class="btn" href="https://github.com/thousandflowers/Forge/releases/latest">Download</a>
+    <p class="hint"><span class="verb">Click</span> a file to rename it. · <a href="#download">Not notarized: how to open it</a></p>
+  </div>
+</div>
+
+<section class="sec" id="name">
+  <header class="side reveal">
+    <svg class="folder" aria-hidden="true"><use href="#folder"/></svg>
+    <h2>Say it in the name</h2>
+    <p>Choose a folder to watch, and rename a file in it.</p>
+    <p>Turn on <b>Only when renamed</b> and every other file in the folder is left alone, so a whole Desktop can be watched. Your own presets can have a word too: give one the word <code>web</code>, and <code>photo_web.jpg</code> runs it.</p>
+  </header>
+  <div class="main reveal">
+    <div class="renames" role="list">
+      <div class="rn" role="listitem"><span class="from">Letter.md<span class="arw" role="img" aria-label="becomes">→</span>Letter.<em>pdf</em></span><span class="get">A PDF</span></div>
+      <div class="rn" role="listitem"><span class="from">clip.mov<span class="arw" role="img" aria-label="becomes">→</span>clip.<em>gif</em></span><span class="get">An animated GIF</span></div>
+      <div class="rn" role="listitem"><span class="from">holiday.jpg<span class="arw" role="img" aria-label="becomes">→</span>holiday<em>_2MB</em>.jpg</span><span class="get">The same photo, under 2 MB</span></div>
+      <div class="rn" role="listitem"><span class="from">holiday.jpg<span class="arw" role="img" aria-label="becomes">→</span>holiday<em>_800px_privacy</em>.jpg</span><span class="get">800 pixels wide, without the place it was taken</span></div>
+      <div class="rn" role="listitem"><span class="from">sheet.jpg<span class="arw" role="img" aria-label="becomes">→</span>sheet<em>_scan</em>.jpg</span><span class="get">The sheet in the photo, straightened and lit</span></div>
+      <div class="rn" role="listitem"><span class="from">talk.m4a<span class="arw" role="img" aria-label="becomes">→</span>talk.<em>txt</em></span><span class="get">What is said in it</span></div>
+      <div class="rn" role="listitem"><span class="from">anything<em>_ask</em>.jpg</span><span class="get">A small menu beside the pointer asks what you want</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="words">
+  <header class="side reveal">
+    <svg class="folder" aria-hidden="true"><use href="#folder"/></svg>
+    <h2>What it does to a file</h2>
+    <p>Forty-five things, each one a block in a preset, a word in a name, and <code>--do</code> on the command line.</p>
+  </header>
+  <div class="main reveal">
+    <div class="words">
+      <div><h3>Pictures</h3><ul><li>_nobg</li><li>_scan</li><li>_enhance</li><li>_upscale2x</li><li>_crop1x1</li><li>_blurbg</li><li>_gray</li><li>_round40</li><li>_border40</li><li>_mark(©)</li><li>_grid3x3</li><li>_layers</li></ul></div>
+      <div><h3>Videos</h3><ul><li>_trim10-45</li><li>_crop16x9</li><li>_speed2x</li><li>_slowmo2x</li><li>_mute</li><li>_reverse</li><li>_loop3</li><li>_1080p</li><li>_fps30</li><li>_frames5s</li><li>_at12s</li><li>_splitchapters</li></ul></div>
+      <div><h3>Sound</h3><ul><li>_voice</li><li>_normalize</li><li>_nosilence</li><li>_fade3s</li><li>_pitch+2</li><li>_mono</li><li>_wave</li></ul></div>
+      <div><h3>PDF</h3><ul><li>_lighter</li><li>_pages2-5</li><li>_nopages1</li><li>_splitpages</li><li>_2up</li><li>_numbers</li><li>_tables</li><li>_images</li><li>_dpi300</li><li>_askpassword</li><li>_unlock</li></ul></div>
+      <div><h3>The rest</h3><ul><li>_min</li><li>_pretty</li><li>_sha256</li><li>_base64</li></ul></div>
+    </div>
+    <p class="adds">Words add up: <code>clip_trim10-45_mute_720p.mp4</code> does all three. <span class="quiet">Some need a tool that macOS does not come with, and Forge says which one.</span></p>
+  </div>
+</section>
+
+<section class="sec" id="ways">
+  <header class="side reveal">
+    <svg class="folder" aria-hidden="true"><use href="#folder"/></svg>
+    <h2>Or any other way you like</h2>
+    <p>Dragging, the notch and the conversions nobody asks for are off until you turn them on in Settings.</p>
+  </header>
+  <div class="main reveal">
+    <ol class="ways">
+      <li><div><b>Drop it</b> on the window, on the Dock icon or on the menu bar.</div><div class="vis"></div></li>
+      <li><div><b>Drag it with a key held down</b>, and a menu opens over the file with what it can become. It comes out of the notch too, on a Mac that has one.</div>
+        <div class="vis"><video class="lt" poster="media/tiles-light.jpg" muted loop playsinline preload="metadata" aria-label="Format tiles fanning out over a dragged file"><source src="media/tiles-light.mp4" type="video/mp4"><source src="media/tiles-light.webm" type="video/webm"></video><video class="dk" poster="media/tiles-dark.jpg" muted loop playsinline preload="metadata" aria-label="Format tiles fanning out over a dragged file"><source src="media/tiles-dark.mp4" type="video/mp4"><source src="media/tiles-dark.webm" type="video/webm"></video></div></li>
+      <li><div><b>Right-click it</b> in the Finder, under Services.</div><div class="vis"></div></li>
+      <li><div><b>Let a folder do it.</b> Whatever lands in a watched folder is converted as it arrives.</div><div class="vis"></div></li>
+      <li><div><b>Call it</b> from Shortcuts, from the command line, or from an assistant.</div>
+        <div class="vis"><div class="term" role="img" aria-label="forge convert note.md --to pdf --out Desktop, then note.pdf and 1 converted."><span class="p">$</span> forge convert note.md --to pdf --out ~/Desktop
+<span class="o">~/Desktop/note.pdf</span>
+1 converted.
+<span class="p">$</span> forge mcp</div></div></li>
+    </ol>
+  </div>
+</section>
+
+<section class="sec" id="window">
+  <header class="side reveal">
+    <svg class="folder" aria-hidden="true"><use href="#folder"/></svg>
+    <h2>The window</h2>
+    <p>Drop some files, and Forge asks what they should become: a photo is asked about its size and quality, a video about its codec, a recording about its words.</p>
+    <p>A file is offered only what it can become on this Mac, and a control that would be ignored is not shown. Files of different kinds go through a preset together.</p>
+  </header>
+  <div class="main reveal">
+    <img class="shot lt" src="media/screens/convert-light.jpg" alt="A picture dropped on Forge, with the formats it can become and what can be done to it" width="1600" height="1170" loading="lazy">
+    <img class="shot dk" src="media/screens/convert-dark.jpg" alt="A picture dropped on Forge, with the formats it can become and what can be done to it" width="1600" height="1170" loading="lazy">
+    <div class="promise">
+      <h3>A size is a promise, not a setting.</h3>
+      <div>
+        <p>Ask for 2 MB and Forge writes the file, measures it, and writes it again until it fits, giving up quality first and pixels only after that. If it cannot get there, it says so.</p>
+        <p class="measure">goose_2MB.heic <span>9.1 MB</span><span class="arw" role="img" aria-label="becomes">→</span>1.3 MB</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec wide" id="presets">
+  <header class="side reveal">
+    <svg class="folder" aria-hidden="true"><use href="#folder"/></svg>
+    <h2>Presets</h2>
+  </header>
+  <div class="side2 reveal">
+    <p>A preset is a chain of blocks, drawn the way Shortcuts draws one. It can ask a question each time it runs, write several formats at once, take different ways for different files with <b>If</b>, and split into copies that are joined again later, or merged into one PDF.</p>
+    <p>A preset is data, not code: a name and a list of things Forge already knows how to do. Installing somebody else's cannot make the app do anything new.</p>
+  </div>
+  <div class="main reveal">
+    <img class="shot lt" src="media/screens/editor-light.jpg" alt="A preset that splits a photo into a copy for the web and one for the archive" width="1600" height="983" loading="lazy">
+    <img class="shot dk" src="media/screens/editor-dark.jpg" alt="A preset that splits a photo into a copy for the web and one for the archive" width="1600" height="983" loading="lazy">
+  </div>
+</section>
+
+<section class="sec" id="tools">
+  <header class="side reveal">
+    <svg class="folder" aria-hidden="true"><use href="#folder"/></svg>
+    <h2>The Store</h2>
+    <p>Ready-made presets, one for each thing Forge does, and the presets other people have published.</p>
+    <p><b>Tools</b> lists what your Mac can do, read from your Mac at that moment, and what is missing. Nothing else has to be installed for the core to work. For the rest, press Download: Forge fetches the build it was tried with from whoever makes it, checks its fingerprint before using it, and keeps it in its own folder. No Homebrew, no password. Nothing is fetched until you press.</p>
+  </header>
+  <div class="main reveal">
+    <img class="shot lt" src="media/screens/tools-light.jpg" alt="The Tools shelf of the Store, with what can be added to this Mac" width="1600" height="1170" loading="lazy">
+    <img class="shot dk" src="media/screens/tools-dark.jpg" alt="The Tools shelf of the Store, with what can be added to this Mac" width="1600" height="1170" loading="lazy">
+  </div>
+</section>
+
+<section class="sec" id="careful">
+  <header class="side reveal">
+    <svg class="folder" aria-hidden="true"><use href="#folder"/></svg>
+    <h2>Careful with your files</h2>
+  </header>
+  <div class="main careful reveal">
+    <ul class="promises">
+      <li>A conversion is written to one side and moved into place when it is whole.</li>
+      <li>Two files heading for the same name both arrive.</li>
+      <li>Replacing originals asks first, and keeps a backup unless you turn that off.</li>
+      <li>A file that would come out heavier is not handed over as a lighter one.</li>
+      <li>Every conversion is in <b>History</b>, where it can be undone, run again or saved as a preset.</li>
+    </ul>
+    <div>
+      <img class="shot lt" src="media/screens/history-light.jpg" alt="The History screen" width="1600" height="1170" loading="lazy">
+      <img class="shot dk" src="media/screens/history-dark.jpg" alt="The History screen" width="1600" height="1170" loading="lazy">
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="privacy">
+  <header class="side reveal">
+    <svg class="folder" aria-hidden="true"><use href="#folder"/></svg>
+    <h2>What leaves with your files</h2>
+  </header>
+  <div class="main reveal">
+    <p class="big">A photograph carries where it was taken, and a PDF carries who wrote it. <span class="quiet">Forge can keep everything, remove the place, or remove whatever identifies a person, a device or a moment: in Settings, in a preset, for one batch, or with</span> <code>_privacy</code> <span class="quiet">in a name.</span></p>
+    <p class="note">The color profile and the orientation always stay, because without them the picture comes out wrong.</p>
+  </div>
+</section>
+
+<section class="sec" id="download">
+  <header class="side reveal">
+    <svg class="folder" aria-hidden="true"><use href="#folder"/></svg>
+    <h2>Before you download</h2>
+    <p>Alpha. It works, it is tested, and it is still changing week to week.</p>
+  </header>
+  <div class="main install reveal">
+    <p>Take the <code>.dmg</code>, open it, and drag Forge to Applications. It runs on Apple silicon and Intel, on macOS 13 Ventura or later.</p>
+    <p class="warn">It is not notarized, so macOS stops the first launch:</p>
+    <ol>
+      <li><b>macOS 15 or later:</b> open Forge once, close the warning, then go to System Settings, Privacy &amp; Security, and press <b>Open Anyway</b>.</li>
+      <li><b>macOS 13 and 14:</b> right-click the app and choose <b>Open</b>.</li>
+    </ol>
+    <div class="actions">
+      <a class="btn" href="https://github.com/thousandflowers/Forge/releases/latest">Download Forge 0.3.0</a>
+      <a href="https://github.com/thousandflowers/Forge">Source on GitHub</a>
+    </div>
+    <p class="facts">Free and open source, MIT. Your files never leave your Mac.</p>
+  </div>
+</section>
+</main>
+
+<footer>
+  <img src="media/icon.png" alt="" width="56" height="56">
+  <div>Forge · MIT · <a href="https://github.com/thousandflowers/Forge">github.com/thousandflowers/Forge</a></div>
+</footer>
+
+<script src="files.js"></script>
+<script src="cartella.js"></script>
+<script>
+if (matchMedia('(hover: none)').matches) document.querySelector('.hint .verb').textContent = 'Tap';
+// Sections fade in once; videos play only while on screen, and never when motion is reduced.
+(() => {
+  const io = new IntersectionObserver((es) => es.forEach((e) => {
+    if (e.target.tagName === 'VIDEO') { if (FF.still) return; e.isIntersecting ? e.target.play().catch(() => {}) : e.target.pause(); return; }
+    if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+  }), { rootMargin: '0px 0px -10% 0px' });
+  document.querySelectorAll('.reveal, video').forEach((el) => io.observe(el));
+})();
+</script>
+</body>
+</html>
