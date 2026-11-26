@@ -192,7 +192,7 @@ footer a { color: var(--mute); }
 
 <nav class="pill" aria-label="Forge">
   <a href="#top"><img src="media/icon.png" alt="" width="16" height="16">Forge</a>
-  <a class="get" href="https://github.com/thousandflowers/Forge/releases/download/v0.3.0/Forge-0.3.0.dmg">Download</a>
+  <a class="get" href="https://thousand-flowers.itch.io/forge/purchase" target="_blank" rel="noopener">Download</a>
   <a href="https://github.com/thousandflowers/Forge">GitHub</a>
 </nav>
 
@@ -202,7 +202,7 @@ footer a { color: var(--mute); }
     <img class="appicon" src="media/icon.png" alt="Forge" width="124" height="124">
     <h1>Rename a file, and it becomes what you called it.</h1>
     <p class="sub">A free, open source file converter for macOS.</p>
-    <a class="btn get" href="https://github.com/thousandflowers/Forge/releases/download/v0.3.0/Forge-0.3.0.dmg">Download</a>
+    <a class="btn get" href="https://thousand-flowers.itch.io/forge/purchase" target="_blank" rel="noopener">Download</a>
     <p class="hint"><span class="verb">Click</span> a file to rename it. · <a href="#download">Not notarized: how to open it</a></p>
   </div>
 </div>
@@ -360,7 +360,7 @@ footer a { color: var(--mute); }
       <li><b>macOS 13 and 14:</b> right-click the app and choose <b>Open</b>.</li>
     </ol>
     <div class="actions">
-      <a class="btn get" href="https://github.com/thousandflowers/Forge/releases/download/v0.3.0/Forge-0.3.0.dmg">Download Forge 0.3.0</a>
+      <a class="btn get" href="https://thousand-flowers.itch.io/forge/purchase" target="_blank" rel="noopener">Download Forge 0.3.0</a>
       <a href="https://github.com/thousandflowers/Forge">Source on GitHub</a>
     </div>
     <p class="facts">Free and open source, MIT. Your files never leave your Mac.</p>
@@ -377,7 +377,7 @@ footer a { color: var(--mute); }
 <script src="cartella.js"></script>
 <script>
 if (matchMedia('(hover: none)').matches) document.querySelector('.hint .verb').textContent = 'Tap';
-// Download starts the .dmg at once; the page then shows how to open it, since macOS stops the first launch.
+// Download opens itch (pay what you want, or nothing) in its own tab; this page then shows how to open the app, since macOS stops the first launch.
 document.querySelectorAll('a.get').forEach((a) => a.addEventListener('click', () => {
   const howTo = document.getElementById('download');
   if (!howTo.contains(a)) setTimeout(() => howTo.scrollIntoView({ behavior: FF.still ? 'auto' : 'smooth' }), 150);
