@@ -71,6 +71,49 @@ final class MonitoredFolderWatcherTests: BaseTestCase {
     XCTAssertEqual(names.map(\.lastPathComponent), ["stalled.png"])
   }
 
+  /// The Finder's preview keeps a picture it shows mapped, through
+  /// QuickLookUIService, for as long as it is selected - and a file renamed in
+  /// the Finder is selected. Taken for a copy still going, it waited up to five
+  /// minutes; renamed with `mv`, the same file went in a second.
+  func test_aFileSomebodyIsOnlyLookingAtIsNotWaitedFor() async throws {
+    let watched = try folder("watched")
+    let (watcher, seen) = try await watch(watched)
+    defer { watcher.stop() }
+
+    try await Task.sleep(nanoseconds: 700_000_000)
+    let target = watched.appendingPathComponent("previewed.png")
+    try Fixture.image(at: target, width: 32, height: 32)
+    let viewer = try Self.mapRead(target, for: 8)
+    defer { viewer.terminate() }
+
+    let names = try await seen.wait(for: 1, timeout: 5)
+    XCTAssertEqual(names.map(\.lastPathComponent), ["previewed.png"], "waited for a process that only reads it")
+  }
+
+  func test_fileActivity_aReaderIsNotAWriter() throws {
+    let target = path("read.bin")
+    try Data("x".utf8).write(to: target)
+    let viewer = try Self.mapRead(target, for: 3)
+    defer { viewer.terminate() }
+    Thread.sleep(forTimeInterval: 1)
+
+    XCTAssertFalse(FileActivity.isOpenElsewhere(target), "a process mapping it read-only was taken for its writer")
+  }
+
+  /// Maps the file read-only and closes the descriptor, which is what an image
+  /// preview does, then keeps it on screen for a while.
+  private static func mapRead(_ url: URL, for seconds: Int) throws -> Process {
+    let viewer = Process()
+    viewer.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+    viewer.arguments = ["-I", "-c", """
+      import mmap, os, sys, time
+      fd = os.open(sys.argv[1], os.O_RDONLY); m = mmap.mmap(fd, 0, prot=mmap.PROT_READ); os.close(fd)
+      time.sleep(float(sys.argv[2]))
+      """, url.path, String(seconds)]
+    try viewer.run()
+    return viewer
+  }
+
   func test_fileActivity_seesAnotherProcessHoldingAFile() throws {
     let target = path("held.bin")
     let writer = Process()
